@@ -4,71 +4,62 @@ title OFZ Spread Analytics
 
 echo ========================================
 echo    OFZ Spread Analytics v0.2.0
-echo    Автоматический запуск
+echo    Automatic start
 echo ========================================
 echo.
 
-:: Проверка Python
+:: Check Python
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo [ОШИБКА] Python не установлен!
-    echo Скачайте: https://www.python.org/downloads/
-    echo.
+    echo [ERROR] Python not installed!
+    echo Download: https://www.python.org/downloads/
     pause
     exit /b 1
 )
+echo [OK] Python found
 
-echo [OK] Python найден
-echo.
-
-:: Создание venv если нет
-if not exist "venv\Scripts\activate.bat" (
-    echo [*] Создание виртуального окружения...
+:: Create venv if not exists
+if not exist "venv" (
+    echo [*] Creating virtual environment...
     python -m venv venv
     if errorlevel 1 (
-        echo [ОШИБКА] Не удалось создать venv!
+        echo [ERROR] Failed to create venv!
         pause
         exit /b 1
     )
-    echo [OK] Виртуальное окружение создано
+    echo [OK] Virtual environment created
+) else (
+    echo [OK] Virtual environment exists
 )
 
-:: Активация venv
-echo [*] Активация venv...
+:: Activate venv
 call venv\Scripts\activate.bat
 if errorlevel 1 (
-    echo [ОШИБКА] Не удалось активировать venv!
+    echo [ERROR] Failed to activate venv!
     pause
     exit /b 1
 )
+echo [OK] Virtual environment activated
 
-:: Проверка и установка зависимостей
+:: Install dependencies
 pip show streamlit >nul 2>&1
 if errorlevel 1 (
-    echo [*] Установка зависимостей...
-    pip install -r requirements.txt
+    echo [*] Installing dependencies...
+    pip install -r requirements.txt -q
     if errorlevel 1 (
-        echo [ОШИБКА] Ошибка установки зависимостей!
+        echo [ERROR] Failed to install dependencies!
         pause
         exit /b 1
     )
-    echo [OK] Зависимости установлены
+    echo [OK] Dependencies installed
 ) else (
-    echo [OK] Зависимости уже установлены
+    echo [OK] Dependencies already installed
 )
 
 echo.
-echo ========================================
-echo  Приложение запускается...
-echo  Браузер: http://localhost:8501
-echo  Остановка: Ctrl+C
-echo ========================================
+echo  Starting application...
+echo  Browser: http://localhost:8501
+echo  Stop: Ctrl+C
 echo.
 
-:: Запуск Streamlit
 streamlit run app.py
-
-:: Если Streamlit завершился
-echo.
-echo Приложение остановлено.
-pause
