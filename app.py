@@ -21,6 +21,7 @@ from api.moex_candles import CandleFetcher, CandleInterval
 from core.spread import SpreadCalculator, SpreadStats
 from core.signals import SignalGenerator, TradingSignal, SignalType
 from core.data_storage import save_intraday_snapshot, load_intraday_history, get_saved_data_info, cleanup_old_data
+from core.database import get_db, DatabaseManager
 from components.charts import ChartBuilder
 
 # Настройка логирования
@@ -198,8 +199,17 @@ def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
 
 @st.cache_data(ttl=60)
 def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, days: int) -> pd.DataFrame:
-    """Получить данные свечей с YTM с кэшированием"""
+    """
+    Получить данные свечей с YTM с кэшированием в SQLite
+    
+    Алгоритм:
+    1. Проверить данные в SQLite
+    2. Загрузить исторические данные из БД
+    3. Запросить с MOEX только за текущий день
+    4. Объединить и сохранить новые данные
+    """
     fetcher = get_candle_fetcher()
+    db = get_db()
     
     # Восстанавливаем BondConfig из словаря
     bond_config = BondConfig(**bond_config_dict)
@@ -215,13 +225,70 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
     
     start_date = date.today() - timedelta(days=days)
     
-    return fetcher.fetch_candles(
+    # 1. Загружаем исторические данные из БД
+    db_df = db.load_candles(isin, interval, start_date=start_date, end_date=date.today() - timedelta(days=1))
+    
+    # 2. Всегда запрашиваем данные за текущий день с MOEX
+    today_df = fetcher.fetch_candles(
         isin,
         bond_config=bond_config,
         interval=candle_interval,
-        start_date=start_date,
+        start_date=date.today(),
         end_date=date.today()
     )
+    
+    # 3. Запрашиваем недостающие исторические данные если их нет в БД
+    if db_df.empty and days > 1:
+        # Если в БД пусто, загружаем все исторические данные
+        history_df = fetcher.fetch_candles(
+            isin,
+            bond_config=bond_config,
+            interval=candle_interval,
+            start_date=start_date,
+            end_date=date.today() - timedelta(days=1)
+        )
+        
+        # Сохраняем в БД
+        if not history_df.empty:
+            db.save_candles(isin, interval, history_df)
+            db_df = history_df
+    elif not db_df.empty:
+        # Проверяем есть ли пропуски в данных
+        last_db_date = db_df.index[-1].date() if not db_df.empty else None
+        needed_start = start_date
+        needed_end = date.today() - timedelta(days=1)
+        
+        if last_db_date is None or (needed_end - last_db_date).days > 1:
+            # Есть пропуски - загружаем недостающие данные
+            fill_start = last_db_date + timedelta(days=1) if last_db_date else needed_start
+            fill_df = fetcher.fetch_candles(
+                isin,
+                bond_config=bond_config,
+                interval=candle_interval,
+                start_date=fill_start,
+                end_date=needed_end
+            )
+            
+            if not fill_df.empty:
+                db.save_candles(isin, interval, fill_df)
+                db_df = pd.concat([db_df, fill_df])
+    
+    # 4. Объединяем исторические + текущие данные
+    if not db_df.empty and not today_df.empty:
+        result_df = pd.concat([db_df, today_df])
+        result_df = result_df[~result_df.index.duplicated(keep='last')]
+    elif not today_df.empty:
+        result_df = today_df
+    elif not db_df.empty:
+        result_df = db_df
+    else:
+        result_df = pd.DataFrame()
+    
+    # Сортируем по времени
+    if not result_df.empty:
+        result_df = result_df.sort_index()
+    
+    return result_df
 
 
 def calculate_spread_stats(spread_series: pd.Series) -> Dict:
