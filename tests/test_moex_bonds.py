@@ -102,26 +102,19 @@ class TestFetchAllBonds(TestMOEXBondsFetcher):
 class TestFetchOfzOnly(TestMOEXBondsFetcher):
     """Тесты для fetch_ofz_only"""
 
-    @patch('api.moex_bonds.MOEXBondsFetcher.fetch_all_bonds')
-    def test_fetch_ofz_only(self, mock_fetch_all):
-        """Фильтрация только ОФЗ"""
-        mock_fetch_all.return_value = [
-            {"isin": "SU26221RMFS0", "name": "ОФЗ 26221"},
-            {"isin": "SU26225RMFS1", "name": "ОФЗ 26225"},
-            {"isin": "SU25000RMFS0", "name": "ОФЗ 25000"},
-            {"isin": "RU000A0JX0J2", "name": "Корпоративный бонд"},
-            {"isin": "XS1234567890", "name": "Евробонд"},
-        ]
-
+    def test_fetch_ofz_only_returns_ofz_only(self):
+        """Фильтрация только ОФЗ - проверяем, что возвращаются только ОФЗ"""
+        # Делаем реальный запрос (медленно, но точно)
         ofz = self.fetcher.fetch_ofz_only()
 
-        # Только SU26... и SU25...
-        assert len(ofz) == 3
-        isins = [b["isin"] for b in ofz]
-        assert "SU26221RMFS0" in isins
-        assert "SU26225RMFS1" in isins
-        assert "SU25000RMFS0" in isins
-        assert "RU000A0JX0J2" not in isins
+        # Проверяем что все возвращённые ISIN начинаются с SU26, SU25 или SU24
+        for bond in ofz:
+            isin = bond.get("isin", "")
+            assert isin.startswith("SU26") or isin.startswith("SU25") or isin.startswith("SU24"), \
+                f"ISIN {isin} не является ОФЗ-ПД"
+
+        # Проверяем что есть данные
+        assert len(ofz) > 0, "Должны быть найдены ОФЗ облигации"
 
 
 class TestFetchBondDetails(TestMOEXBondsFetcher):
@@ -279,6 +272,8 @@ class TestFilterOfzForTrading(unittest.TestCase):
                 "last_trade_date": self.today.strftime("%Y-%m-%d"),
                 "duration_days": 2000,
                 "duration_years": 5.5,
+                "has_trades": True,
+                "num_trades": 100,
             },
             # Слишком короткий срок до погашения (< 0.5 года)
             {
@@ -288,8 +283,10 @@ class TestFilterOfzForTrading(unittest.TestCase):
                 "last_trade_date": self.today.strftime("%Y-%m-%d"),
                 "duration_days": 100,
                 "duration_years": 0.3,
+                "has_trades": True,
+                "num_trades": 50,
             },
-            # Нет торгов последние 10 дней
+            # Нет торгов (has_trades=False)
             {
                 "isin": "SU26223RMFS0",
                 "name": "ОФЗ 26223",
@@ -297,6 +294,8 @@ class TestFilterOfzForTrading(unittest.TestCase):
                 "last_trade_date": (self.today - timedelta(days=15)).strftime("%Y-%m-%d"),
                 "duration_days": 2000,
                 "duration_years": 5.5,
+                "has_trades": False,
+                "num_trades": 0,
             },
             # Нет дюрации
             {
@@ -306,6 +305,8 @@ class TestFilterOfzForTrading(unittest.TestCase):
                 "last_trade_date": self.today.strftime("%Y-%m-%d"),
                 "duration_days": None,
                 "duration_years": None,
+                "has_trades": True,
+                "num_trades": 30,
             },
             # Не ОФЗ-ПД (другой ISIN)
             {
@@ -315,6 +316,8 @@ class TestFilterOfzForTrading(unittest.TestCase):
                 "last_trade_date": self.today.strftime("%Y-%m-%d"),
                 "duration_days": 2000,
                 "duration_years": 5.5,
+                "has_trades": True,
+                "num_trades": 10,
             },
             # Погашена (отрицательный срок)
             {
@@ -324,6 +327,8 @@ class TestFilterOfzForTrading(unittest.TestCase):
                 "last_trade_date": (self.today - timedelta(days=15)).strftime("%Y-%m-%d"),
                 "duration_days": 0,
                 "duration_years": 0,
+                "has_trades": False,
+                "num_trades": 0,
             },
         ]
 
@@ -368,8 +373,8 @@ class TestFilterOfzForTrading(unittest.TestCase):
         # Должно пройти больше облигаций
         isins = [b["isin"] for b in filtered]
         assert "SU26221RMFS0" in isins
-        # Без проверки дюрации SU26224RMFS0 тоже пройдёт (если другие критерии ок)
-        # Но она всё равно не пройдёт из-за других проблем в тестовых данных
+        # SU26224RMFS0 тоже пройдёт, потому что require_duration=False
+        assert "SU26224RMFS0" in isins
 
     def test_filter_sorting_by_duration(self):
         """Сортировка по дюрации"""
@@ -382,6 +387,8 @@ class TestFilterOfzForTrading(unittest.TestCase):
                 "last_trade_date": self.today.strftime("%Y-%m-%d"),
                 "duration_days": 3000,
                 "duration_years": 8.2,
+                "has_trades": True,
+                "num_trades": 100,
             },
             {
                 "isin": "SU26225RMFS1",
@@ -390,6 +397,8 @@ class TestFilterOfzForTrading(unittest.TestCase):
                 "last_trade_date": self.today.strftime("%Y-%m-%d"),
                 "duration_days": 1000,
                 "duration_years": 2.7,
+                "has_trades": True,
+                "num_trades": 50,
             },
             {
                 "isin": "SU26230RMFS1",
@@ -398,6 +407,8 @@ class TestFilterOfzForTrading(unittest.TestCase):
                 "last_trade_date": self.today.strftime("%Y-%m-%d"),
                 "duration_days": 2000,
                 "duration_years": 5.5,
+                "has_trades": True,
+                "num_trades": 75,
             },
         ]
 
@@ -428,6 +439,8 @@ class TestFilterOfzForTrading(unittest.TestCase):
                 "last_trade_date": self.today.strftime("%Y-%m-%d"),
                 "duration_days": 2000,
                 "duration_years": 5.5,
+                "has_trades": True,
+                "num_trades": 50,
             }
         ]
 
@@ -484,6 +497,8 @@ class TestFetchAndFilterOfz(unittest.TestCase):
                 "last_trade_date": date.today().strftime("%Y-%m-%d"),
                 "duration_days": 2000,
                 "duration_years": 5.5,
+                "has_trades": True,
+                "num_trades": 100,
             }
         ]
 
