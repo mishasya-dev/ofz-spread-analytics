@@ -373,7 +373,7 @@ def main():
         data_mode = st.radio(
             "Источник YTM",
             ["daily", "intraday"],
-            format_func=lambda x: "📅 Дневные данные" if x == "daily" else "⏱️ Внутридневные (свечи)",
+            format_func=lambda x: "📅 Данные биржи (day close YTM)" if x == "daily" else "⏱️ Внутридневные (свечи)",
             index=0 if st.session_state.data_mode == "daily" else 1
         )
         st.session_state.data_mode = data_mode
