@@ -552,9 +552,10 @@ def update_database_full(bonds_list: List = None, progress_callback=None) -> Dic
     Полное обновление базы данных
     
     Загружает:
-    - Дневные YTM для всех облигаций
+    - Дневные YTM для всех облигаций (1 год)
     - Intraday YTM для всех облигаций и интервалов
-    - Спреды для всех пар
+    
+    Спреды рассчитываются на лету из YTM при отображении графиков.
     
     Args:
         bonds_list: Список облигаций (если None - из session_state)
@@ -574,17 +575,17 @@ def update_database_full(bonds_list: List = None, progress_callback=None) -> Dic
         bonds_list = get_bonds_list()
     
     if not bonds_list:
-        return {'daily_ytm_saved': 0, 'intraday_ytm_saved': 0, 'spreads_saved': 0, 'errors': ['Нет облигаций']}
+        return {'daily_ytm_saved': 0, 'intraday_ytm_saved': 0, 'errors': ['Нет облигаций']}
     
     bonds = bonds_list
     stats = {
         'daily_ytm_saved': 0,
         'intraday_ytm_saved': 0,
-        'spreads_saved': 0,
         'errors': []
     }
     
-    total_steps = len(bonds) + len(bonds) * 3 + len(bonds) * (len(bonds) - 1)
+    # total_steps: дневные YTM + intraday (3 интервала для каждой)
+    total_steps = len(bonds) * 4
     current_step = 0
     
     # 1. Дневные YTM для всех облигаций (1 год)
@@ -628,70 +629,6 @@ def update_database_full(bonds_list: List = None, progress_callback=None) -> Dic
                     stats['intraday_ytm_saved'] += saved
             except Exception as e:
                 stats['errors'].append(f"Intraday YTM {bond.name} {interval_str}min: {str(e)}")
-            
-            current_step += 1
-    
-    # 3. Спреды для всех пар (daily mode)
-    for i, bond1 in enumerate(bonds):
-        for j, bond2 in enumerate(bonds):
-            if i >= j:
-                current_step += 1
-                continue
-            
-            try:
-                if progress_callback:
-                    progress_callback(current_step / total_steps, f"Расчёт спреда: {bond1.name}/{bond2.name}")
-                
-                # Загружаем YTM для обеих облигаций
-                df1 = db.load_daily_ytm(bond1.isin)
-                df2 = db.load_daily_ytm(bond2.isin)
-                
-                if df1.empty or df2.empty:
-                    current_step += 1
-                    continue
-                
-                # Рассчитываем спред
-                merged = pd.merge(
-                    df1.reset_index()[['date', 'ytm']],
-                    df2.reset_index()[['date', 'ytm']],
-                    on='date',
-                    suffixes=('_1', '_2')
-                )
-                merged['spread'] = (merged['ytm_1'] - merged['ytm_2']) * 100
-                
-                # Рассчитываем перцентили
-                p25 = merged['spread'].quantile(0.25)
-                p75 = merged['spread'].quantile(0.75)
-                
-                # Определяем сигнал
-                def get_signal(spread):
-                    if spread < p25:
-                        return 'SELL_BUY'
-                    elif spread > p75:
-                        return 'BUY_SELL'
-                    return 'NEUTRAL'
-                
-                merged['signal'] = merged['spread'].apply(get_signal)
-                
-                # Сохраняем спреды
-                for idx, row in merged.iterrows():
-                    db.save_spread(
-                        isin_1=bond1.isin,
-                        isin_2=bond2.isin,
-                        mode='daily',
-                        datetime_val=row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date']),
-                        ytm_1=row['ytm_1'],
-                        ytm_2=row['ytm_2'],
-                        spread_bp=row['spread'],
-                        signal=row['signal'],
-                        p25=p25,
-                        p75=p75
-                    )
-                
-                stats['spreads_saved'] += len(merged)
-                
-            except Exception as e:
-                stats['errors'].append(f"Spread {bond1.name}/{bond2.name}: {str(e)}")
             
             current_step += 1
     
@@ -931,7 +868,6 @@ def main():
                 
                 - Дневных YTM: {result['daily_ytm_saved']}
                 - Intraday YTM: {result['intraday_ytm_saved']}
-                - Спредов: {result['spreads_saved']}
                 """)
                 
                 if result['errors']:
