@@ -101,23 +101,72 @@ class MOEXBondsFetcher:
 
     def fetch_ofz_only(self) -> List[Dict[str, Any]]:
         """
-        Получить только ОФЗ облигации
+        Получить только ОФЗ облигации (оптимизировано - из marketdata)
 
         Returns:
             Список ОФЗ облигаций
         """
-        all_bonds = self.fetch_all_bonds()
+        # ОПТИМИЗАЦИЯ: Получаем ISIN из marketdata (быстро, один запрос)
+        # Затем получаем детали только для ОФЗ
+        url = f"{self.MOEX_BASE_URL}/engines/stock/markets/bonds/securities.json"
+        params = {
+            "iss.meta": "off",
+            "securities.columns": "SECID,NAME,SHORTNAME,FACEVALUE,COUPONPERCENT,MATDATE",
+            "marketdata.columns": "SECID,BOARDID",
+        }
 
-        # Фильтруем ОФЗ по ISIN (SU26..., SU25...)
-        ofz_bonds = []
-        for bond in all_bonds:
-            isin = bond.get("isin", "")
-            # ОФЗ имеют ISIN вида SU26xxxRMFSx, SU25xxxRMFSx, SU24xxxRMFSx
-            if isin.startswith("SU26") or isin.startswith("SU25") or isin.startswith("SU24"):
-                ofz_bonds.append(bond)
+        try:
+            response = self._make_request(url, params)
+            data = response.json()
 
-        logger.info(f"Найдено {len(ofz_bonds)} ОФЗ облигаций")
-        return ofz_bonds
+            # Получаем ISIN с TQOB (только торгующиеся на основном рынке)
+            marketdata = data.get("marketdata", {})
+            md_rows = marketdata.get("data", [])
+            tqob_isins = set()
+            for row in md_rows:
+                if row[1] == "TQOB":  # BOARDID
+                    tqob_isins.add(row[0])
+
+            # Получаем securities
+            securities = data.get("securities", {})
+            columns = securities.get("columns", [])
+            rows = securities.get("data", [])
+
+            ofz_bonds = []
+            seen_isins = set()  # Для удаления дублей
+
+            for row in rows:
+                bond = dict(zip(columns, row))
+                isin = bond.get("SECID", "")
+
+                # Убираем дубли
+                if isin in seen_isins:
+                    continue
+
+                # Только ОФЗ-ПД (26xxx, 25xxx, 24xxx)
+                if not (isin.startswith("SU26") or isin.startswith("SU25") or isin.startswith("SU24")):
+                    continue
+
+                # Только если торгуется на TQOB
+                if isin not in tqob_isins:
+                    continue
+
+                seen_isins.add(isin)
+                ofz_bonds.append({
+                    "isin": isin,
+                    "name": bond.get("NAME"),
+                    "short_name": bond.get("SHORTNAME"),
+                    "face_value": bond.get("FACEVALUE"),
+                    "coupon_rate": bond.get("COUPONPERCENT"),
+                    "maturity_date": bond.get("MATDATE"),
+                })
+
+            logger.info(f"Найдено {len(ofz_bonds)} ОФЗ облигаций (оптимизировано)")
+            return ofz_bonds
+
+        except Exception as e:
+            logger.error(f"Ошибка при получении ОФЗ: {e}")
+            return []
 
     def fetch_bond_details(self, isin: str) -> Dict[str, Any]:
         """
@@ -247,13 +296,13 @@ class MOEXBondsFetcher:
         Получить рыночные данные для ВСЕХ облигаций одним запросом (оптимизировано)
 
         Returns:
-            Словарь {isin: {ytm, duration_days, price, last_trade_date, ...}}
+            Словарь {isin: {ytm, duration_days, price, num_trades, ...}}
         """
         url = f"{self.MOEX_BASE_URL}/engines/stock/markets/bonds/securities.json"
         params = {
             "iss.meta": "off",
             "securities.columns": "SECID",
-            "marketdata.columns": "SECID,BOARDID,YIELD,DURATION,MARKETPRICE,LASTTRADEDATE",
+            "marketdata.columns": "SECID,BOARDID,YIELD,DURATION,MARKETPRICE,NUMTRADES,VALTODAY",
         }
 
         try:
@@ -280,6 +329,8 @@ class MOEXBondsFetcher:
 
                 duration_days = self._parse_float(row_dict.get("DURATION"))
                 duration_years = duration_days / 365.25 if duration_days else None
+                num_trades = self._parse_int(row_dict.get("NUMTRADES"))
+                val_today = self._parse_float(row_dict.get("VALTODAY"))
 
                 result[isin] = {
                     "isin": isin,
@@ -288,7 +339,9 @@ class MOEXBondsFetcher:
                     "last_price": self._parse_float(row_dict.get("MARKETPRICE")),
                     "duration_days": duration_days,
                     "duration_years": duration_years,
-                    "last_trade_date": row_dict.get("LASTTRADEDATE"),
+                    "num_trades": num_trades,
+                    "val_today": val_today,
+                    "has_trades": num_trades is not None and num_trades > 0,
                 }
 
             logger.info(f"Получены рыночные данные для {len(result)} облигаций (пакетный запрос)")
@@ -332,7 +385,9 @@ class MOEXBondsFetcher:
                     "last_ytm": market_data.get("last_ytm"),
                     "duration_days": market_data.get("duration_days"),
                     "duration_years": market_data.get("duration_years"),
-                    "last_trade_date": market_data.get("last_trade_date"),
+                    "num_trades": market_data.get("num_trades"),
+                    "val_today": market_data.get("val_today"),
+                    "has_trades": market_data.get("has_trades", False),
                     "has_market_data": market_data.get("has_data", False),
                 }
 
@@ -361,7 +416,9 @@ class MOEXBondsFetcher:
                     "last_ytm": market_data.get("last_ytm"),
                     "duration_days": market_data.get("duration_days"),
                     "duration_years": market_data.get("duration_years"),
-                    "last_trade_date": market_data.get("last_trade_date"),
+                    "num_trades": market_data.get("num_trades"),
+                    "val_today": market_data.get("val_today"),
+                    "has_trades": market_data.get("has_trades", False),
                     "has_market_data": market_data.get("has_data", False),
                 }
 
@@ -479,14 +536,15 @@ def fetch_ofz_with_market_data(include_details: bool = False) -> List[Dict[str, 
 
 # Константы фильтрации
 MIN_MATURITY_DAYS = 183  # 0.5 года
-MAX_TRADE_DAYS_AGO = 10  # Торги за последние 10 дней
+MAX_TRADE_DAYS_AGO = 10  # Торги за последние 10 дней (не используется, оставлено для совместимости)
 
 
 def filter_ofz_for_trading(
     bonds: List[Dict[str, Any]],
     min_maturity_days: int = MIN_MATURITY_DAYS,
     max_trade_days_ago: int = MAX_TRADE_DAYS_AGO,
-    require_duration: bool = True
+    require_duration: bool = True,
+    require_trades: bool = True
 ) -> List[Dict[str, Any]]:
     """
     Отфильтровать ОФЗ по критериям для торговли
@@ -494,20 +552,20 @@ def filter_ofz_for_trading(
     Критерии:
     - ОФЗ-ПД (26xxx, 25xxx, 24xxx) - постоянный купон
     - Срок до погашения > min_maturity_days (по умолчанию 183 дня = 0.5 года)
-    - Торги за последние max_trade_days_ago дней (по умолчанию 10)
+    - Наличие сделок (has_trades=True или num_trades > 0)
     - Наличие дюрации (если require_duration=True)
 
     Args:
-        bonds: Список облигаций с данными (должны быть maturity_date, last_trade_date, duration_days)
+        bonds: Список облигаций с данными (maturity_date, has_trades/num_trades, duration_days)
         min_maturity_days: Минимальный срок до погашения в днях
-        max_trade_days_ago: Максимальное количество дней с последней торговли
+        max_trade_days_ago: Не используется (оставлено для совместимости)
         require_duration: Требовать наличие дюрации
+        require_trades: Требовать наличие сделок сегодня
 
     Returns:
         Отфильтрованный список облигаций
     """
     today = date.today()
-    cutoff_trade_date = today - timedelta(days=max_trade_days_ago)
 
     filtered = []
 
@@ -534,20 +592,12 @@ def filter_ofz_for_trading(
             # Нет даты погашения - пропускаем
             continue
 
-        # 3. Проверка торгов за последние N дней
-        last_trade_date = bond.get("last_trade_date")
-        if last_trade_date:
-            if isinstance(last_trade_date, str):
-                try:
-                    last_trade_date = datetime.strptime(last_trade_date, "%Y-%m-%d").date()
-                except ValueError:
-                    continue
-
-            if last_trade_date < cutoff_trade_date:
+        # 3. Проверка наличия торгов (по has_trades или num_trades)
+        if require_trades:
+            has_trades = bond.get("has_trades", False)
+            num_trades = bond.get("num_trades", 0)
+            if not has_trades and (num_trades is None or num_trades <= 0):
                 continue
-        else:
-            # Нет данных о торгах - пропускаем
-            continue
 
         # 4. Проверка дюрации
         if require_duration:
