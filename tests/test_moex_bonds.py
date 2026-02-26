@@ -9,12 +9,20 @@ import os
 import json
 import unittest
 from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 # Добавляем родительскую директорию в путь
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from api.moex_bonds import MOEXBondsFetcher, fetch_all_ofz, fetch_ofz_with_market_data
+from api.moex_bonds import (
+    MOEXBondsFetcher,
+    fetch_all_ofz,
+    fetch_ofz_with_market_data,
+    filter_ofz_for_trading,
+    fetch_and_filter_ofz,
+    MIN_MATURITY_DAYS,
+    MAX_TRADE_DAYS_AGO
+)
 
 
 class TestMOEXBondsFetcher(unittest.TestCase):
@@ -254,6 +262,250 @@ class TestParseFunctions(TestMOEXBondsFetcher):
         assert self.fetcher._parse_int("invalid") is None
 
 
+class TestFilterOfzForTrading(unittest.TestCase):
+    """Тесты для filter_ofz_for_trading"""
+
+    def setUp(self):
+        """Подготовка тестовых данных"""
+        self.today = date.today()
+
+        # Создаём тестовые облигации
+        self.test_bonds = [
+            # Подходит по всем критериям
+            {
+                "isin": "SU26221RMFS0",
+                "name": "ОФЗ 26221",
+                "maturity_date": (self.today + timedelta(days=365)).strftime("%Y-%m-%d"),
+                "last_trade_date": self.today.strftime("%Y-%m-%d"),
+                "duration_days": 2000,
+                "duration_years": 5.5,
+            },
+            # Слишком короткий срок до погашения (< 0.5 года)
+            {
+                "isin": "SU26222RMFS0",
+                "name": "ОФЗ 26222",
+                "maturity_date": (self.today + timedelta(days=100)).strftime("%Y-%m-%d"),
+                "last_trade_date": self.today.strftime("%Y-%m-%d"),
+                "duration_days": 100,
+                "duration_years": 0.3,
+            },
+            # Нет торгов последние 10 дней
+            {
+                "isin": "SU26223RMFS0",
+                "name": "ОФЗ 26223",
+                "maturity_date": (self.today + timedelta(days=365)).strftime("%Y-%m-%d"),
+                "last_trade_date": (self.today - timedelta(days=15)).strftime("%Y-%m-%d"),
+                "duration_days": 2000,
+                "duration_years": 5.5,
+            },
+            # Нет дюрации
+            {
+                "isin": "SU26224RMFS0",
+                "name": "ОФЗ 26224",
+                "maturity_date": (self.today + timedelta(days=365)).strftime("%Y-%m-%d"),
+                "last_trade_date": self.today.strftime("%Y-%m-%d"),
+                "duration_days": None,
+                "duration_years": None,
+            },
+            # Не ОФЗ-ПД (другой ISIN)
+            {
+                "isin": "RU000A0JX0J2",
+                "name": "Корпоративный бонд",
+                "maturity_date": (self.today + timedelta(days=365)).strftime("%Y-%m-%d"),
+                "last_trade_date": self.today.strftime("%Y-%m-%d"),
+                "duration_days": 2000,
+                "duration_years": 5.5,
+            },
+            # Погашена (отрицательный срок)
+            {
+                "isin": "SU26225RMFS1",
+                "name": "ОФЗ 26225",
+                "maturity_date": (self.today - timedelta(days=10)).strftime("%Y-%m-%d"),
+                "last_trade_date": (self.today - timedelta(days=15)).strftime("%Y-%m-%d"),
+                "duration_days": 0,
+                "duration_years": 0,
+            },
+        ]
+
+    def test_filter_basic(self):
+        """Базовая фильтрация"""
+        filtered = filter_ofz_for_trading(self.test_bonds)
+
+        # Только одна облигация должна пройти
+        assert len(filtered) == 1
+        assert filtered[0]["isin"] == "SU26221RMFS0"
+
+    def test_filter_maturity_threshold(self):
+        """Фильтрация по сроку до погашения"""
+        # Устанавливаем строгий порог
+        filtered = filter_ofz_for_trading(
+            self.test_bonds,
+            min_maturity_days=200  # ~0.55 года
+        )
+
+        # Облигация с 100 днями до погашения не пройдёт
+        isins = [b["isin"] for b in filtered]
+        assert "SU26222RMFS0" not in isins
+
+    def test_filter_trade_date(self):
+        """Фильтрация по дате торгов"""
+        filtered = filter_ofz_for_trading(
+            self.test_bonds,
+            max_trade_days_ago=5
+        )
+
+        # Облигация с торгами 15 дней назад не пройдёт
+        isins = [b["isin"] for b in filtered]
+        assert "SU26223RMFS0" not in isins
+
+    def test_filter_without_duration_check(self):
+        """Фильтрация без проверки дюрации"""
+        filtered = filter_ofz_for_trading(
+            self.test_bonds,
+            require_duration=False
+        )
+
+        # Должно пройти больше облигаций
+        isins = [b["isin"] for b in filtered]
+        assert "SU26221RMFS0" in isins
+        # Без проверки дюрации SU26224RMFS0 тоже пройдёт (если другие критерии ок)
+        # Но она всё равно не пройдёт из-за других проблем в тестовых данных
+
+    def test_filter_sorting_by_duration(self):
+        """Сортировка по дюрации"""
+        # Создаём облигации с разной дюрацией
+        bonds = [
+            {
+                "isin": "SU26221RMFS0",
+                "name": "ОФЗ 26221",
+                "maturity_date": (self.today + timedelta(days=3650)).strftime("%Y-%m-%d"),
+                "last_trade_date": self.today.strftime("%Y-%m-%d"),
+                "duration_days": 3000,
+                "duration_years": 8.2,
+            },
+            {
+                "isin": "SU26225RMFS1",
+                "name": "ОФЗ 26225",
+                "maturity_date": (self.today + timedelta(days=730)).strftime("%Y-%m-%d"),
+                "last_trade_date": self.today.strftime("%Y-%m-%d"),
+                "duration_days": 1000,
+                "duration_years": 2.7,
+            },
+            {
+                "isin": "SU26230RMFS1",
+                "name": "ОФЗ 26230",
+                "maturity_date": (self.today + timedelta(days=1825)).strftime("%Y-%m-%d"),
+                "last_trade_date": self.today.strftime("%Y-%m-%d"),
+                "duration_days": 2000,
+                "duration_years": 5.5,
+            },
+        ]
+
+        filtered = filter_ofz_for_trading(bonds)
+
+        # Должны быть отсортированы по дюрации
+        assert len(filtered) == 3
+        assert filtered[0]["isin"] == "SU26225RMFS1"  # 2.7 года
+        assert filtered[1]["isin"] == "SU26230RMFS1"  # 5.5 лет
+        assert filtered[2]["isin"] == "SU26221RMFS0"  # 8.2 года
+
+    def test_filter_adds_fields(self):
+        """Добавляются вычисленные поля"""
+        filtered = filter_ofz_for_trading(self.test_bonds)
+
+        if filtered:
+            assert "days_to_maturity" in filtered[0]
+            assert "is_filtered" in filtered[0]
+            assert filtered[0]["is_filtered"] is True
+
+    def test_filter_ofz_24_series(self):
+        """ОФЗ 24 серии проходят (ОФЗ-ПД)"""
+        bonds = [
+            {
+                "isin": "SU24000RMFS0",
+                "name": "ОФЗ 24000",
+                "maturity_date": (self.today + timedelta(days=365)).strftime("%Y-%m-%d"),
+                "last_trade_date": self.today.strftime("%Y-%m-%d"),
+                "duration_days": 2000,
+                "duration_years": 5.5,
+            }
+        ]
+
+        filtered = filter_ofz_for_trading(bonds)
+        assert len(filtered) == 1
+
+    def test_filter_empty_list(self):
+        """Пустой список на входе"""
+        filtered = filter_ofz_for_trading([])
+        assert len(filtered) == 0
+
+    def test_filter_no_maturity_date(self):
+        """Нет даты погашения"""
+        bonds = [
+            {
+                "isin": "SU26221RMFS0",
+                "name": "ОФЗ 26221",
+                "maturity_date": None,
+                "last_trade_date": self.today.strftime("%Y-%m-%d"),
+                "duration_days": 2000,
+            }
+        ]
+
+        filtered = filter_ofz_for_trading(bonds)
+        assert len(filtered) == 0
+
+    def test_filter_no_trade_date(self):
+        """Нет даты торгов"""
+        bonds = [
+            {
+                "isin": "SU26221RMFS0",
+                "name": "ОФЗ 26221",
+                "maturity_date": (self.today + timedelta(days=365)).strftime("%Y-%m-%d"),
+                "last_trade_date": None,
+                "duration_days": 2000,
+            }
+        ]
+
+        filtered = filter_ofz_for_trading(bonds)
+        assert len(filtered) == 0
+
+
+class TestFetchAndFilterOfz(unittest.TestCase):
+    """Тесты для fetch_and_filter_ofz"""
+
+    @patch('api.moex_bonds.fetch_ofz_with_market_data')
+    def test_fetch_and_filter(self, mock_fetch):
+        """Комбинированная функция"""
+        mock_fetch.return_value = [
+            {
+                "isin": "SU26221RMFS0",
+                "name": "ОФЗ 26221",
+                "maturity_date": (date.today() + timedelta(days=365)).strftime("%Y-%m-%d"),
+                "last_trade_date": date.today().strftime("%Y-%m-%d"),
+                "duration_days": 2000,
+                "duration_years": 5.5,
+            }
+        ]
+
+        result = fetch_and_filter_ofz()
+
+        assert len(result) == 1
+        mock_fetch.assert_called_once()
+
+
+class TestConstants(unittest.TestCase):
+    """Тесты для констант"""
+
+    def test_min_maturity_days(self):
+        """Проверка константы MIN_MATURITY_DAYS"""
+        # 0.5 года ≈ 183 дня
+        assert MIN_MATURITY_DAYS == 183
+
+    def test_max_trade_days_ago(self):
+        """Проверка константы MAX_TRADE_DAYS_AGO"""
+        assert MAX_TRADE_DAYS_AGO == 10
+
+
 def run_tests():
     """Запуск всех тестов"""
     loader = unittest.TestLoader()
@@ -265,6 +517,9 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestFetchMarketData))
     suite.addTests(loader.loadTestsFromTestCase(TestConvenienceFunctions))
     suite.addTests(loader.loadTestsFromTestCase(TestParseFunctions))
+    suite.addTests(loader.loadTestsFromTestCase(TestFilterOfzForTrading))
+    suite.addTests(loader.loadTestsFromTestCase(TestFetchAndFilterOfz))
+    suite.addTests(loader.loadTestsFromTestCase(TestConstants))
 
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)

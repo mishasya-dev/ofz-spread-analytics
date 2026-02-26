@@ -385,3 +385,130 @@ def fetch_ofz_with_market_data(include_details: bool = False) -> List[Dict[str, 
     """
     fetcher = get_fetcher()
     return fetcher.fetch_ofz_with_market_data(include_details=include_details)
+
+
+# ==========================================
+# ФИЛЬТРАЦИЯ ОФЗ
+# ==========================================
+
+# Константы фильтрации
+MIN_MATURITY_DAYS = 183  # 0.5 года
+MAX_TRADE_DAYS_AGO = 10  # Торги за последние 10 дней
+
+
+def filter_ofz_for_trading(
+    bonds: List[Dict[str, Any]],
+    min_maturity_days: int = MIN_MATURITY_DAYS,
+    max_trade_days_ago: int = MAX_TRADE_DAYS_AGO,
+    require_duration: bool = True
+) -> List[Dict[str, Any]]:
+    """
+    Отфильтровать ОФЗ по критериям для торговли
+
+    Критерии:
+    - ОФЗ-ПД (26xxx, 25xxx, 24xxx) - постоянный купон
+    - Срок до погашения > min_maturity_days (по умолчанию 183 дня = 0.5 года)
+    - Торги за последние max_trade_days_ago дней (по умолчанию 10)
+    - Наличие дюрации (если require_duration=True)
+
+    Args:
+        bonds: Список облигаций с данными (должны быть maturity_date, last_trade_date, duration_days)
+        min_maturity_days: Минимальный срок до погашения в днях
+        max_trade_days_ago: Максимальное количество дней с последней торговли
+        require_duration: Требовать наличие дюрации
+
+    Returns:
+        Отфильтрованный список облигаций
+    """
+    today = date.today()
+    cutoff_trade_date = today - timedelta(days=max_trade_days_ago)
+
+    filtered = []
+
+    for bond in bonds:
+        isin = bond.get("isin", "")
+
+        # 1. Проверка ОФЗ-ПД (26xxx, 25xxx, 24xxx)
+        if not (isin.startswith("SU26") or isin.startswith("SU25") or isin.startswith("SU24")):
+            continue
+
+        # 2. Проверка срока до погашения
+        maturity_date = bond.get("maturity_date")
+        if maturity_date:
+            if isinstance(maturity_date, str):
+                try:
+                    maturity_date = datetime.strptime(maturity_date, "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+
+            days_to_maturity = (maturity_date - today).days
+            if days_to_maturity <= min_maturity_days:
+                continue
+        else:
+            # Нет даты погашения - пропускаем
+            continue
+
+        # 3. Проверка торгов за последние N дней
+        last_trade_date = bond.get("last_trade_date")
+        if last_trade_date:
+            if isinstance(last_trade_date, str):
+                try:
+                    last_trade_date = datetime.strptime(last_trade_date, "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+
+            if last_trade_date < cutoff_trade_date:
+                continue
+        else:
+            # Нет данных о торгах - пропускаем
+            continue
+
+        # 4. Проверка дюрации
+        if require_duration:
+            duration_days = bond.get("duration_days")
+            if duration_days is None or duration_days <= 0:
+                continue
+
+        # Добавляем вычисленные поля
+        bond_filtered = {**bond}
+        bond_filtered["days_to_maturity"] = days_to_maturity
+        bond_filtered["is_filtered"] = True
+
+        filtered.append(bond_filtered)
+
+    # Сортируем по дюрации
+    filtered.sort(key=lambda b: b.get("duration_years") or b.get("duration_days") or 0)
+
+    logger.info(
+        f"Фильтрация: {len(bonds)} -> {len(filtered)} облигаций "
+        f"(maturity>{min_maturity_days}д, trades<{max_trade_days_ago}д)"
+    )
+
+    return filtered
+
+
+def fetch_and_filter_ofz(
+    min_maturity_days: int = MIN_MATURITY_DAYS,
+    max_trade_days_ago: int = MAX_TRADE_DAYS_AGO,
+    include_details: bool = False
+) -> List[Dict[str, Any]]:
+    """
+    Получить и отфильтровать ОФЗ за один вызов
+
+    Args:
+        min_maturity_days: Минимальный срок до погашения в днях
+        max_trade_days_ago: Максимальное количество дней с последней торговли
+        include_details: Загружать детальную информацию
+
+    Returns:
+        Отфильтрованный список ОФЗ
+    """
+    # Получаем ОФЗ с рыночными данными
+    bonds = fetch_ofz_with_market_data(include_details=include_details)
+
+    # Фильтруем
+    return filter_ofz_for_trading(
+        bonds,
+        min_maturity_days=min_maturity_days,
+        max_trade_days_ago=max_trade_days_ago
+    )
