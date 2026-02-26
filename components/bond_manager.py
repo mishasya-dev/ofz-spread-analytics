@@ -132,6 +132,26 @@ def show_bond_manager_dialog():
     """
     db = get_bond_manager()
 
+    # CSS для читаемости
+    st.markdown("""
+    <style>
+        .bond-table-row {
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .bond-isin {
+            font-family: monospace;
+            background: #f0f0f0;
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #333 !important;
+        }
+        .stMarkdown p {
+            color: #333 !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
     # Заголовок с информацией
     st.markdown("""
     ### 📊 Список ОФЗ для торговли
@@ -271,7 +291,7 @@ def show_bond_manager_dialog():
         is_favorite = row["is_favorite"]
 
         with col1:
-            st.code(isin, language=None)
+            st.markdown(f"`{isin}`")
 
         with col2:
             st.write(row["Название"])

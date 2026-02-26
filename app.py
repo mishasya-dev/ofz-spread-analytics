@@ -72,6 +72,13 @@ st.markdown("""
         background: #f8f9fa;
         padding: 10px;
         border-radius: 8px;
+        color: #333;
+    }
+    .stMetric label {
+        color: #555 !important;
+    }
+    .stMetric [data-testid="stMetricValue"] {
+        color: #333 !important;
     }
     .mode-badge {
         display: inline-block;
