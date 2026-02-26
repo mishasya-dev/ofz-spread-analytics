@@ -20,13 +20,14 @@ logger = logging.getLogger(__name__)
 
 
 class CandleInterval(Enum):
-    """Интервалы свечей"""
-    MIN_1 = "1"
-    MIN_10 = "10"
-    MIN_60 = "60"
-    DAY = "24"
-    WEEK = "7"
-    MONTH = "31"
+    """Интервалы свечей MOEX"""
+    MIN_1 = "1"      # 1 минута
+    MIN_10 = "10"    # 10 минут
+    MIN_60 = "60"    # 1 час
+    MIN_240 = "240"  # 4 часа (если поддерживается)
+    DAY = "24"       # 1 день
+    WEEK = "7"       # 1 неделя
+    MONTH = "31"     # 1 месяц
 
 
 @dataclass

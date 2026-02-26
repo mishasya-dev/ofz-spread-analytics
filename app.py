@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import AppConfig, BacktestConfig, BondConfig
 from api.moex_trading import TradingChecker, TradingStatus
 from api.moex_history import HistoryFetcher
+from api.moex_candles import CandleFetcher, CandleInterval
 from core.spread import SpreadCalculator, SpreadStats
 from core.signals import SignalGenerator, TradingSignal, SignalType
 from components.charts import ChartBuilder
@@ -67,6 +68,22 @@ st.markdown("""
         padding: 10px;
         border-radius: 8px;
     }
+    .mode-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 15px;
+        font-size: 0.85em;
+        font-weight: bold;
+        margin-left: 10px;
+    }
+    .mode-daily {
+        background: #3498db;
+        color: white;
+    }
+    .mode-intraday {
+        background: #e74c3c;
+        color: white;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -116,6 +133,12 @@ def init_session_state():
     
     if 'last_update' not in st.session_state:
         st.session_state.last_update = None
+    
+    if 'data_mode' not in st.session_state:
+        st.session_state.data_mode = "daily"  # "daily" или "intraday"
+    
+    if 'candle_interval' not in st.session_state:
+        st.session_state.candle_interval = "60"  # "10", "60", "240"
 
 
 @st.cache_resource
@@ -128,6 +151,12 @@ def get_trading_checker():
 def get_history_fetcher():
     """Получить экземпляр HistoryFetcher (кэшируется)"""
     return HistoryFetcher()
+
+
+@st.cache_resource
+def get_candle_fetcher():
+    """Получить экземпляр CandleFetcher (кэшируется)"""
+    return CandleFetcher()
 
 
 @st.cache_resource
@@ -155,6 +184,34 @@ def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
     fetcher = get_history_fetcher()
     start_date = date.today() - timedelta(days=days)
     return fetcher.fetch_ytm_history(secid, start_date=start_date)
+
+
+@st.cache_data(ttl=60)
+def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, days: int) -> pd.DataFrame:
+    """Получить данные свечей с YTM с кэшированием"""
+    fetcher = get_candle_fetcher()
+    
+    # Восстанавливаем BondConfig из словаря
+    bond_config = BondConfig(**bond_config_dict)
+    
+    # Маппинг интервала
+    interval_map = {
+        "10": CandleInterval.MIN_10,   # 10 минут
+        "60": CandleInterval.MIN_60,   # 1 час
+        "240": CandleInterval.MIN_240, # 4 часа
+    }
+    
+    candle_interval = interval_map.get(interval, CandleInterval.MIN_60)
+    
+    start_date = date.today() - timedelta(days=days)
+    
+    return fetcher.fetch_candles(
+        isin,
+        bond_config=bond_config,
+        interval=candle_interval,
+        start_date=start_date,
+        end_date=date.today()
+    )
 
 
 def calculate_spread_stats(spread_series: pd.Series) -> Dict:
@@ -201,43 +258,57 @@ def generate_signal(current_spread: float, p10: float, p25: float, p75: float, p
         }
 
 
-def create_charts(df1: pd.DataFrame, df2: pd.DataFrame, merged_df: pd.DataFrame, stats: Dict, bond1_name: str, bond2_name: str):
-    """Создаёт графики с Plotly"""
+def create_ytm_chart(df1: pd.DataFrame, df2: pd.DataFrame, bond1_name: str, bond2_name: str, is_intraday: bool = False):
+    """Создаёт график YTM"""
     import plotly.graph_objects as go
     
-    # График доходностей
-    fig_yields = go.Figure()
-    fig_yields.add_trace(go.Scatter(
-        x=df1.index, y=df1['ytm'],
+    fig = go.Figure()
+    
+    # Определяем колонки
+    ytm_col1 = 'ytm_close' if 'ytm_close' in df1.columns else 'ytm'
+    ytm_col2 = 'ytm_close' if 'ytm_close' in df2.columns else 'ytm'
+    
+    fig.add_trace(go.Scatter(
+        x=df1.index, y=df1[ytm_col1],
         name=bond1_name, line=dict(color='#3498DB', width=2)
     ))
-    fig_yields.add_trace(go.Scatter(
-        x=df2.index, y=df2['ytm'],
+    fig.add_trace(go.Scatter(
+        x=df2.index, y=df2[ytm_col2],
         name=bond2_name, line=dict(color='#E74C3C', width=2)
     ))
-    fig_yields.update_layout(
-        title='Доходность к погашению (YTM)',
-        xaxis_title='Дата',
+    
+    title = 'Доходность к погашению (YTM) - Внутридневные данные' if is_intraday else 'Доходность к погашению (YTM)'
+    x_title = 'Время' if is_intraday else 'Дата'
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title=x_title,
         yaxis_title='Доходность, %',
         hovermode='x unified',
         height=400,
         margin=dict(l=0, r=0, t=40, b=0)
     )
     
-    # График спреда
-    fig_spread = go.Figure()
+    return fig
+
+
+def create_spread_chart(merged_df: pd.DataFrame, stats: Dict, is_intraday: bool = False):
+    """Создаёт график спреда"""
+    import plotly.graph_objects as go
+    
+    fig = go.Figure()
     
     # Линии перцентилей
-    fig_spread.add_hline(y=stats['mean'], line_dash='dash', line_color='gray',
-                         annotation_text=f"Среднее: {stats['mean']:.2f}")
-    fig_spread.add_hline(y=stats['p25'], line_dash='dot', line_color='green',
-                         annotation_text=f"P25: {stats['p25']:.2f}")
-    fig_spread.add_hline(y=stats['p75'], line_dash='dot', line_color='red',
-                         annotation_text=f"P75: {stats['p75']:.2f}")
+    fig.add_hline(y=stats['mean'], line_dash='dash', line_color='gray',
+                  annotation_text=f"Среднее: {stats['mean']:.2f}")
+    fig.add_hline(y=stats['p25'], line_dash='dot', line_color='green',
+                  annotation_text=f"P25: {stats['p25']:.2f}")
+    fig.add_hline(y=stats['p75'], line_dash='dot', line_color='red',
+                  annotation_text=f"P75: {stats['p75']:.2f}")
     
     # Основной график спреда
-    fig_spread.add_trace(go.Scatter(
-        x=merged_df['date'],
+    fig.add_trace(go.Scatter(
+        x=merged_df['datetime'] if 'datetime' in merged_df.columns else merged_df['date'],
         y=merged_df['spread'],
         name='Спред',
         line=dict(color='#9B59B6', width=2),
@@ -246,24 +317,42 @@ def create_charts(df1: pd.DataFrame, df2: pd.DataFrame, merged_df: pd.DataFrame,
     ))
     
     # Текущая точка
-    fig_spread.add_trace(go.Scatter(
-        x=[merged_df['date'].iloc[-1]],
+    x_current = merged_df['datetime'].iloc[-1] if 'datetime' in merged_df.columns else merged_df['date'].iloc[-1]
+    fig.add_trace(go.Scatter(
+        x=[x_current],
         y=[merged_df['spread'].iloc[-1]],
         mode='markers',
         marker=dict(size=12, color='yellow', line=dict(width=2, color='black')),
         name='Текущий'
     ))
     
-    fig_spread.update_layout(
-        title='Спред доходности (базисные пункты)',
-        xaxis_title='Дата',
+    title = 'Спред доходности (базисные пункты) - Внутридневные данные' if is_intraday else 'Спред доходности (базисные пункты)'
+    x_title = 'Время' if is_intraday else 'Дата'
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title=x_title,
         yaxis_title='Спред, б.п.',
         hovermode='x unified',
         height=400,
         margin=dict(l=0, r=0, t=40, b=0)
     )
     
-    return fig_yields, fig_spread
+    return fig
+
+
+def bond_config_to_dict(bond: BondConfig) -> Dict:
+    """Конвертировать BondConfig в словарь для кэширования"""
+    return {
+        'isin': bond.isin,
+        'name': bond.name,
+        'maturity_date': bond.maturity_date,
+        'coupon_rate': bond.coupon_rate,
+        'face_value': bond.face_value,
+        'coupon_frequency': bond.coupon_frequency,
+        'issue_date': bond.issue_date,
+        'day_count_convention': getattr(bond, 'day_count_convention', 'ACT/ACT')
+    }
 
 
 def main():
@@ -273,11 +362,41 @@ def main():
     config = st.session_state.config
     bonds = list(config.bonds.values())
     
-    # Боковая панель
+    # ==========================================
+    # БОКОВАЯ ПАНЕЛЬ
+    # ==========================================
     with st.sidebar:
         st.header("⚙️ Настройки")
         
-        # Получаем данные для отображения в dropdown (пробуем торговые)
+        # Переключатель режима данных
+        st.subheader("📊 Режим данных")
+        data_mode = st.radio(
+            "Источник YTM",
+            ["daily", "intraday"],
+            format_func=lambda x: "📅 Дневные данные" if x == "daily" else "⏱️ Внутридневные (свечи)",
+            index=0 if st.session_state.data_mode == "daily" else 1
+        )
+        st.session_state.data_mode = data_mode
+        
+        # Выбор интервала свечей (только для внутридневного режима)
+        if data_mode == "intraday":
+            candle_interval = st.select_slider(
+                "Интервал свечей",
+                options=["10", "60", "240"],
+                format_func=lambda x: {
+                    "10": "10 минут",
+                    "60": "1 час",
+                    "240": "4 часа"
+                }[x],
+                value=st.session_state.candle_interval
+            )
+            st.session_state.candle_interval = candle_interval
+            
+            st.info(f"📊 YTM рассчитывается из цен {candle_interval}-минутных свечей")
+        
+        st.divider()
+        
+        # Получаем данные для отображения в dropdown
         bond_labels = []
         bond_trading_data = {}
         
@@ -306,13 +425,23 @@ def main():
         st.session_state.selected_bond2 = bond2_idx
         
         # Период
-        period = st.radio(
-            "Период анализа",
-            [365, 730],
-            format_func=lambda x: f"{x // 365} год(а)",
-            index=0 if st.session_state.period == 365 else 1
-        )
-        st.session_state.period = period
+        if data_mode == "daily":
+            period = st.radio(
+                "Период анализа",
+                [365, 730],
+                format_func=lambda x: f"{x // 365} год(а)",
+                index=0 if st.session_state.period == 365 else 1
+            )
+            st.session_state.period = period
+        else:
+            # Для внутридневного режима - меньше дней
+            period = st.slider(
+                "Дней истории",
+                min_value=1,
+                max_value=7,
+                value=3,
+                step=1
+            )
         
         st.divider()
         
@@ -344,65 +473,118 @@ def main():
             st.cache_data.clear()
             st.rerun()
     
-    # Заголовок
-    st.title("📊 OFZ Spread Analytics")
-    st.markdown("Анализ спредов облигаций ОФЗ с данными Московской биржи")
+    # ==========================================
+    # ЗАГОЛОВОК
+    # ==========================================
+    mode_badge = '<span class="mode-badge mode-daily">📅 Дневной режим</span>' if data_mode == "daily" else '<span class="mode-badge mode-intraday">⏱️ Внутридневной режим</span>'
     
-    # Получение данных
+    st.markdown(f"""
+    <div style="display: flex; align-items: center; margin-bottom: 10px;">
+        <h1 style="margin: 0;">📊 OFZ Spread Analytics</h1>
+        {mode_badge}
+    </div>
+    <p style="margin: 0; color: #666;">Анализ спредов облигаций ОФЗ с данными Московской биржи</p>
+    """, unsafe_allow_html=True)
+    
+    # ==========================================
+    # ЗАГРУЗКА ДАННЫХ
+    # ==========================================
     bond1 = bonds[bond1_idx]
     bond2 = bonds[bond2_idx]
     
-    # Загрузка данных
-    with st.spinner("Загрузка данных с MOEX..."):
-        # Исторические данные всегда нужны для графиков
-        df1 = fetch_historical_data_cached(bond1.isin, period)
-        df2 = fetch_historical_data_cached(bond2.isin, period)
+    with st.spinner(f"Загрузка {'дневных' if data_mode == 'daily' else 'внутридневных'} данных с MOEX..."):
         
-        # Пробуем получить торговые данные
-        trading1 = bond_trading_data.get(bond1.isin, {})
-        trading2 = bond_trading_data.get(bond2.isin, {})
-        
-        # Определяем режим работы
-        is_trading = trading1.get('has_data') and trading1.get('yield') is not None
-        
-        if is_trading:
-            # Биржа работает — используем торговые данные
-            current1 = trading1
-            current2 = trading2
-            status_text = "🟢 Торговая сессия"
-            status_color = "#2ECC71"
-            source_text = "Торговые данные"
-        else:
-            # Торгов нет — используем исторические
-            is_trading = False
-            status_text = "🔴 Торги не проводятся"
-            status_color = "#E74C3C"
-            source_text = "Исторические данные"
+        if data_mode == "daily":
+            # === ДНЕВНОЙ РЕЖИМ ===
+            df1 = fetch_historical_data_cached(bond1.isin, period)
+            df2 = fetch_historical_data_cached(bond2.isin, period)
             
+            # Пробуем получить торговые данные
+            trading1 = bond_trading_data.get(bond1.isin, {})
+            trading2 = bond_trading_data.get(bond2.isin, {})
+            
+            is_trading = trading1.get('has_data') and trading1.get('yield') is not None
+            
+            if is_trading:
+                current1 = trading1
+                current2 = trading2
+                status_text = "🟢 Торговая сессия"
+                status_color = "#2ECC71"
+                source_text = "Торговые данные (YIELDCLOSE)"
+            else:
+                is_trading = False
+                status_text = "🔴 Торги не проводятся"
+                status_color = "#E74C3C"
+                source_text = "Исторические данные (YIELDCLOSE)"
+                
+                current1 = None
+                current2 = None
+                
+                if not df1.empty:
+                    last_row1 = df1.iloc[-1]
+                    current1 = {
+                        'isin': bond1.isin,
+                        'yield': last_row1['ytm'],
+                        'duration_years': df1.get('duration_years', pd.Series([None])).iloc[-1] if 'duration_years' in df1.columns else None,
+                        'price': None,
+                        'date': df1.index[-1]
+                    }
+                
+                if not df2.empty:
+                    last_row2 = df2.iloc[-1]
+                    current2 = {
+                        'isin': bond2.isin,
+                        'yield': last_row2['ytm'],
+                        'duration_years': df2.get('duration_years', pd.Series([None])).iloc[-1] if 'duration_years' in df2.columns else None,
+                        'price': None,
+                        'date': df2.index[-1]
+                    }
+            
+            is_intraday = False
+            
+        else:
+            # === ВНУТРИДНЕВНОЙ РЕЖИМ ===
+            df1 = fetch_candle_data_cached(bond1.isin, bond_config_to_dict(bond1), candle_interval, period)
+            df2 = fetch_candle_data_cached(bond2.isin, bond_config_to_dict(bond2), candle_interval, period)
+            
+            status_text = "⏱️ Внутридневные данные"
+            status_color = "#E74C3C"
+            source_text = f"Свечи {candle_interval} мин + расчёт YTM из цены"
+            
+            is_trading = not df1.empty and not df2.empty
+            is_intraday = True
+            
+            # Текущие данные из свечей
             current1 = None
             current2 = None
             
-            if not df1.empty:
+            if not df1.empty and 'ytm_close' in df1.columns:
                 last_row1 = df1.iloc[-1]
-                current1 = {
-                    'isin': bond1.isin,
-                    'yield': last_row1['ytm'],
-                    'duration_years': df1.get('duration_years', pd.Series([None])).iloc[-1] if 'duration_years' in df1.columns else None,
-                    'price': None,
-                    'date': df1.index[-1]
-                }
+                ytm_val1 = last_row1['ytm_close']
+                if pd.notna(ytm_val1):
+                    current1 = {
+                        'isin': bond1.isin,
+                        'yield': ytm_val1,
+                        'duration_years': None,
+                        'price': last_row1['close'],
+                        'date': df1.index[-1]
+                    }
             
-            if not df2.empty:
+            if not df2.empty and 'ytm_close' in df2.columns:
                 last_row2 = df2.iloc[-1]
-                current2 = {
-                    'isin': bond2.isin,
-                    'yield': last_row2['ytm'],
-                    'duration_years': df2.get('duration_years', pd.Series([None])).iloc[-1] if 'duration_years' in df2.columns else None,
-                    'price': None,
-                    'date': df2.index[-1]
-                }
+                ytm_val2 = last_row2['ytm_close']
+                if pd.notna(ytm_val2):
+                    current2 = {
+                        'isin': bond2.isin,
+                        'yield': ytm_val2,
+                        'duration_years': None,
+                        'price': last_row2['close'],
+                        'date': df2.index[-1]
+                    }
     
-    # Индикатор режима работы
+    # ==========================================
+    # ИНДИКАТОР СТАТУСА
+    # ==========================================
     st.markdown(f"""
     <div style="background-color: {status_color}20; padding: 10px 15px; border-radius: 5px; 
                 border-left: 4px solid {status_color}; display: inline-block;">
@@ -415,7 +597,9 @@ def main():
     if st.session_state.auto_refresh:
         st.info(f"🔄 Автообновление включено (каждые {st.session_state.refresh_interval} сек.)")
     
-    # Отображение текущих данных
+    # ==========================================
+    # КАРТОЧКИ ОБЛИГАЦИЙ
+    # ==========================================
     col1, col2 = st.columns(2)
     
     years1 = get_years_to_maturity(bond1.maturity_date)
@@ -430,16 +614,22 @@ def main():
                 st.metric("YTM", f"{current1['yield']:.2f}%" if current1['yield'] else "Н/Д")
             with metric_col2:
                 price_val = current1.get('price')
-                st.metric("Цена", f"{price_val:.2f}%" if price_val else "Н/Д")
+                if price_val:
+                    st.metric("Цена", f"{price_val:.2f}%")
+                else:
+                    st.metric("Цена", "Н/Д")
             with metric_col3:
                 st.metric("До погашения", f"{years1}г.")
             
-            # Дата данных (для исторических)
             if current1.get('date'):
-                st.caption(f"ISIN: {bond1.isin} | Данные от: {current1['date'].strftime('%d.%m.%Y')}")
+                if isinstance(current1['date'], pd.Timestamp):
+                    date_str = current1['date'].strftime('%d.%m.%Y %H:%M') if is_intraday else current1['date'].strftime('%d.%m.%Y')
+                else:
+                    date_str = current1['date'].strftime('%d.%m.%Y %H:%M') if is_intraday else current1['date'].strftime('%d.%m.%Y')
+                st.caption(f"ISIN: {bond1.isin} | Данные от: {date_str}")
             else:
                 dur = current1.get('duration_years')
-                st.caption(f"ISIN: {bond1.isin} | Дюрация: {dur:.1f}г." if dur else f"ISIN: {bond1.isin}")
+                st.caption(f"ISIN: {bond1.isin}" + (f" | Дюрация: {dur:.1f}г." if dur else ""))
         else:
             st.subheader(f"📈 {bond1.name}")
             st.error("Данные недоступны")
@@ -453,40 +643,68 @@ def main():
                 st.metric("YTM", f"{current2['yield']:.2f}%" if current2['yield'] else "Н/Д")
             with metric_col2:
                 price_val = current2.get('price')
-                st.metric("Цена", f"{price_val:.2f}%" if price_val else "Н/Д")
+                if price_val:
+                    st.metric("Цена", f"{price_val:.2f}%")
+                else:
+                    st.metric("Цена", "Н/Д")
             with metric_col3:
                 st.metric("До погашения", f"{years2}г.")
             
-            # Дата данных (для исторических)
             if current2.get('date'):
-                st.caption(f"ISIN: {bond2.isin} | Данные от: {current2['date'].strftime('%d.%m.%Y')}")
+                if isinstance(current2['date'], pd.Timestamp):
+                    date_str = current2['date'].strftime('%d.%m.%Y %H:%M') if is_intraday else current2['date'].strftime('%d.%m.%Y')
+                else:
+                    date_str = current2['date'].strftime('%d.%m.%Y %H:%M') if is_intraday else current2['date'].strftime('%d.%m.%Y')
+                st.caption(f"ISIN: {bond2.isin} | Данные от: {date_str}")
             else:
                 dur = current2.get('duration_years')
-                st.caption(f"ISIN: {bond2.isin} | Дюрация: {dur:.1f}г." if dur else f"ISIN: {bond2.isin}")
+                st.caption(f"ISIN: {bond2.isin}" + (f" | Дюрация: {dur:.1f}г." if dur else ""))
         else:
             st.subheader(f"📈 {bond2.name}")
             st.error("Данные недоступны")
     
     st.divider()
     
-    # Проверка исторических данных
+    # ==========================================
+    # ПРОВЕРКА ДАННЫХ
+    # ==========================================
     if df1.empty or df2.empty:
-        st.error("Не удалось загрузить исторические данные для одной или обеих облигаций")
+        st.error("Не удалось загрузить данные для одной или обеих облигаций")
         st.stop()
     
-    # Объединение данных
-    merged_df = pd.merge(
-        df1.reset_index()[['date', 'ytm']],
-        df2.reset_index()[['date', 'ytm']],
-        on='date',
-        suffixes=('_1', '_2')
-    )
+    # ==========================================
+    # ОБЪЕДИНЕНИЕ И РАСЧЁТ СПРЕДА
+    # ==========================================
+    if is_intraday:
+        # Для внутридневных данных
+        ytm_col = 'ytm_close'
+        
+        merged_df = pd.merge(
+            df1[[ytm_col]].rename(columns={ytm_col: 'ytm_1'}),
+            df2[[ytm_col]].rename(columns={ytm_col: 'ytm_2'}),
+            left_index=True,
+            right_index=True,
+            how='inner'
+        )
+        merged_df = merged_df.reset_index()
+        merged_df = merged_df.rename(columns={'datetime': 'datetime'})
+        merged_df['date'] = merged_df['datetime']
+    else:
+        # Для дневных данных
+        merged_df = pd.merge(
+            df1.reset_index()[['date', 'ytm']],
+            df2.reset_index()[['date', 'ytm']],
+            on='date',
+            suffixes=('_1', '_2')
+        )
+    
     merged_df['spread'] = (merged_df['ytm_1'] - merged_df['ytm_2']) * 100  # в базисных пунктах
     
-    # Статистика
+    # ==========================================
+    # СТАТИСТИКА И СИГНАЛ
+    # ==========================================
     stats = calculate_spread_stats(merged_df['spread'])
     
-    # Торговый сигнал
     signal = generate_signal(
         stats['current'], 
         stats['p10'], 
@@ -509,13 +727,18 @@ def main():
     
     st.divider()
     
-    # Графики (друг под другом)
-    fig_yields, fig_spread = create_charts(df1, df2, merged_df, stats, bond1.name, bond2.name)
+    # ==========================================
+    # ГРАФИКИ
+    # ==========================================
+    fig_ytm = create_ytm_chart(df1, df2, bond1.name, bond2.name, is_intraday)
+    fig_spread = create_spread_chart(merged_df, stats, is_intraday)
     
-    st.plotly_chart(fig_yields, use_container_width=True)
+    st.plotly_chart(fig_ytm, use_container_width=True)
     st.plotly_chart(fig_spread, use_container_width=True)
     
-    # Статистика спреда
+    # ==========================================
+    # СТАТИСТИКА СПРЕДА
+    # ==========================================
     st.subheader("📊 Статистика спреда")
     
     stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
@@ -532,12 +755,21 @@ def main():
         st.metric("Минимум", f"{stats['min']:.2f} б.п.")
         st.metric("Максимум", f"{stats['max']:.2f} б.п.")
     
-    # История данных
+    # ==========================================
+    # ИСТОРИЯ ДАННЫХ
+    # ==========================================
     with st.expander("📋 История данных (последние 10 записей)"):
         display_df = merged_df.tail(10).copy()
-        display_df['date'] = display_df['date'].dt.strftime('%d.%m.%Y')
+        
+        if is_intraday and 'datetime' in display_df.columns:
+            display_df['datetime'] = display_df['datetime'].dt.strftime('%d.%m.%Y %H:%M')
+            display_cols = ['datetime', 'ytm_1', 'ytm_2', 'spread']
+        else:
+            display_df['date'] = display_df['date'].dt.strftime('%d.%m.%Y')
+            display_cols = ['date', 'ytm_1', 'ytm_2', 'spread']
+        
         st.dataframe(
-            display_df.style.format({
+            display_df[display_cols].style.format({
                 'ytm_1': '{:.3f}',
                 'ytm_2': '{:.3f}',
                 'spread': '{:.2f}'
@@ -545,7 +777,7 @@ def main():
             use_container_width=True
         )
     
-    # Обновление времени последнего обновления
+    # Обновление времени
     st.session_state.last_update = datetime.now()
     
     # Автообновление
