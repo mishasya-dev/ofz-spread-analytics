@@ -1,11 +1,10 @@
 """
-Расчёт доходности к погашению (YTM) для облигаций
+Расчёт доходности к погашению (YTM) для облигаций ОФЗ
 """
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
-import numpy as np
-from scipy import optimize
+import math
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,45 +12,51 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class BondParams:
-    """Параметры облигации"""
+    """Параметры облигации для расчёта YTM"""
     isin: str
     name: str
     face_value: float
     coupon_rate: float  # В процентах годовых
-    coupon_frequency: int  # Купоны в год
+    coupon_frequency: int  # Купоны в год (обычно 2 для ОФЗ)
     maturity_date: date
     issue_date: Optional[date] = None
-    current_coupon_date: Optional[date] = None
-    accrued_interest: float = 0.0
+    day_count_convention: str = "ACT/ACT"
 
 
 class YTMCalculator:
-    """Калькулятор доходности к погашению"""
+    """
+    Калькулятор доходности к погашению (YTM)
     
-    def __init__(self, day_count_basis: str = "ACT/ACT"):
+    Использует итеративный метод Ньютона-Рафсона для решения уравнения:
+    Price = Sum(CF_i / (1 + YTM)^t_i)
+    """
+    
+    def __init__(self, max_iterations: int = 100, tolerance: float = 1e-6):
         """
-        Инициализация калькулятора
+        Инициализация
         
         Args:
-            day_count_basis: База расчёта дней (ACT/ACT, ACT/365, 30/360)
+            max_iterations: Максимальное число итераций
+            tolerance: Точность расчёта
         """
-        self.day_count_basis = day_count_basis
+        self.max_iterations = max_iterations
+        self.tolerance = tolerance
     
     def calculate_ytm(
         self,
-        price: float,
+        price_percent: float,
         bond_params: BondParams,
         settlement_date: Optional[date] = None,
-        dirty_price: bool = False
+        accrued_interest: float = 0.0
     ) -> Optional[float]:
         """
         Рассчитать YTM из цены облигации
         
         Args:
-            price: Цена облигации (в % от номинала или абсолютная)
-            settlement_date: Дата расчёта
+            price_percent: Чистая цена в процентах от номинала (например, 72.5)
             bond_params: Параметры облигации
-            dirty_price: True если цена включает НКД
+            settlement_date: Дата расчёта (по умолчанию сегодня)
+            accrued_interest: Накопленный купонный доход (НКД) в рублях
             
         Returns:
             YTM в процентах годовых или None
@@ -59,17 +64,14 @@ class YTMCalculator:
         if settlement_date is None:
             settlement_date = date.today()
         
-        # Нормализуем цену к номиналу
-        if price <= 100:  # Цена в процентах
-            clean_price = price * bond_params.face_value / 100
-        else:  # Абсолютная цена
-            clean_price = price
+        # Проверка даты погашения
+        if settlement_date >= bond_params.maturity_date:
+            logger.warning(f"{bond_params.isin}: Дата погашения уже прошла")
+            return None
         
-        # Добавляем НКД если цена чистая
-        if not dirty_price:
-            dirty_price_value = clean_price + bond_params.accrued_interest
-        else:
-            dirty_price_value = clean_price
+        # Конвертируем цену в абсолютное значение
+        clean_price = price_percent * bond_params.face_value / 100
+        dirty_price = clean_price + accrued_interest
         
         # Генерируем денежные потоки
         cash_flows = self._generate_cash_flows(bond_params, settlement_date)
@@ -77,13 +79,56 @@ class YTMCalculator:
         if not cash_flows:
             return None
         
-        # Находим YTM методом Ньютона-Рафсона
+        # Решаем уравнение для YTM
         try:
-            ytm = self._solve_ytm(dirty_price_value, cash_flows)
-            return ytm
+            ytm = self._solve_ytm_newton(dirty_price, cash_flows, settlement_date)
+            return round(ytm, 3)
         except Exception as e:
-            logger.debug(f"Ошибка расчёта YTM: {e}")
+            logger.debug(f"Ошибка расчёта YTM для {bond_params.isin}: {e}")
             return None
+    
+    def calculate_ytm_simple(
+        self,
+        price_percent: float,
+        bond_params: BondParams,
+        settlement_date: Optional[date] = None
+    ) -> float:
+        """
+        Упрощённый расчёт YTM (формула приблизительной доходности)
+        
+        YTM ≈ (C + (F - P) / n) / ((F + P) / 2)
+        
+        Args:
+            price_percent: Цена в процентах от номинала
+            bond_params: Параметры облигации
+            settlement_date: Дата расчёта
+            
+        Returns:
+            YTM в процентах годовых
+        """
+        if settlement_date is None:
+            settlement_date = date.today()
+        
+        # Лет до погашения
+        days_to_maturity = (bond_params.maturity_date - settlement_date).days
+        years_to_maturity = days_to_maturity / 365.25
+        
+        if years_to_maturity <= 0:
+            return bond_params.coupon_rate
+        
+        # Годовой купон в рублях
+        annual_coupon = bond_params.face_value * bond_params.coupon_rate / 100
+        
+        # Цена в рублях
+        price_abs = price_percent * bond_params.face_value / 100
+        
+        # Формула приблизительной доходности
+        numerator = annual_coupon + (bond_params.face_value - price_abs) / years_to_maturity
+        denominator = (bond_params.face_value + price_abs) / 2
+        
+        ytm = (numerator / denominator) * 100
+        
+        return round(ytm, 2)
     
     def calculate_price_from_ytm(
         self,
@@ -118,11 +163,8 @@ class YTMCalculator:
             discount_factor = (1 + ytm / 100) ** years
             price += cf_amount / discount_factor
         
-        # Вычитаем НКД для получения чистой цены
-        clean_price = price - bond_params.accrued_interest
-        
         # Возвращаем в процентах от номинала
-        return round(clean_price / bond_params.face_value * 100, 4)
+        return round(price / bond_params.face_value * 100, 4)
     
     def calculate_duration(
         self,
@@ -149,7 +191,6 @@ class YTMCalculator:
         if not cash_flows:
             return None
         
-        # Рассчитываем цену и взвешенную сумму времён
         price = 0.0
         weighted_time = 0.0
         
@@ -177,13 +218,7 @@ class YTMCalculator:
         """
         Рассчитать модифицированную дюрацию
         
-        Args:
-            ytm: Доходность к погашению
-            bond_params: Параметры облигации
-            settlement_date: Дата расчёта
-            
-        Returns:
-            Модифицированная дюрация или None
+        MD = D / (1 + YTM)
         """
         duration = self.calculate_duration(ytm, bond_params, settlement_date)
         
@@ -193,54 +228,11 @@ class YTMCalculator:
         modified_duration = duration / (1 + ytm / 100)
         return round(modified_duration, 4)
     
-    def calculate_convexity(
-        self,
-        ytm: float,
-        bond_params: BondParams,
-        settlement_date: Optional[date] = None
-    ) -> Optional[float]:
-        """
-        Рассчитать выпуклость (convexity)
-        
-        Args:
-            ytm: Доходность к погашению
-            bond_params: Параметры облигации
-            settlement_date: Дата расчёта
-            
-        Returns:
-            Выпуклость или None
-        """
-        if settlement_date is None:
-            settlement_date = date.today()
-        
-        cash_flows = self._generate_cash_flows(bond_params, settlement_date)
-        
-        if not cash_flows:
-            return None
-        
-        price = 0.0
-        convexity_sum = 0.0
-        
-        for cf_date, cf_amount in cash_flows:
-            days = (cf_date - settlement_date).days
-            years = days / 365.25
-            
-            discount_factor = (1 + ytm / 100) ** years
-            pv = cf_amount / discount_factor
-            
-            price += pv
-            convexity_sum += pv * years * (years + 1)
-        
-        if price <= 0:
-            return None
-        
-        convexity = convexity_sum / (price * (1 + ytm / 100) ** 2)
-        return round(convexity, 6)
-    
     def calculate_accrued_interest(
         self,
         bond_params: BondParams,
-        settlement_date: Optional[date] = None
+        settlement_date: Optional[date] = None,
+        last_coupon_date: Optional[date] = None
     ) -> float:
         """
         Рассчитать накопленный купонный доход (НКД)
@@ -248,47 +240,30 @@ class YTMCalculator:
         Args:
             bond_params: Параметры облигации
             settlement_date: Дата расчёта
+            last_coupon_date: Дата последнего купона
             
         Returns:
-            НКД в абсолютном выражении
+            НКД в рублях
         """
         if settlement_date is None:
             settlement_date = date.today()
         
-        # Если есть текущий НКД, возвращаем его
-        if bond_params.accrued_interest > 0:
-            return bond_params.accrued_interest
-        
-        # Иначе рассчитываем (требуется дата предыдущего купона)
-        # Упрощённый расчёт: берём годовой купон и делим на период
+        # Купон за период в рублях
         coupon_per_period = bond_params.face_value * bond_params.coupon_rate / 100 / bond_params.coupon_frequency
-        days_in_period = 365 / bond_params.coupon_frequency
         
-        # Предполагаем, что прошло половина периода (упрощение)
-        accrued = coupon_per_period * 0.5
+        # Дней между купонами
+        days_between_coupons = 365 // bond_params.coupon_frequency
+        
+        if last_coupon_date:
+            days_since_last = (settlement_date - last_coupon_date).days
+        else:
+            # Упрощение: предполагаем середину купонного периода
+            days_since_last = days_between_coupons // 2
+        
+        # НКД
+        accrued = coupon_per_period * days_since_last / days_between_coupons
         
         return round(accrued, 2)
-    
-    def estimate_years_to_maturity(
-        self,
-        maturity_date: date,
-        settlement_date: Optional[date] = None
-    ) -> float:
-        """
-        Рассчитать лет до погашения
-        
-        Args:
-            maturity_date: Дата погашения
-            settlement_date: Дата расчёта
-            
-        Returns:
-            Количество лет до погашения
-        """
-        if settlement_date is None:
-            settlement_date = date.today()
-        
-        days = (maturity_date - settlement_date).days
-        return round(days / 365.25, 2)
     
     def _generate_cash_flows(
         self,
@@ -298,127 +273,211 @@ class YTMCalculator:
         """
         Генерировать денежные потоки облигации
         
-        Args:
-            bond_params: Параметры облигации
-            settlement_date: Дата расчёта
-            
         Returns:
             Список (дата, сумма) денежных потоков
         """
         cash_flows = []
         
-        if settlement_date >= bond_params.maturity_date:
-            return cash_flows
-        
-        # Купон за период
+        # Купон за период в рублях
         coupon_per_period = bond_params.face_value * bond_params.coupon_rate / 100 / bond_params.coupon_frequency
         
-        # Период между купонами в днях
-        days_between_coupons = int(365 / bond_params.coupon_frequency)
+        # Дней между купонами
+        days_between_coupons = 365 // bond_params.coupon_frequency
         
-        # Начинаем с даты расчёта
+        # Находим следующую купонную дату
+        # Для ОФЗ купоны обычно платятся 2 раза в год
+        # Находим ближайшую дату купона от даты погашения
+        
+        maturity = bond_params.maturity_date
         current_date = settlement_date
         
-        # Находим следующую купонную дату (упрощённо)
-        days_since_last = (settlement_date - date(2020, 1, 1)).days % days_between_coupons
-        next_coupon = settlement_date + __import__('datetime').timedelta(
-            days=days_between_coupons - days_since_last
-        )
+        # Генерируем купонные даты от погашения назад
+        coupon_dates = []
+        temp_date = maturity
         
-        # Генерируем купоны до погашения
-        current_coupon_date = next_coupon
+        while temp_date > settlement_date:
+            coupon_dates.append(temp_date)
+            # Отнимаем полгода
+            temp_date = self._subtract_period(temp_date, bond_params.coupon_frequency)
         
-        while current_coupon_date <= bond_params.maturity_date:
-            cash_flows.append((current_coupon_date, coupon_per_period))
-            current_coupon_date = date(
-                current_coupon_date.year,
-                current_coupon_date.month,
-                current_coupon_date.day
-            ) + __import__('datetime').timedelta(days=days_between_coupons)
+        # Сортируем по возрастанию
+        coupon_dates.sort()
         
-        # Добавляем номинал в дату погашения
-        if cash_flows:
-            # Заменяем последний купон на купон + номинал
-            last_date, last_coupon = cash_flows[-1]
-            cash_flows[-1] = (bond_params.maturity_date, last_coupon + bond_params.face_value)
-        else:
-            # Только номинал
-            cash_flows.append((bond_params.maturity_date, bond_params.face_value))
+        # Добавляем купоны
+        for coupon_date in coupon_dates[:-1]:
+            cash_flows.append((coupon_date, coupon_per_period))
+        
+        # Последний платёж = купон + номинал
+        if coupon_dates:
+            last_date = coupon_dates[-1]
+            cash_flows.append((last_date, coupon_per_period + bond_params.face_value))
         
         return cash_flows
     
-    def _solve_ytm(
+    def _subtract_period(self, dt: date, frequency: int) -> date:
+        """
+        Отнять один купонный период от даты
+        
+        Args:
+            dt: Дата
+            frequency: Купоны в год (2 = полугодовые)
+            
+        Returns:
+            Новая дата
+        """
+        months_to_subtract = 12 // frequency
+        
+        year = dt.year
+        month = dt.month - months_to_subtract
+        
+        if month <= 0:
+            month += 12
+            year -= 1
+        
+        # Корректируем день (например, 31 марта - 6 мес = 30 сентября)
+        day = min(dt.day, 28)  # Безопасный день
+        
+        return date(year, month, day)
+    
+    def _solve_ytm_newton(
         self,
         price: float,
         cash_flows: List[tuple],
-        guess: float = 7.0
+        settlement_date: date,
+        initial_guess: float = 10.0
     ) -> float:
         """
-        Найти YTM численным методом
+        Найти YTM методом Ньютона-Рафсона
         
-        Args:
-            price: Грязная цена облигации
-            cash_flows: Денежные потоки
-            guess: Начальное приближение
-            
-        Returns:
-            YTM в процентах
+        f(ytm) = Sum(CF_i / (1 + ytm)^t_i) - Price = 0
+        f'(ytm) = -Sum(t_i * CF_i / (1 + ytm)^(t_i + 1))
         """
-        def npv(ytm):
-            result = 0.0
-            settlement_date = date.today()
+        ytm = initial_guess
+        
+        for _ in range(self.max_iterations):
+            # Вычисляем f(ytm) и f'(ytm)
+            f_value = 0.0
+            f_derivative = 0.0
             
             for cf_date, cf_amount in cash_flows:
                 days = (cf_date - settlement_date).days
                 years = days / 365.25
-                discount_factor = (1 + ytm / 100) ** years
-                result += cf_amount / discount_factor
+                
+                discount = (1 + ytm / 100) ** years
+                f_value += cf_amount / discount
+                
+                # Производная
+                f_derivative -= years * cf_amount / (discount * (1 + ytm / 100))
             
-            return result - price
+            f_value -= price
+            
+            # Проверка сходимости
+            if abs(f_value) < self.tolerance:
+                return ytm
+            
+            # Шаг Ньютона
+            if abs(f_derivative) < 1e-10:
+                # Защита от деления на ноль
+                break
+            
+            delta = f_value / f_derivative
+            ytm = ytm - delta * 100  # Масштабируем для процентов
+            
+            # Ограничения
+            ytm = max(0.1, min(50.0, ytm))
         
-        try:
-            # Используем метод Брента
-            result = optimize.brentq(npv, 0.1, 50.0)
-            return round(result, 3)
-        except ValueError:
-            # Если не сошлось, пробуем другой метод
-            result = optimize.newton(npv, guess)
-            return round(result, 3)
+        # Если не сошлось, используем бисекцию
+        return self._solve_ytm_bisection(price, cash_flows, settlement_date)
+    
+    def _solve_ytm_bisection(
+        self,
+        price: float,
+        cash_flows: List[tuple],
+        settlement_date: date,
+        low: float = 0.1,
+        high: float = 50.0
+    ) -> float:
+        """
+        Найти YTM методом бисекции (более надёжный)
+        """
+        for _ in range(self.max_iterations):
+            mid = (low + high) / 2
+            
+            # Вычисляем NPV при mid
+            npv = 0.0
+            for cf_date, cf_amount in cash_flows:
+                days = (cf_date - settlement_date).days
+                years = days / 365.25
+                discount = (1 + mid / 100) ** years
+                npv += cf_amount / discount
+            
+            npv -= price
+            
+            if abs(npv) < self.tolerance:
+                return mid
+            
+            if npv > 0:
+                low = mid
+            else:
+                high = mid
+        
+        return mid
 
 
-def calculate_ytm_simple(
-    price: float,
+def calculate_ytm_from_price(
+    price_percent: float,
+    bond_config: Any,
+    settlement_date: Optional[date] = None
+) -> Optional[float]:
+    """
+    Удобная функция для расчёта YTM из цены
+    
+    Args:
+        price_percent: Цена в % от номинала
+        bond_config: Конфигурация облигации (BondConfig)
+        settlement_date: Дата расчёта
+        
+    Returns:
+        YTM в % годовых
+    """
+    # Конвертируем BondConfig в BondParams
+    try:
+        maturity = datetime.strptime(bond_config.maturity_date, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        logger.warning(f"Неверная дата погашения: {bond_config.maturity_date}")
+        return None
+    
+    params = BondParams(
+        isin=bond_config.isin,
+        name=bond_config.name,
+        face_value=bond_config.face_value,
+        coupon_rate=bond_config.coupon_rate,
+        coupon_frequency=bond_config.coupon_frequency,
+        maturity_date=maturity,
+        day_count_convention=getattr(bond_config, 'day_count_convention', 'ACT/ACT')
+    )
+    
+    calculator = YTMCalculator()
+    return calculator.calculate_ytm(price_percent, params, settlement_date)
+
+
+def calculate_simple_ytm(
+    price_percent: float,
     coupon_rate: float,
     years_to_maturity: float,
     face_value: float = 1000
 ) -> float:
     """
-    Упрощённый расчёт YTM
+    Быстрый упрощённый расчёт YTM
     
-    Формула: YTM ≈ (C + (F-P)/n) / ((F+P)/2)
-    
-    Args:
-        price: Цена в % от номинала
-        coupon_rate: Купонная ставка в %
-        years_to_maturity: Лет до погашения
-        face_value: Номинал
-        
-    Returns:
-        YTM в процентах
+    YTM ≈ (C + (F - P) / n) / ((F + P) / 2)
     """
     if years_to_maturity <= 0:
         return coupon_rate
     
-    # Нормализуем цену
-    if price <= 100:
-        price_abs = price * face_value / 100
-    else:
-        price_abs = price
-    
-    # Годовой купон
+    price_abs = price_percent * face_value / 100
     annual_coupon = face_value * coupon_rate / 100
     
-    # Упрощённая формула
     numerator = annual_coupon + (face_value - price_abs) / years_to_maturity
     denominator = (face_value + price_abs) / 2
     
