@@ -224,8 +224,7 @@ def show_bond_manager_dialog():
     sort_col = st.selectbox(
         "Сортировать по",
         ["Дюрации", "YTM", "Купону", "Погашению", "Названию"],
-        index=0,
-        horizontal=True
+        index=0
     )
 
     sort_map = {
