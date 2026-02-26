@@ -794,13 +794,17 @@ def main():
         else:
             # Для внутридневного режима - зависит от интервала
             # 1 минута: макс 3 дня (много данных)
-            # 10 минут и 1 час: макс 30 дней
+            # 10 минут: макс 30 дней
+            # 1 час: макс 365 дней (год) - пагинация работает
             if candle_interval == "1":
                 max_days = 3
                 default_days = 1
-            else:
+            elif candle_interval == "10":
                 max_days = 30
                 default_days = 7
+            else:  # 60 минут (1 час)
+                max_days = 365
+                default_days = 30
             
             period = st.slider(
                 f"Дней истории (макс {max_days} для {candle_interval} мин)",
