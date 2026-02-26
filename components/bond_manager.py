@@ -49,7 +49,7 @@ def load_bonds_for_display() -> List[Dict[str, Any]]:
 
         try:
             # Получаем все ОФЗ с рыночными данными
-            all_bonds = fetcher.fetch_ofz_with_market_data(include_details=True)
+            all_bonds = fetcher.fetch_ofz_with_market_data(include_details=False)
 
             # Фильтруем
             from api.moex_bonds import filter_ofz_for_trading
@@ -117,7 +117,8 @@ def format_maturity(maturity_date: Optional[str]) -> str:
         dt = datetime.strptime(maturity_date, "%Y-%m-%d")
         years = (dt - datetime.now()).days / 365.25
         return f"{dt.strftime('%d.%m.%Y')} ({years:.1f}г.)"
-    except:
+    except (ValueError, TypeError) as e:
+        logger.debug(f"Ошибка парсинга даты погашения: {maturity_date}, {e}")
         return maturity_date
 
 
@@ -178,7 +179,7 @@ def show_bond_manager_dialog():
                 status_placeholder.info("Получение списка ОФЗ...")
                 
                 # Получаем все ОФЗ с рыночными данными
-                all_bonds = fetcher.fetch_ofz_with_market_data(include_details=True)
+                all_bonds = fetcher.fetch_ofz_with_market_data(include_details=False)
                 
                 if not all_bonds:
                     status_placeholder.warning("MOEX не вернул данные. Проверьте соединение.")

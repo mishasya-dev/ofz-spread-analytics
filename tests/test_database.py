@@ -124,7 +124,7 @@ def test_database():
         print(f"{Colors.BOLD}--- Сохранение свечей ---{Colors.END}\n")
         
         # Создаём тестовый DataFrame со свечами
-        dates = pd.date_range(start='2025-01-01 10:00', periods=10, freq='H')
+        dates = pd.date_range(start='2025-01-01 10:00', periods=10, freq='h')
         candles_df = pd.DataFrame({
             'open': np.random.uniform(70, 72, 10),
             'high': np.random.uniform(72, 74, 10),
@@ -288,7 +288,7 @@ def test_database():
         print(f"{Colors.BOLD}--- Фильтрация по датам ---{Colors.END}\n")
         
         # Добавим свечи за другой день
-        dates2 = pd.date_range(start='2025-01-02 10:00', periods=5, freq='H')
+        dates2 = pd.date_range(start='2025-01-02 10:00', periods=5, freq='h')
         candles_df2 = pd.DataFrame({
             'open': np.random.uniform(70, 72, 5),
             'high': np.random.uniform(72, 74, 5),
@@ -365,7 +365,7 @@ def test_database():
         print(f"{Colors.BOLD}--- Intraday YTM ---{Colors.END}\n")
         
         # Создаём тестовый DataFrame с intraday YTM
-        dates_intraday = pd.date_range(start='2025-01-01 10:00', periods=50, freq='H')
+        dates_intraday = pd.date_range(start='2025-01-01 10:00', periods=50, freq='h')
         intraday_ytm_df = pd.DataFrame({
             'close': np.random.uniform(70, 72, 50),
             'ytm_close': np.random.uniform(14, 15, 50),
@@ -524,7 +524,7 @@ def test_database():
         print(f"{Colors.BOLD}--- Фильтрация intraday YTM ---{Colors.END}\n")
         
         # Добавим данные за другой день
-        dates_intraday2 = pd.date_range(start='2025-01-02 10:00', periods=30, freq='H')
+        dates_intraday2 = pd.date_range(start='2025-01-02 10:00', periods=30, freq='h')
         intraday_ytm_df2 = pd.DataFrame({
             'close': np.random.uniform(70, 72, 30),
             'ytm_close': np.random.uniform(14, 15, 30),

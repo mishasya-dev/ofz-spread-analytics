@@ -242,17 +242,75 @@ class MOEXBondsFetcher:
             logger.error(f"Ошибка при получении рыночных данных для {isin}: {e}")
             return {"isin": isin, "has_data": False, "error": str(e)}
 
+    def fetch_all_market_data(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Получить рыночные данные для ВСЕХ облигаций одним запросом (оптимизировано)
+
+        Returns:
+            Словарь {isin: {ytm, duration_days, price, last_trade_date, ...}}
+        """
+        url = f"{self.MOEX_BASE_URL}/engines/stock/markets/bonds/securities.json"
+        params = {
+            "iss.meta": "off",
+            "securities.columns": "SECID",
+            "marketdata.columns": "SECID,BOARDID,YIELD,DURATION,MARKETPRICE,LASTTRADEDATE",
+        }
+
+        try:
+            response = self._make_request(url, params)
+            data = response.json()
+
+            # Парсим marketdata
+            marketdata = data.get("marketdata", {})
+            columns = marketdata.get("columns", [])
+            rows = marketdata.get("data", [])
+
+            result = {}
+
+            for row in rows:
+                row_dict = dict(zip(columns, row))
+
+                # Только TQOB (основной рынок)
+                if row_dict.get("BOARDID") != "TQOB":
+                    continue
+
+                isin = row_dict.get("SECID")
+                if not isin:
+                    continue
+
+                duration_days = self._parse_float(row_dict.get("DURATION"))
+                duration_years = duration_days / 365.25 if duration_days else None
+
+                result[isin] = {
+                    "isin": isin,
+                    "has_data": True,
+                    "last_ytm": self._parse_float(row_dict.get("YIELD")),
+                    "last_price": self._parse_float(row_dict.get("MARKETPRICE")),
+                    "duration_days": duration_days,
+                    "duration_years": duration_years,
+                    "last_trade_date": row_dict.get("LASTTRADEDATE"),
+                }
+
+            logger.info(f"Получены рыночные данные для {len(result)} облигаций (пакетный запрос)")
+            return result
+
+        except Exception as e:
+            logger.error(f"Ошибка при пакетном получении рыночных данных: {e}")
+            return {}
+
     def fetch_ofz_with_market_data(
         self,
         include_details: bool = False,
-        delay: float = 0.2
+        delay: float = 0.1,
+        use_batch: bool = True
     ) -> List[Dict[str, Any]]:
         """
         Получить ОФЗ с рыночными данными
 
         Args:
             include_details: Загружать детальную информацию (медленнее)
-            delay: Задержка между запросами
+            delay: Задержка между запросами (только если use_batch=False)
+            use_batch: Использовать пакетный запрос (быстрее, рекомендуется)
 
         Returns:
             Список ОФЗ с рыночными данными
@@ -260,39 +318,67 @@ class MOEXBondsFetcher:
         ofz_bonds = self.fetch_ofz_only()
         result = []
 
-        for i, bond in enumerate(ofz_bonds):
-            isin = bond["isin"]
+        if use_batch:
+            # ОПТИМИЗИРОВАННЫЙ ПУТЬ: один запрос для всех рыночных данных
+            all_market_data = self.fetch_all_market_data()
 
-            # Получаем рыночные данные
-            market_data = self.fetch_market_data(isin)
+            for bond in ofz_bonds:
+                isin = bond["isin"]
+                market_data = all_market_data.get(isin, {"has_data": False})
 
-            # Объединяем данные
-            bond_data = {
-                **bond,
-                "last_price": market_data.get("last_price"),
-                "last_ytm": market_data.get("last_ytm"),
-                "duration_days": market_data.get("duration_days"),
-                "duration_years": market_data.get("duration_years"),
-                "last_trade_date": market_data.get("last_trade_date"),
-                "has_market_data": market_data.get("has_data", False),
-            }
+                bond_data = {
+                    **bond,
+                    "last_price": market_data.get("last_price"),
+                    "last_ytm": market_data.get("last_ytm"),
+                    "duration_days": market_data.get("duration_days"),
+                    "duration_years": market_data.get("duration_years"),
+                    "last_trade_date": market_data.get("last_trade_date"),
+                    "has_market_data": market_data.get("has_data", False),
+                }
 
-            # Если нужны детали
-            if include_details:
-                details = self.fetch_bond_details(isin)
-                bond_data.update({
-                    "issue_date": details.get("issue_date"),
-                    "coupon_frequency": details.get("coupon_frequency"),
-                    "day_count": details.get("day_count"),
-                })
+                # Детали загружаем только если нужно (медленно)
+                if include_details:
+                    details = self.fetch_bond_details(isin)
+                    bond_data.update({
+                        "issue_date": details.get("issue_date"),
+                        "coupon_frequency": details.get("coupon_frequency"),
+                        "day_count": details.get("day_count"),
+                    })
+                    time_module.sleep(delay)
 
-            result.append(bond_data)
+                result.append(bond_data)
 
-            # Лог прогресса
-            if (i + 1) % 20 == 0:
-                logger.info(f"Обработано {i + 1}/{len(ofz_bonds)} облигаций")
+        else:
+            # МЕДЛЕННЫЙ ПУТЬ: отдельный запрос для каждой облигации
+            for i, bond in enumerate(ofz_bonds):
+                isin = bond["isin"]
 
-            time_module.sleep(delay)
+                market_data = self.fetch_market_data(isin)
+
+                bond_data = {
+                    **bond,
+                    "last_price": market_data.get("last_price"),
+                    "last_ytm": market_data.get("last_ytm"),
+                    "duration_days": market_data.get("duration_days"),
+                    "duration_years": market_data.get("duration_years"),
+                    "last_trade_date": market_data.get("last_trade_date"),
+                    "has_market_data": market_data.get("has_data", False),
+                }
+
+                if include_details:
+                    details = self.fetch_bond_details(isin)
+                    bond_data.update({
+                        "issue_date": details.get("issue_date"),
+                        "coupon_frequency": details.get("coupon_frequency"),
+                        "day_count": details.get("day_count"),
+                    })
+
+                result.append(bond_data)
+
+                if (i + 1) % 20 == 0:
+                    logger.info(f"Обработано {i + 1}/{len(ofz_bonds)} облигаций")
+
+                time_module.sleep(delay)
 
         logger.info(f"Получено {len(result)} ОФЗ с рыночными данными")
         return result
