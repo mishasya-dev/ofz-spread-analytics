@@ -318,6 +318,277 @@ def test_database():
         )
         
         # ==========================================
+        # ТЕСТ 13: Daily YTM
+        # ==========================================
+        print(f"{Colors.BOLD}--- Daily YTM ---{Colors.END}\n")
+        
+        # Создаём тестовый DataFrame с дневными YTM
+        dates_daily = pd.date_range(start='2025-01-01', periods=30, freq='D')
+        daily_ytm_df = pd.DataFrame({
+            'ytm': np.random.uniform(14, 15, 30),
+            'price': np.random.uniform(70, 72, 30),
+            'duration_days': np.random.uniform(1000, 3000, 30)
+        }, index=dates_daily)
+        
+        saved_daily = db.save_daily_ytm('TEST12345678', daily_ytm_df)
+        
+        run_test(
+            "Сохранение 30 дневных YTM",
+            "30",
+            str(saved_daily),
+            saved_daily == 30
+        )
+        
+        # Загрузка дневных YTM
+        loaded_daily = db.load_daily_ytm('TEST12345678')
+        
+        run_test(
+            "Загрузка дневных YTM",
+            "30 записей",
+            f"{len(loaded_daily)} записей",
+            len(loaded_daily) == 30
+        )
+        
+        # Последняя дата дневного YTM
+        last_daily_date = db.get_last_daily_ytm_date('TEST12345678')
+        
+        run_test(
+            "Последняя дата daily YTM",
+            "2025-01-30",
+            f"{last_daily_date}",
+            last_daily_date is not None and last_daily_date == date(2025, 1, 30)
+        )
+        
+        # ==========================================
+        # ТЕСТ 14: Intraday YTM
+        # ==========================================
+        print(f"{Colors.BOLD}--- Intraday YTM ---{Colors.END}\n")
+        
+        # Создаём тестовый DataFrame с intraday YTM
+        dates_intraday = pd.date_range(start='2025-01-01 10:00', periods=50, freq='H')
+        intraday_ytm_df = pd.DataFrame({
+            'close': np.random.uniform(70, 72, 50),
+            'ytm_close': np.random.uniform(14, 15, 50),
+            'accrued_interest': np.random.uniform(20, 40, 50)
+        }, index=dates_intraday)
+        
+        saved_intraday = db.save_intraday_ytm('TEST12345678', '60', intraday_ytm_df)
+        
+        run_test(
+            "Сохранение 50 intraday YTM",
+            "50",
+            str(saved_intraday),
+            saved_intraday == 50
+        )
+        
+        # Загрузка intraday YTM
+        loaded_intraday = db.load_intraday_ytm('TEST12345678', '60')
+        
+        run_test(
+            "Загрузка intraday YTM",
+            "50 записей",
+            f"{len(loaded_intraday)} записей",
+            len(loaded_intraday) == 50
+        )
+        
+        # Проверяем наличие колонок
+        run_test(
+            "Наличие колонок в intraday",
+            "close, ytm_close",
+            f"{', '.join([c for c in ['close', 'ytm_close'] if c in loaded_intraday.columns])}",
+            'close' in loaded_intraday.columns and 'ytm_close' in loaded_intraday.columns
+        )
+        
+        # Последний datetime intraday YTM
+        last_intraday_dt = db.get_last_intraday_ytm_datetime('TEST12345678', '60')
+        
+        run_test(
+            "Последний datetime intraday YTM",
+            "2025-01-01",
+            f"{last_intraday_dt.strftime('%Y-%m-%d') if last_intraday_dt else 'None'}",
+            last_intraday_dt is not None
+        )
+        
+        # ==========================================
+        # ТЕСТ 15: Спреды
+        # ==========================================
+        print(f"{Colors.BOLD}--- Спреды ---{Colors.END}\n")
+        
+        # Сохранение одного спреда
+        spread_id = db.save_spread(
+            isin_1='BOND1',
+            isin_2='BOND2',
+            mode='daily',
+            datetime_val='2025-01-15',
+            ytm_1=14.5,
+            ytm_2=14.3,
+            spread_bp=20.0,
+            signal='BUY_SELL',
+            p25=-10.0,
+            p75=30.0
+        )
+        
+        run_test(
+            "Сохранение спреда",
+            "id > 0",
+            f"id = {spread_id}",
+            spread_id > 0
+        )
+        
+        # Сохранение пакета спредов
+        spread_dates = pd.date_range(start='2025-01-01', periods=20, freq='D')
+        spreads_df = pd.DataFrame({
+            'datetime': spread_dates,
+            'ytm_1': np.random.uniform(14, 15, 20),
+            'ytm_2': np.random.uniform(14, 15, 20),
+            'spread': np.random.uniform(-30, 30, 20),
+            'signal': ['BUY_SELL' if i % 2 == 0 else 'SELL_BUY' for i in range(20)]
+        })
+        
+        saved_spreads = db.save_spreads_batch('BOND1', 'BOND2', 'daily', spreads_df)
+        
+        run_test(
+            "Сохранение пакета спредов",
+            "20",
+            str(saved_spreads),
+            saved_spreads == 20
+        )
+        
+        # Загрузка спредов
+        loaded_spreads = db.load_spreads('BOND1', 'BOND2', 'daily')
+        
+        run_test(
+            "Загрузка спредов",
+            ">=20 записей",
+            f"{len(loaded_spreads)} записей",
+            len(loaded_spreads) >= 20
+        )
+        
+        # Проверяем наличие колонок
+        run_test(
+            "Наличие колонок в spreads",
+            "ytm_1, ytm_2, spread_bp",
+            f"{', '.join([c for c in ['ytm_1', 'ytm_2', 'spread_bp'] if c in loaded_spreads.columns])}",
+            all(c in loaded_spreads.columns for c in ['ytm_1', 'ytm_2', 'spread_bp'])
+        )
+        
+        # ==========================================
+        # ТЕСТ 16: Статистика после добавления YTM
+        # ==========================================
+        print(f"{Colors.BOLD}--- Обновлённая статистика ---{Colors.END}\n")
+        
+        stats_after = db.get_stats()
+        
+        run_test(
+            "Статистика: daily_ytm_count",
+            "30",
+            str(stats_after.get('daily_ytm_count')),
+            stats_after.get('daily_ytm_count') == 30
+        )
+        
+        run_test(
+            "Статистика: intraday_ytm_count",
+            "50",
+            str(stats_after.get('intraday_ytm_count')),
+            stats_after.get('intraday_ytm_count') == 50
+        )
+        
+        run_test(
+            "Статистика: spreads_count",
+            ">=21",
+            str(stats_after.get('spreads_count')),
+            stats_after.get('spreads_count') >= 21
+        )
+        
+        # ==========================================
+        # ТЕСТ 17: Фильтрация daily YTM по датам
+        # ==========================================
+        print(f"{Colors.BOLD}--- Фильтрация daily YTM ---{Colors.END}\n")
+        
+        filtered_daily = db.load_daily_ytm(
+            'TEST12345678',
+            start_date=date(2025, 1, 10),
+            end_date=date(2025, 1, 20)
+        )
+        
+        run_test(
+            "Фильтрация daily YTM по датам",
+            "11 записей (10-20 янв)",
+            f"{len(filtered_daily)} записей",
+            len(filtered_daily) == 11
+        )
+        
+        # ==========================================
+        # ТЕСТ 18: Фильтрация intraday YTM по датам
+        # ==========================================
+        print(f"{Colors.BOLD}--- Фильтрация intraday YTM ---{Colors.END}\n")
+        
+        # Добавим данные за другой день
+        dates_intraday2 = pd.date_range(start='2025-01-02 10:00', periods=30, freq='H')
+        intraday_ytm_df2 = pd.DataFrame({
+            'close': np.random.uniform(70, 72, 30),
+            'ytm_close': np.random.uniform(14, 15, 30),
+            'accrued_interest': np.random.uniform(20, 40, 30)
+        }, index=dates_intraday2)
+        
+        db.save_intraday_ytm('TEST12345678', '60', intraday_ytm_df2)
+        
+        filtered_intraday = db.load_intraday_ytm(
+            'TEST12345678', '60',
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 1, 1)
+        )
+        
+        run_test(
+            "Фильтрация intraday YTM по датам",
+            "данные за 1 января",
+            f"{len(filtered_intraday)} записей",
+            len(filtered_intraday) > 0  # Данные есть
+        )
+        
+        # ==========================================
+        # ТЕСТ 19: Разные интервалы intraday
+        # ==========================================
+        print(f"{Colors.BOLD}--- Разные интервалы intraday ---{Colors.END}\n")
+        
+        # Сохраняем для другого интервала
+        dates_10min = pd.date_range(start='2025-01-01 10:00', periods=20, freq='10min')
+        intraday_10min_df = pd.DataFrame({
+            'close': np.random.uniform(70, 72, 20),
+            'ytm_close': np.random.uniform(14, 15, 20),
+            'accrued_interest': np.random.uniform(20, 40, 20)
+        }, index=dates_10min)
+        
+        saved_10min = db.save_intraday_ytm('TEST12345678', '10', intraday_10min_df)
+        
+        run_test(
+            "Сохранение 10-минутных YTM",
+            "20",
+            str(saved_10min),
+            saved_10min == 20
+        )
+        
+        # Загружаем для 10-минутного интервала
+        loaded_10min = db.load_intraday_ytm('TEST12345678', '10')
+        
+        run_test(
+            "Загрузка 10-минутных YTM",
+            "20 записей",
+            f"{len(loaded_10min)} записей",
+            len(loaded_10min) == 20
+        )
+        
+        # Загружаем для часового интервала - должно быть 80 (50 + 30)
+        loaded_60min = db.load_intraday_ytm('TEST12345678', '60')
+        
+        run_test(
+            "Загрузка часовых YTM (не изменились)",
+            ">=50 записей",
+            f"{len(loaded_60min)} записей",
+            len(loaded_60min) >= 50  # Минимум исходные 50 записей
+        )
+        
+        # ==========================================
         # ТЕСТ 12: Удаление старых данных
         # ==========================================
         print(f"{Colors.BOLD}--- Очистка старых данных ---{Colors.END}\n")

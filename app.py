@@ -150,6 +150,9 @@ def init_session_state():
     
     if 'saved_count' not in st.session_state:
         st.session_state.saved_count = 0
+    
+    if 'updating_db' not in st.session_state:
+        st.session_state.updating_db = False
 
 
 @st.cache_resource
@@ -191,10 +194,52 @@ def fetch_trading_data_cached(secid: str) -> Dict:
 
 @st.cache_data(ttl=300)
 def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
-    """Получить исторические данные с кэшированием"""
+    """
+    Получить исторические данные с кэшированием
+    
+    Приоритет:
+    1. Загрузить YTM из БД (если есть)
+    2. Если нет - загрузить с MOEX и сохранить в БД
+    """
     fetcher = get_history_fetcher()
+    db = get_db()
     start_date = date.today() - timedelta(days=days)
-    return fetcher.fetch_ytm_history(secid, start_date=start_date)
+    
+    # Проверяем наличие данных в БД
+    db_df = db.load_daily_ytm(secid, start_date=start_date)
+    
+    # Получаем последнюю дату в БД
+    last_db_date = db.get_last_daily_ytm_date(secid)
+    
+    if not db_df.empty and last_db_date:
+        # Есть данные в БД, проверяем актуальность
+        days_since_update = (date.today() - last_db_date).days
+        
+        if days_since_update <= 1:
+            # Данные актуальны - возвращаем из БД
+            logger.info(f"Загружены дневные YTM из БД для {secid}: {len(db_df)} записей")
+            return db_df
+        else:
+            # Нужно обновить - загружаем недостающие данные с MOEX
+            new_start = last_db_date + timedelta(days=1)
+            new_df = fetcher.fetch_ytm_history(secid, start_date=new_start)
+            
+            if not new_df.empty:
+                # Сохраняем новые данные в БД
+                db.save_daily_ytm(secid, new_df)
+                # Объединяем
+                db_df = pd.concat([db_df, new_df])
+                db_df = db_df[~db_df.index.duplicated(keep='last')]
+    else:
+        # Данных в БД нет - загружаем все с MOEX
+        db_df = fetcher.fetch_ytm_history(secid, start_date=start_date)
+        
+        if not db_df.empty:
+            # Сохраняем в БД
+            db.save_daily_ytm(secid, db_df)
+            logger.info(f"Сохранены дневные YTM в БД для {secid}: {len(db_df)} записей")
+    
+    return db_df
 
 
 @st.cache_data(ttl=60)
@@ -203,9 +248,9 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
     Получить данные свечей с YTM с кэшированием в SQLite
     
     Алгоритм:
-    1. Проверить данные в SQLite
+    1. Проверить рассчитанные YTM в БД (intraday_ytm)
     2. Загрузить исторические данные из БД
-    3. Запросить с MOEX только за текущий день
+    3. Запросить с MOEX только за текущий день (и рассчитать YTM)
     4. Объединить и сохранить новые данные
     """
     fetcher = get_candle_fetcher()
@@ -225,10 +270,10 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
     
     start_date = date.today() - timedelta(days=days)
     
-    # 1. Загружаем исторические данные из БД
-    db_df = db.load_candles(isin, interval, start_date=start_date, end_date=date.today() - timedelta(days=1))
+    # 1. Загружаем рассчитанные YTM из БД
+    db_ytm_df = db.load_intraday_ytm(isin, interval, start_date=start_date, end_date=date.today() - timedelta(days=1))
     
-    # 2. Всегда запрашиваем данные за текущий день с MOEX
+    # 2. Всегда запрашиваем данные за текущий день с MOEX (рассчитываем YTM)
     today_df = fetcher.fetch_candles(
         isin,
         bond_config=bond_config,
@@ -237,9 +282,8 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
         end_date=date.today()
     )
     
-    # 3. Запрашиваем недостающие исторические данные если их нет в БД
-    if db_df.empty and days > 1:
-        # Если в БД пусто, загружаем все исторические данные
+    # 3. Если в БД нет данных, загружаем все исторические
+    if db_ytm_df.empty and days > 1:
         history_df = fetcher.fetch_candles(
             isin,
             bond_config=bond_config,
@@ -248,39 +292,49 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
             end_date=date.today() - timedelta(days=1)
         )
         
-        # Сохраняем в БД
-        if not history_df.empty:
-            db.save_candles(isin, interval, history_df)
-            db_df = history_df
-    elif not db_df.empty:
+        # Сохраняем рассчитанные YTM в БД
+        if not history_df.empty and 'ytm_close' in history_df.columns:
+            db.save_intraday_ytm(isin, interval, history_df)
+            logger.info(f"Сохранены intraday YTM в БД для {isin}: {len(history_df)} записей")
+        
+        db_ytm_df = history_df
+    elif not db_ytm_df.empty:
         # Проверяем есть ли пропуски в данных
-        last_db_date = db_df.index[-1].date() if not db_df.empty else None
-        needed_start = start_date
+        last_db_datetime = db_ytm_df.index[-1] if not db_ytm_df.empty else None
         needed_end = date.today() - timedelta(days=1)
         
-        if last_db_date is None or (needed_end - last_db_date).days > 1:
-            # Есть пропуски - загружаем недостающие данные
-            fill_start = last_db_date + timedelta(days=1) if last_db_date else needed_start
-            fill_df = fetcher.fetch_candles(
-                isin,
-                bond_config=bond_config,
-                interval=candle_interval,
-                start_date=fill_start,
-                end_date=needed_end
-            )
+        if last_db_datetime is not None:
+            last_db_date = last_db_datetime.date() if hasattr(last_db_datetime, 'date') else last_db_datetime
+            if isinstance(last_db_date, datetime):
+                last_db_date = last_db_date.date()
             
-            if not fill_df.empty:
-                db.save_candles(isin, interval, fill_df)
-                db_df = pd.concat([db_df, fill_df])
+            if (needed_end - last_db_date).days > 1:
+                # Есть пропуски - загружаем недостающие данные
+                fill_start = last_db_date + timedelta(days=1) if isinstance(last_db_date, date) else start_date
+                fill_df = fetcher.fetch_candles(
+                    isin,
+                    bond_config=bond_config,
+                    interval=candle_interval,
+                    start_date=fill_start,
+                    end_date=needed_end
+                )
+                
+                if not fill_df.empty and 'ytm_close' in fill_df.columns:
+                    db.save_intraday_ytm(isin, interval, fill_df)
+                    db_ytm_df = pd.concat([db_ytm_df, fill_df])
     
-    # 4. Объединяем исторические + текущие данные
-    if not db_df.empty and not today_df.empty:
-        result_df = pd.concat([db_df, today_df])
+    # 4. Сохраняем текущие данные (если есть YTM)
+    if not today_df.empty and 'ytm_close' in today_df.columns:
+        db.save_intraday_ytm(isin, interval, today_df)
+    
+    # 5. Объединяем исторические + текущие данные
+    if not db_ytm_df.empty and not today_df.empty:
+        result_df = pd.concat([db_ytm_df, today_df])
         result_df = result_df[~result_df.index.duplicated(keep='last')]
     elif not today_df.empty:
         result_df = today_df
-    elif not db_df.empty:
-        result_df = db_df
+    elif not db_ytm_df.empty:
+        result_df = db_ytm_df
     else:
         result_df = pd.DataFrame()
     
@@ -430,6 +484,149 @@ def bond_config_to_dict(bond: BondConfig) -> Dict:
         'issue_date': bond.issue_date,
         'day_count_convention': getattr(bond, 'day_count_convention', 'ACT/ACT')
     }
+
+
+def update_database_full(config: AppConfig, progress_callback=None) -> Dict:
+    """
+    Полное обновление базы данных
+    
+    Загружает:
+    - Дневные YTM для всех облигаций
+    - Intraday YTM для всех облигаций и интервалов
+    - Спреды для всех пар
+    
+    Returns:
+        Статистика обновления
+    """
+    from api.moex_candles import CandleInterval
+    
+    fetcher = get_history_fetcher()
+    candle_fetcher = get_candle_fetcher()
+    db = get_db()
+    
+    bonds = list(config.bonds.values())
+    stats = {
+        'daily_ytm_saved': 0,
+        'intraday_ytm_saved': 0,
+        'spreads_saved': 0,
+        'errors': []
+    }
+    
+    total_steps = len(bonds) + len(bonds) * 3 + len(bonds) * (len(bonds) - 1)
+    current_step = 0
+    
+    # 1. Дневные YTM для всех облигаций (1 год)
+    for bond in bonds:
+        try:
+            if progress_callback:
+                progress_callback(current_step / total_steps, f"Загрузка дневных YTM: {bond.name}")
+            
+            df = fetcher.fetch_ytm_history(bond.isin, start_date=date.today() - timedelta(days=365))
+            if not df.empty:
+                saved = db.save_daily_ytm(bond.isin, df)
+                stats['daily_ytm_saved'] += saved
+        except Exception as e:
+            stats['errors'].append(f"Daily YTM {bond.name}: {str(e)}")
+        
+        current_step += 1
+    
+    # 2. Intraday YTM для всех облигаций и интервалов
+    intervals = [
+        ("60", CandleInterval.MIN_60, 30),  # часовые за 30 дней
+        ("10", CandleInterval.MIN_10, 7),   # 10-минутные за 7 дней
+        ("1", CandleInterval.MIN_1, 3),     # минутные за 3 дня
+    ]
+    
+    for bond in bonds:
+        for interval_str, interval_enum, days in intervals:
+            try:
+                if progress_callback:
+                    progress_callback(current_step / total_steps, f"Загрузка {interval_str}мин свечей: {bond.name}")
+                
+                df = candle_fetcher.fetch_candles(
+                    bond.isin,
+                    bond_config=bond,
+                    interval=interval_enum,
+                    start_date=date.today() - timedelta(days=days),
+                    end_date=date.today()
+                )
+                
+                if not df.empty and 'ytm_close' in df.columns:
+                    saved = db.save_intraday_ytm(bond.isin, interval_str, df)
+                    stats['intraday_ytm_saved'] += saved
+            except Exception as e:
+                stats['errors'].append(f"Intraday YTM {bond.name} {interval_str}min: {str(e)}")
+            
+            current_step += 1
+    
+    # 3. Спреды для всех пар (daily mode)
+    for i, bond1 in enumerate(bonds):
+        for j, bond2 in enumerate(bonds):
+            if i >= j:
+                current_step += 1
+                continue
+            
+            try:
+                if progress_callback:
+                    progress_callback(current_step / total_steps, f"Расчёт спреда: {bond1.name}/{bond2.name}")
+                
+                # Загружаем YTM для обеих облигаций
+                df1 = db.load_daily_ytm(bond1.isin)
+                df2 = db.load_daily_ytm(bond2.isin)
+                
+                if df1.empty or df2.empty:
+                    current_step += 1
+                    continue
+                
+                # Рассчитываем спред
+                merged = pd.merge(
+                    df1.reset_index()[['date', 'ytm']],
+                    df2.reset_index()[['date', 'ytm']],
+                    on='date',
+                    suffixes=('_1', '_2')
+                )
+                merged['spread'] = (merged['ytm_1'] - merged['ytm_2']) * 100
+                
+                # Рассчитываем перцентили
+                p25 = merged['spread'].quantile(0.25)
+                p75 = merged['spread'].quantile(0.75)
+                
+                # Определяем сигнал
+                def get_signal(spread):
+                    if spread < p25:
+                        return 'SELL_BUY'
+                    elif spread > p75:
+                        return 'BUY_SELL'
+                    return 'NEUTRAL'
+                
+                merged['signal'] = merged['spread'].apply(get_signal)
+                
+                # Сохраняем спреды
+                for idx, row in merged.iterrows():
+                    db.save_spread(
+                        isin_1=bond1.isin,
+                        isin_2=bond2.isin,
+                        mode='daily',
+                        datetime_val=row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date']),
+                        ytm_1=row['ytm_1'],
+                        ytm_2=row['ytm_2'],
+                        spread_bp=row['spread'],
+                        signal=row['signal'],
+                        p25=p25,
+                        p75=p75
+                    )
+                
+                stats['spreads_saved'] += len(merged)
+                
+            except Exception as e:
+                stats['errors'].append(f"Spread {bond1.name}/{bond2.name}: {str(e)}")
+            
+            current_step += 1
+    
+    if progress_callback:
+        progress_callback(1.0, "Готово!")
+    
+    return stats
 
 
 def main():
@@ -591,6 +788,76 @@ def main():
                 if st.button("🗑️ Очистить старые данные", key="cleanup_data"):
                     cleanup_old_data(days_to_keep=7)
                     st.success("Старые данные удалены!")
+        
+        st.divider()
+        
+        # ==========================================
+        # УПРАВЛЕНИЕ БАЗОЙ ДАННЫХ
+        # ==========================================
+        st.subheader("🗄️ База данных")
+        
+        db = get_db()
+        db_stats = db.get_stats()
+        
+        # Показываем статистику БД
+        with st.expander("📊 Статистика БД", expanded=False):
+            st.write(f"**Облигаций:** {db_stats['bonds_count']}")
+            st.write(f"**Дневных YTM:** {db_stats['daily_ytm_count']}")
+            st.write(f"**Intraday YTM:** {db_stats['intraday_ytm_count']}")
+            st.write(f"**Спредов:** {db_stats['spreads_count']}")
+            st.write(f"**Свечей:** {db_stats['candles_count']}")
+            
+            if db_stats.get('last_daily_ytm'):
+                st.write(f"**Последний дневной YTM:** {db_stats['last_daily_ytm']}")
+            if db_stats.get('last_intraday_ytm'):
+                st.write(f"**Последний intraday YTM:** {db_stats['last_intraday_ytm'][:16]}")
+            
+            # Intraday по интервалам
+            if db_stats.get('intraday_by_interval'):
+                interval_names = {"1": "1 мин", "10": "10 мин", "60": "1 час"}
+                st.write("**Intraday по интервалам:**")
+                for intv, cnt in db_stats['intraday_by_interval'].items():
+                    st.write(f"  - {interval_names.get(intv, intv)}: {cnt}")
+        
+        # Кнопка обновления БД
+        if st.button("🔄 Обновить БД", use_container_width=True, help="Загрузить все данные с MOEX и сохранить в БД"):
+            st.session_state.updating_db = True
+        
+        if st.session_state.get('updating_db', False):
+            st.info("Начинаем обновление базы данных...")
+            
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            def update_progress(progress, message):
+                progress_bar.progress(progress)
+                status_text.text(message)
+            
+            try:
+                result = update_database_full(config, progress_callback=update_progress)
+                
+                progress_bar.progress(1.0)
+                status_text.text("Обновление завершено!")
+                
+                st.success(f"""
+                ✅ База данных обновлена!
+                
+                - Дневных YTM: {result['daily_ytm_saved']}
+                - Intraday YTM: {result['intraday_ytm_saved']}
+                - Спредов: {result['spreads_saved']}
+                """)
+                
+                if result['errors']:
+                    with st.expander("⚠️ Ошибки", expanded=False):
+                        for err in result['errors'][:10]:  # Показываем первые 10
+                            st.warning(err)
+                
+                st.session_state.updating_db = False
+                st.cache_data.clear()
+                
+            except Exception as e:
+                st.error(f"Ошибка обновления БД: {e}")
+                st.session_state.updating_db = False
         
         st.divider()
         

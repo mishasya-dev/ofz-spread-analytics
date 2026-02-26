@@ -1,5 +1,14 @@
 """
 SQLite база данных для хранения исторических данных ОФЗ
+
+Таблицы:
+- bonds: информация об облигациях
+- candles: сырые свечи с MOEX
+- daily_ytm: дневные YTM с MOEX (без расчёта)
+- intraday_ytm: рассчитанные YTM из цен свечей
+- spreads: спреды между облигациями
+- snapshots: снимки состояния
+- update_log: лог обновлений
 """
 import sqlite3
 import os
@@ -34,7 +43,9 @@ def init_database():
     conn = get_connection()
     cursor = conn.cursor()
     
-    # Таблица облигаций
+    # ==========================================
+    # ТАБЛИЦА ОБЛИГАЦИЙ
+    # ==========================================
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS bonds (
             isin TEXT PRIMARY KEY,
@@ -47,7 +58,9 @@ def init_database():
         )
     ''')
     
-    # Таблица свечей
+    # ==========================================
+    # ТАБЛИЦА СЫРЫХ СВЕЧЕЙ (с MOEX)
+    # ==========================================
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS candles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,18 +81,103 @@ def init_database():
         )
     ''')
     
-    # Индекс для быстрого поиска
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_candles_isin_interval 
         ON candles(isin, interval)
     ''')
     
+    # ==========================================
+    # ТАБЛИЦА ДНЕВНЫХ YTM (с MOEX, без расчёта)
+    # ==========================================
     cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_candles_datetime 
-        ON candles(datetime)
+        CREATE TABLE IF NOT EXISTS daily_ytm (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            isin TEXT NOT NULL,
+            date TEXT NOT NULL,
+            ytm REAL,
+            price REAL,
+            duration_days REAL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(isin, date)
+        )
     ''')
     
-    # Таблица снимков (snapshots)
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_daily_ytm_isin 
+        ON daily_ytm(isin)
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_daily_ytm_date 
+        ON daily_ytm(date)
+    ''')
+    
+    # ==========================================
+    # ТАБЛИЦА РАССЧИТАННЫХ YTM (из цен свечей)
+    # ==========================================
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS intraday_ytm (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            isin TEXT NOT NULL,
+            interval TEXT NOT NULL,
+            datetime TEXT NOT NULL,
+            price_close REAL,
+            ytm REAL,
+            accrued_interest REAL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(isin, interval, datetime)
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_intraday_ytm_isin_interval 
+        ON intraday_ytm(isin, interval)
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_intraday_ytm_datetime 
+        ON intraday_ytm(datetime)
+    ''')
+    
+    # ==========================================
+    # ТАБЛИЦА СПРЕДОВ
+    # ==========================================
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS spreads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            isin_1 TEXT NOT NULL,
+            isin_2 TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            interval TEXT,
+            datetime TEXT NOT NULL,
+            ytm_1 REAL,
+            ytm_2 REAL,
+            spread_bp REAL,
+            signal TEXT,
+            p25 REAL,
+            p75 REAL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_spreads_isins 
+        ON spreads(isin_1, isin_2)
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_spreads_mode 
+        ON spreads(mode)
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_spreads_datetime 
+        ON spreads(datetime)
+    ''')
+    
+    # ==========================================
+    # ТАБЛИЦА СНИМКОВ (SNAPSHOTS)
+    # ==========================================
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,12 +201,15 @@ def init_database():
         ON snapshots(timestamp)
     ''')
     
-    # Таблица метаданных обновлений
+    # ==========================================
+    # ТАБЛИЦА ЛОГА ОБНОВЛЕНИЙ
+    # ==========================================
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS update_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             isin TEXT NOT NULL,
-            interval TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            interval TEXT,
             last_datetime TEXT,
             records_added INTEGER DEFAULT 0,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -127,22 +228,20 @@ class DatabaseManager:
         init_database()
     
     # ==========================================
-    # СВЕЧИ
+    # ДНЕВНЫЕ YTM (DAILY MODE)
     # ==========================================
     
-    def save_candles(
+    def save_daily_ytm(
         self, 
         isin: str, 
-        interval: str, 
         df: pd.DataFrame
     ) -> int:
         """
-        Сохранить свечи в БД
+        Сохранить дневные YTM с MOEX
         
         Args:
             isin: ISIN облигации
-            interval: Интервал ('1', '10', '60')
-            df: DataFrame со свечами (index=datetime, columns=open,high,low,close,volume,ytm_*)
+            df: DataFrame с колонками: date, ytm, price, duration_days
             
         Returns:
             Количество сохранённых записей
@@ -157,7 +256,403 @@ class DatabaseManager:
         
         for idx, row in df.iterrows():
             try:
-                # Преобразуем datetime в строку
+                # Дата
+                if isinstance(idx, pd.Timestamp):
+                    date_str = idx.strftime('%Y-%m-%d')
+                elif hasattr(row, 'date'):
+                    date_str = row['date'].strftime('%Y-%m-%d') if isinstance(row['date'], (datetime, pd.Timestamp)) else str(row['date'])
+                else:
+                    date_str = str(idx)
+                
+                cursor.execute('''
+                    INSERT OR REPLACE INTO daily_ytm 
+                    (isin, date, ytm, price, duration_days)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (
+                    isin,
+                    date_str,
+                    row.get('ytm'),
+                    row.get('price'),
+                    row.get('duration_days')
+                ))
+                saved_count += 1
+                
+            except Exception as e:
+                logger.warning(f"Ошибка сохранения daily YTM {date_str}: {e}")
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"Сохранено {saved_count} дневных YTM для {isin}")
+        return saved_count
+    
+    def load_daily_ytm(
+        self,
+        isin: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> pd.DataFrame:
+        """
+        Загрузить дневные YTM из БД
+        
+        Args:
+            isin: ISIN облигации
+            start_date: Начальная дата
+            end_date: Конечная дата
+            
+        Returns:
+            DataFrame с YTM
+        """
+        conn = get_connection()
+        
+        query = '''
+            SELECT date, ytm, price, duration_days
+            FROM daily_ytm
+            WHERE isin = ?
+        '''
+        params = [isin]
+        
+        if start_date:
+            query += ' AND date >= ?'
+            params.append(start_date.strftime('%Y-%m-%d'))
+        
+        if end_date:
+            query += ' AND date <= ?'
+            params.append(end_date.strftime('%Y-%m-%d'))
+        
+        query += ' ORDER BY date'
+        
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        
+        if df.empty:
+            return pd.DataFrame()
+        
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.set_index('date')
+        
+        return df
+    
+    def get_last_daily_ytm_date(self, isin: str) -> Optional[date]:
+        """Получить дату последнего дневного YTM в БД"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT MAX(date) as last_date
+            FROM daily_ytm
+            WHERE isin = ?
+        ''', (isin,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row and row['last_date']:
+            return datetime.strptime(row['last_date'], '%Y-%m-%d').date()
+        return None
+    
+    # ==========================================
+    # РАССЧИТАННЫЕ YTM (INTRADAY MODE)
+    # ==========================================
+    
+    def save_intraday_ytm(
+        self, 
+        isin: str, 
+        interval: str, 
+        df: pd.DataFrame
+    ) -> int:
+        """
+        Сохранить рассчитанные YTM из цен свечей
+        
+        Args:
+            isin: ISIN облигации
+            interval: Интервал ('1', '10', '60')
+            df: DataFrame с колонками: close (price), ytm_close, accrued_interest
+            
+        Returns:
+            Количество сохранённых записей
+        """
+        if df.empty:
+            return 0
+        
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        saved_count = 0
+        
+        for idx, row in df.iterrows():
+            try:
+                if isinstance(idx, pd.Timestamp):
+                    dt_str = idx.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    dt_str = str(idx)
+                
+                cursor.execute('''
+                    INSERT OR REPLACE INTO intraday_ytm 
+                    (isin, interval, datetime, price_close, ytm, accrued_interest)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (
+                    isin,
+                    interval,
+                    dt_str,
+                    row.get('close'),
+                    row.get('ytm_close'),
+                    row.get('accrued_interest')
+                ))
+                saved_count += 1
+                
+            except Exception as e:
+                logger.warning(f"Ошибка сохранения intraday YTM {dt_str}: {e}")
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"Сохранено {saved_count} intraday YTM для {isin} (interval={interval})")
+        return saved_count
+    
+    def load_intraday_ytm(
+        self,
+        isin: str,
+        interval: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> pd.DataFrame:
+        """
+        Загрузить рассчитанные YTM из БД
+        
+        Args:
+            isin: ISIN облигации
+            interval: Интервал
+            start_date: Начальная дата
+            end_date: Конечная дата
+            
+        Returns:
+            DataFrame с YTM
+        """
+        conn = get_connection()
+        
+        query = '''
+            SELECT datetime, price_close, ytm, accrued_interest
+            FROM intraday_ytm
+            WHERE isin = ? AND interval = ?
+        '''
+        params = [isin, interval]
+        
+        if start_date:
+            query += ' AND datetime >= ?'
+            params.append(start_date.strftime('%Y-%m-%d'))
+        
+        if end_date:
+            query += ' AND datetime <= ?'
+            params.append(end_date.strftime('%Y-%m-%d 23:59:59'))
+        
+        query += ' ORDER BY datetime'
+        
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        
+        if df.empty:
+            return pd.DataFrame()
+        
+        df['datetime'] = pd.to_datetime(df['datetime'])
+        df = df.set_index('datetime')
+        
+        # Для совместимости с текущим кодом
+        df['close'] = df['price_close']
+        df['ytm_close'] = df['ytm']
+        
+        return df
+    
+    def get_last_intraday_ytm_datetime(
+        self,
+        isin: str,
+        interval: str
+    ) -> Optional[datetime]:
+        """Получить datetime последнего рассчитанного YTM"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT MAX(datetime) as last_dt
+            FROM intraday_ytm
+            WHERE isin = ? AND interval = ?
+        ''', (isin, interval))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row and row['last_dt']:
+            return datetime.strptime(row['last_dt'], '%Y-%m-%d %H:%M:%S')
+        return None
+    
+    # ==========================================
+    # СПРЕДЫ
+    # ==========================================
+    
+    def save_spread(
+        self,
+        isin_1: str,
+        isin_2: str,
+        mode: str,
+        datetime_val: str,
+        ytm_1: float,
+        ytm_2: float,
+        spread_bp: float,
+        signal: str = None,
+        interval: str = None,
+        p25: float = None,
+        p75: float = None
+    ) -> int:
+        """Сохранить спред"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO spreads 
+            (isin_1, isin_2, mode, interval, datetime, ytm_1, ytm_2, spread_bp, signal, p25, p75)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (isin_1, isin_2, mode, interval, datetime_val, ytm_1, ytm_2, spread_bp, signal, p25, p75))
+        
+        spread_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        return spread_id
+    
+    def save_spreads_batch(
+        self,
+        isin_1: str,
+        isin_2: str,
+        mode: str,
+        df: pd.DataFrame,
+        interval: str = None
+    ) -> int:
+        """
+        Сохранить спреды пакетом
+        
+        Args:
+            isin_1, isin_2: ISIN облигаций
+            mode: 'daily' или 'intraday'
+            df: DataFrame с колонками: datetime/date, ytm_1, ytm_2, spread_bp, signal
+            interval: Интервал (для intraday)
+            
+        Returns:
+            Количество сохранённых записей
+        """
+        if df.empty:
+            return 0
+        
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        saved_count = 0
+        
+        for idx, row in df.iterrows():
+            try:
+                # datetime
+                if 'datetime' in df.columns:
+                    dt_val = row['datetime']
+                elif isinstance(idx, pd.Timestamp):
+                    dt_val = idx
+                else:
+                    dt_val = row.get('date', idx)
+                
+                if isinstance(dt_val, pd.Timestamp):
+                    dt_str = dt_val.strftime('%Y-%m-%d %H:%M:%S')
+                elif isinstance(dt_val, datetime):
+                    dt_str = dt_val.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    dt_str = str(dt_val)
+                
+                cursor.execute('''
+                    INSERT OR REPLACE INTO spreads 
+                    (isin_1, isin_2, mode, interval, datetime, ytm_1, ytm_2, spread_bp, signal)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    isin_1, isin_2, mode, interval, dt_str,
+                    row.get('ytm_1'), row.get('ytm_2'),
+                    row.get('spread'), row.get('signal')
+                ))
+                saved_count += 1
+                
+            except Exception as e:
+                logger.warning(f"Ошибка сохранения спреда: {e}")
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"Сохранено {saved_count} спредов для {isin_1}/{isin_2} ({mode})")
+        return saved_count
+    
+    def load_spreads(
+        self,
+        isin_1: str,
+        isin_2: str,
+        mode: str,
+        interval: str = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> pd.DataFrame:
+        """Загрузить спреды из БД"""
+        conn = get_connection()
+        
+        query = '''
+            SELECT datetime, ytm_1, ytm_2, spread_bp, signal, p25, p75
+            FROM spreads
+            WHERE isin_1 = ? AND isin_2 = ? AND mode = ?
+        '''
+        params = [isin_1, isin_2, mode]
+        
+        if interval:
+            query += ' AND interval = ?'
+            params.append(interval)
+        
+        if start_date:
+            query += ' AND datetime >= ?'
+            params.append(start_date.strftime('%Y-%m-%d'))
+        
+        if end_date:
+            query += ' AND datetime <= ?'
+            params.append(end_date.strftime('%Y-%m-%d 23:59:59'))
+        
+        query += ' ORDER BY datetime'
+        
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        
+        if df.empty:
+            return pd.DataFrame()
+        
+        # Используем format='mixed' для разных форматов datetime
+        df['datetime'] = pd.to_datetime(df['datetime'], format='mixed')
+        df = df.set_index('datetime')
+        
+        # Для совместимости
+        df['spread'] = df['spread_bp']
+        
+        return df
+    
+    # ==========================================
+    # СВЕЧИ (оставляем для обратной совместимости)
+    # ==========================================
+    
+    def save_candles(
+        self, 
+        isin: str, 
+        interval: str, 
+        df: pd.DataFrame
+    ) -> int:
+        """Сохранить свечи в БД"""
+        if df.empty:
+            return 0
+        
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        saved_count = 0
+        
+        for idx, row in df.iterrows():
+            try:
                 if isinstance(idx, pd.Timestamp):
                     dt_str = idx.strftime('%Y-%m-%d %H:%M:%S')
                 else:
@@ -169,18 +664,11 @@ class DatabaseManager:
                      ytm_open, ytm_high, ytm_low, ytm_close)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
-                    isin,
-                    interval,
-                    dt_str,
-                    row.get('open'),
-                    row.get('high'),
-                    row.get('low'),
-                    row.get('close'),
-                    row.get('volume'),
-                    row.get('ytm_open'),
-                    row.get('ytm_high'),
-                    row.get('ytm_low'),
-                    row.get('ytm_close')
+                    isin, interval, dt_str,
+                    row.get('open'), row.get('high'), row.get('low'),
+                    row.get('close'), row.get('volume'),
+                    row.get('ytm_open'), row.get('ytm_high'),
+                    row.get('ytm_low'), row.get('ytm_close')
                 ))
                 saved_count += 1
                 
@@ -200,18 +688,7 @@ class DatabaseManager:
         start_date: Optional[date] = None,
         end_date: Optional[date] = None
     ) -> pd.DataFrame:
-        """
-        Загрузить свечи из БД
-        
-        Args:
-            isin: ISIN облигации
-            interval: Интервал
-            start_date: Начальная дата
-            end_date: Конечная дата
-            
-        Returns:
-            DataFrame со свечами
-        """
+        """Загрузить свечи из БД"""
         conn = get_connection()
         
         query = '''
@@ -248,16 +725,7 @@ class DatabaseManager:
         isin: str,
         interval: str
     ) -> Optional[datetime]:
-        """
-        Получить дату/время последней свечи в БД
-        
-        Args:
-            isin: ISIN облигации
-            interval: Интервал
-            
-        Returns:
-            datetime последней свечи или None
-        """
+        """Получить дату/время последней свечи в БД"""
         conn = get_connection()
         cursor = conn.cursor()
         
@@ -401,46 +869,6 @@ class DatabaseManager:
         return None
     
     # ==========================================
-    # ЛОГ ОБНОВЛЕНИЙ
-    # ==========================================
-    
-    def log_update(
-        self,
-        isin: str,
-        interval: str,
-        last_datetime: str,
-        records_added: int
-    ):
-        """Записать информацию об обновлении"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO update_log (isin, interval, last_datetime, records_added)
-            VALUES (?, ?, ?, ?)
-        ''', (isin, interval, last_datetime, records_added))
-        
-        conn.commit()
-        conn.close()
-    
-    def get_last_update(self, isin: str, interval: str) -> Optional[Dict]:
-        """Получить информацию о последнем обновлении"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT * FROM update_log
-            WHERE isin = ? AND interval = ?
-            ORDER BY updated_at DESC
-            LIMIT 1
-        ''', (isin, interval))
-        
-        row = cursor.fetchone()
-        conn.close()
-        
-        return dict(row) if row else None
-    
-    # ==========================================
     # СТАТИСТИКА
     # ==========================================
     
@@ -451,17 +879,24 @@ class DatabaseManager:
         
         stats = {}
         
-        # Количество свечей
+        # Количество записей в таблицах
+        cursor.execute('SELECT COUNT(*) as cnt FROM bonds')
+        stats['bonds_count'] = cursor.fetchone()['cnt']
+        
         cursor.execute('SELECT COUNT(*) as cnt FROM candles')
         stats['candles_count'] = cursor.fetchone()['cnt']
         
-        # Количество снимков
+        cursor.execute('SELECT COUNT(*) as cnt FROM daily_ytm')
+        stats['daily_ytm_count'] = cursor.fetchone()['cnt']
+        
+        cursor.execute('SELECT COUNT(*) as cnt FROM intraday_ytm')
+        stats['intraday_ytm_count'] = cursor.fetchone()['cnt']
+        
+        cursor.execute('SELECT COUNT(*) as cnt FROM spreads')
+        stats['spreads_count'] = cursor.fetchone()['cnt']
+        
         cursor.execute('SELECT COUNT(*) as cnt FROM snapshots')
         stats['snapshots_count'] = cursor.fetchone()['cnt']
-        
-        # Количество облигаций
-        cursor.execute('SELECT COUNT(*) as cnt FROM bonds')
-        stats['bonds_count'] = cursor.fetchone()['cnt']
         
         # Свечи по интервалам
         cursor.execute('''
@@ -469,12 +904,32 @@ class DatabaseManager:
             FROM candles 
             GROUP BY interval
         ''')
-        stats['by_interval'] = {row['interval']: row['cnt'] for row in cursor.fetchall()}
+        stats['candles_by_interval'] = {row['interval']: row['cnt'] for row in cursor.fetchall()}
         
-        # Последняя свеча
-        cursor.execute('SELECT MAX(datetime) as last_dt FROM candles')
+        # Intraday YTM по интервалам
+        cursor.execute('''
+            SELECT interval, COUNT(*) as cnt 
+            FROM intraday_ytm 
+            GROUP BY interval
+        ''')
+        stats['intraday_by_interval'] = {row['interval']: row['cnt'] for row in cursor.fetchall()}
+        
+        # Спреды по режимам
+        cursor.execute('''
+            SELECT mode, COUNT(*) as cnt 
+            FROM spreads 
+            GROUP BY mode
+        ''')
+        stats['spreads_by_mode'] = {row['mode']: row['cnt'] for row in cursor.fetchall()}
+        
+        # Последние данные
+        cursor.execute('SELECT MAX(date) as last_dt FROM daily_ytm')
         row = cursor.fetchone()
-        stats['last_candle'] = row['last_dt'] if row else None
+        stats['last_daily_ytm'] = row['last_dt'] if row else None
+        
+        cursor.execute('SELECT MAX(datetime) as last_dt FROM intraday_ytm')
+        row = cursor.fetchone()
+        stats['last_intraday_ytm'] = row['last_dt'] if row else None
         
         conn.close()
         
@@ -487,22 +942,33 @@ class DatabaseManager:
         
         cutoff = (date.today() - timedelta(days=days_to_keep)).strftime('%Y-%m-%d')
         
+        total_deleted = 0
+        
         # Удаляем старые свечи
         cursor.execute('DELETE FROM candles WHERE datetime < ?', (cutoff,))
-        candles_deleted = cursor.rowcount
+        total_deleted += cursor.rowcount
+        
+        # Удаляем старые дневные YTM
+        cursor.execute('DELETE FROM daily_ytm WHERE date < ?', (cutoff,))
+        total_deleted += cursor.rowcount
+        
+        # Удаляем старые intraday YTM
+        cursor.execute('DELETE FROM intraday_ytm WHERE datetime < ?', (cutoff,))
+        total_deleted += cursor.rowcount
+        
+        # Удаляем старые спреды
+        cursor.execute('DELETE FROM spreads WHERE datetime < ?', (cutoff,))
+        total_deleted += cursor.rowcount
         
         # Удаляем старые снимки
         cursor.execute('DELETE FROM snapshots WHERE timestamp < ?', (cutoff,))
-        snapshots_deleted = cursor.rowcount
-        
-        # Удаляем старые логи
-        cursor.execute('DELETE FROM update_log WHERE updated_at < ?', (cutoff,))
+        total_deleted += cursor.rowcount
         
         conn.commit()
         conn.close()
         
-        logger.info(f"Удалено: {candles_deleted} свечей, {snapshots_deleted} снимков")
-        return candles_deleted + snapshots_deleted
+        logger.info(f"Удалено {total_deleted} старых записей")
+        return total_deleted
     
     def vacuum(self):
         """Оптимизировать БД (VACUUM)"""
@@ -510,6 +976,27 @@ class DatabaseManager:
         conn.execute('VACUUM')
         conn.close()
         logger.info("VACUUM выполнен")
+    
+    # ==========================================
+    # ПОЛНОЕ ОБНОВЛЕНИЕ
+    # ==========================================
+    
+    def clear_all_data(self):
+        """Очистить все данные (кроме облигаций)"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('DELETE FROM candles')
+        cursor.execute('DELETE FROM daily_ytm')
+        cursor.execute('DELETE FROM intraday_ytm')
+        cursor.execute('DELETE FROM spreads')
+        cursor.execute('DELETE FROM snapshots')
+        cursor.execute('DELETE FROM update_log')
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info("Все данные очищены")
 
 
 # ==========================================
