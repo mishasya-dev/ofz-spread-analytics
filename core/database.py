@@ -1058,6 +1058,69 @@ class DatabaseManager:
         conn.close()
 
         return row['cnt'] if row else 0
+
+    def migrate_config_bonds(self, bonds_config: Dict[str, Any]) -> int:
+        """
+        Миграция облигаций из config.py в БД при первом запуске
+
+        Args:
+            bonds_config: Словарь облигаций из config.py (AppConfig.bonds)
+
+        Returns:
+            Количество мигрированных облигаций
+        """
+        # Проверяем есть ли уже облигации
+        if self.get_bonds_count() > 0:
+            logger.info("Облигации уже есть в БД, миграция не нужна")
+            return 0
+
+        migrated = 0
+
+        for isin, bond in bonds_config.items():
+            try:
+                self.save_bond({
+                    'isin': isin,
+                    'name': getattr(bond, 'name', ''),
+                    'short_name': getattr(bond, 'name', ''),
+                    'coupon_rate': getattr(bond, 'coupon_rate', None),
+                    'maturity_date': getattr(bond, 'maturity_date', None),
+                    'issue_date': getattr(bond, 'issue_date', None),
+                    'face_value': getattr(bond, 'face_value', 1000),
+                    'coupon_frequency': getattr(bond, 'coupon_frequency', 2),
+                    'day_count': getattr(bond, 'day_count_convention', 'ACT/ACT'),
+                    'is_favorite': 1,  # Все облигации из config - избранное
+                })
+                migrated += 1
+            except Exception as e:
+                logger.error(f"Ошибка миграции облигации {isin}: {e}")
+
+        logger.info(f"Мигрировано {migrated} облигаций из config.py")
+        return migrated
+
+    def get_favorite_bonds_as_config(self) -> Dict[str, Any]:
+        """
+        Получить избранные облигации в формате, совместимом с config.py
+
+        Returns:
+            Словарь {ISIN: BondConfig-like dict}
+        """
+        favorites = self.get_favorite_bonds()
+
+        result = {}
+        for bond in favorites:
+            isin = bond['isin']
+            result[isin] = {
+                'isin': isin,
+                'name': bond.get('name', ''),
+                'maturity_date': bond.get('maturity_date', ''),
+                'coupon_rate': bond.get('coupon_rate'),
+                'face_value': bond.get('face_value', 1000),
+                'coupon_frequency': bond.get('coupon_frequency', 2),
+                'issue_date': bond.get('issue_date', ''),
+                'day_count_convention': bond.get('day_count', 'ACT/ACT'),
+            }
+
+        return result
     
     # ==========================================
     # СТАТИСТИКА

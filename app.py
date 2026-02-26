@@ -121,6 +121,38 @@ def init_session_state():
     if 'config' not in st.session_state:
         st.session_state.config = AppConfig()
     
+    # Миграция и загрузка облигаций из БД
+    if 'bonds_loaded' not in st.session_state:
+        db = get_db()
+        # Миграция при первом запуске
+        config = st.session_state.config
+        migrated = db.migrate_config_bonds(config.bonds)
+        if migrated > 0:
+            logger.info(f"Мигрировано {migrated} облигаций из config.py в БД")
+        
+        # Загружаем избранные облигации из БД
+        favorites = db.get_favorite_bonds_as_config()
+        
+        if favorites:
+            st.session_state.bonds = favorites
+        else:
+            # Если нет избранного - используем config
+            st.session_state.bonds = {
+                isin: {
+                    'isin': isin,
+                    'name': bond.name,
+                    'maturity_date': bond.maturity_date,
+                    'coupon_rate': bond.coupon_rate,
+                    'face_value': bond.face_value,
+                    'coupon_frequency': bond.coupon_frequency,
+                    'issue_date': bond.issue_date,
+                    'day_count_convention': getattr(bond, 'day_count_convention', 'ACT/ACT'),
+                }
+                for isin, bond in config.bonds.items()
+            }
+        
+        st.session_state.bonds_loaded = True
+    
     if 'selected_bond1' not in st.session_state:
         st.session_state.selected_bond1 = 0
     
@@ -156,6 +188,25 @@ def init_session_state():
     
     if 'updating_db' not in st.session_state:
         st.session_state.updating_db = False
+
+
+def get_bonds_list() -> List:
+    """Получить список облигаций для отображения"""
+    bonds_dict = st.session_state.get('bonds', {})
+    
+    # Преобразуем в список объектов с атрибутами
+    class BondItem:
+        def __init__(self, data):
+            self.isin = data.get('isin')
+            self.name = data.get('name', '')
+            self.maturity_date = data.get('maturity_date', '')
+            self.coupon_rate = data.get('coupon_rate')
+            self.face_value = data.get('face_value', 1000)
+            self.coupon_frequency = data.get('coupon_frequency', 2)
+            self.issue_date = data.get('issue_date', '')
+            self.day_count_convention = data.get('day_count_convention', 'ACT/ACT')
+    
+    return [BondItem(bond_data) for bond_data in bonds_dict.values()]
 
 
 @st.cache_resource
@@ -489,7 +540,7 @@ def bond_config_to_dict(bond: BondConfig) -> Dict:
     }
 
 
-def update_database_full(config: AppConfig, progress_callback=None) -> Dict:
+def update_database_full(bonds_list: List = None, progress_callback=None) -> Dict:
     """
     Полное обновление базы данных
     
@@ -497,6 +548,10 @@ def update_database_full(config: AppConfig, progress_callback=None) -> Dict:
     - Дневные YTM для всех облигаций
     - Intraday YTM для всех облигаций и интервалов
     - Спреды для всех пар
+    
+    Args:
+        bonds_list: Список облигаций (если None - из session_state)
+        progress_callback: Функция для отчёта о прогрессе
     
     Returns:
         Статистика обновления
@@ -507,7 +562,14 @@ def update_database_full(config: AppConfig, progress_callback=None) -> Dict:
     candle_fetcher = get_candle_fetcher()
     db = get_db()
     
-    bonds = list(config.bonds.values())
+    # Получаем облигации
+    if bonds_list is None:
+        bonds_list = get_bonds_list()
+    
+    if not bonds_list:
+        return {'daily_ytm_saved': 0, 'intraday_ytm_saved': 0, 'spreads_saved': 0, 'errors': ['Нет облигаций']}
+    
+    bonds = bonds_list
     stats = {
         'daily_ytm_saved': 0,
         'intraday_ytm_saved': 0,
@@ -636,14 +698,20 @@ def main():
     """Главная функция"""
     init_session_state()
     
-    config = st.session_state.config
-    bonds = list(config.bonds.values())
+    # Получаем облигации из БД (через session_state)
+    bonds = get_bonds_list()
     
     # ==========================================
     # БОКОВАЯ ПАНЕЛЬ
     # ==========================================
     with st.sidebar:
         st.header("⚙️ Настройки")
+        
+        # Кнопка управления облигациями (версия 0.2.0)
+        from components.bond_manager import render_bond_manager_button
+        render_bond_manager_button()
+        
+        st.divider()
         
         # Переключатель режима данных
         st.subheader("📊 Режим данных")
@@ -673,6 +741,11 @@ def main():
             st.info(f"📊 YTM рассчитывается из цен {interval_names[candle_interval]} свечей")
         
         st.divider()
+        
+        # Проверяем есть ли облигации
+        if not bonds:
+            st.warning("Нет избранных облигаций. Нажмите 'Управление облигациями' для выбора.")
+            st.stop()
         
         # Получаем данные для отображения в dropdown
         bond_labels = []
@@ -837,7 +910,7 @@ def main():
                 status_text.text(message)
             
             try:
-                result = update_database_full(config, progress_callback=update_progress)
+                result = update_database_full(progress_callback=update_progress)
                 
                 progress_bar.progress(1.0)
                 status_text.text("Обновление завершено!")
