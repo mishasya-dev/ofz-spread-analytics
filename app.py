@@ -138,7 +138,7 @@ def init_session_state():
         st.session_state.data_mode = "daily"  # "daily" или "intraday"
     
     if 'candle_interval' not in st.session_state:
-        st.session_state.candle_interval = "60"  # "10", "60", "240"
+        st.session_state.candle_interval = "60"  # "1", "10", "60"
 
 
 @st.cache_resource
@@ -196,9 +196,9 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
     
     # Маппинг интервала
     interval_map = {
-        "10": CandleInterval.MIN_10,   # 10 минут
-        "60": CandleInterval.MIN_60,   # 1 час
-        "240": CandleInterval.MIN_240, # 4 часа
+        "1": CandleInterval.MIN_1,    # 1 минута
+        "10": CandleInterval.MIN_10,  # 10 минут
+        "60": CandleInterval.MIN_60,  # 1 час
     }
     
     candle_interval = interval_map.get(interval, CandleInterval.MIN_60)
@@ -382,17 +382,18 @@ def main():
         if data_mode == "intraday":
             candle_interval = st.select_slider(
                 "Интервал свечей",
-                options=["10", "60", "240"],
+                options=["1", "10", "60"],
                 format_func=lambda x: {
+                    "1": "1 минута",
                     "10": "10 минут",
-                    "60": "1 час",
-                    "240": "4 часа"
+                    "60": "1 час"
                 }[x],
                 value=st.session_state.candle_interval
             )
             st.session_state.candle_interval = candle_interval
             
-            st.info(f"📊 YTM рассчитывается из цен {candle_interval}-минутных свечей")
+            interval_names = {"1": "1-минутных", "10": "10-минутных", "60": "часовых"}
+            st.info(f"📊 YTM рассчитывается из цен {interval_names[candle_interval]} свечей")
         
         st.divider()
         
