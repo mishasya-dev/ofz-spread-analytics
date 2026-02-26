@@ -20,6 +20,7 @@ from api.moex_history import HistoryFetcher
 from api.moex_candles import CandleFetcher, CandleInterval
 from core.spread import SpreadCalculator, SpreadStats
 from core.signals import SignalGenerator, TradingSignal, SignalType
+from core.data_storage import save_intraday_snapshot, load_intraday_history, get_saved_data_info, cleanup_old_data
 from components.charts import ChartBuilder
 
 # Настройка логирования
@@ -139,6 +140,15 @@ def init_session_state():
     
     if 'candle_interval' not in st.session_state:
         st.session_state.candle_interval = "60"  # "1", "10", "60"
+    
+    if 'save_data' not in st.session_state:
+        st.session_state.save_data = False
+    
+    if 'intraday_refresh_interval' not in st.session_state:
+        st.session_state.intraday_refresh_interval = 30  # секунды для intraday
+    
+    if 'saved_count' not in st.session_state:
+        st.session_state.saved_count = 0
 
 
 @st.cache_resource
@@ -465,17 +475,55 @@ def main():
         st.session_state.auto_refresh = auto_refresh
         
         if auto_refresh:
-            refresh_interval = st.slider(
-                "Интервал (секунды)",
-                min_value=30,
-                max_value=300,
-                value=st.session_state.refresh_interval,
-                step=30
-            )
-            st.session_state.refresh_interval = refresh_interval
+            # Разные интервалы для разных режимов
+            if data_mode == "intraday":
+                refresh_interval = st.slider(
+                    "Интервал обновления (секунды)",
+                    min_value=10,
+                    max_value=120,
+                    value=st.session_state.intraday_refresh_interval,
+                    step=10,
+                    help="Для intraday режима рекомендуется 10-30 секунд"
+                )
+                st.session_state.intraday_refresh_interval = refresh_interval
+            else:
+                refresh_interval = st.slider(
+                    "Интервал обновления (секунды)",
+                    min_value=60,
+                    max_value=300,
+                    value=st.session_state.refresh_interval,
+                    step=30
+                )
+                st.session_state.refresh_interval = refresh_interval
             
             if st.session_state.last_update:
                 st.caption(f"Последнее обновление: {st.session_state.last_update.strftime('%H:%M:%S')}")
+        
+        # Сохранение данных (только для intraday)
+        if data_mode == "intraday":
+            st.divider()
+            st.subheader("💾 Сохранение данных")
+            
+            save_data = st.toggle(
+                "Сохранять снимки данных",
+                value=st.session_state.save_data,
+                help="Сохраняет текущие YTM и спред каждые N секунд"
+            )
+            st.session_state.save_data = save_data
+            
+            if st.session_state.saved_count > 0:
+                st.caption(f"Сохранено снимков: {st.session_state.saved_count}")
+            
+            # Информация о сохранённых данных
+            with st.expander("📁 Сохранённые данные"):
+                info = get_saved_data_info()
+                st.write(f"Всего файлов: {info['total_files']}")
+                if info['newest']:
+                    st.write(f"Последние данные: {info['newest']}")
+                
+                if st.button("🗑️ Очистить старые данные", key="cleanup_data"):
+                    cleanup_old_data(days_to_keep=7)
+                    st.success("Старые данные удалены!")
         
         st.divider()
         
@@ -606,7 +654,8 @@ def main():
     
     # Индикатор автообновления
     if st.session_state.auto_refresh:
-        st.info(f"🔄 Автообновление включено (каждые {st.session_state.refresh_interval} сек.)")
+        interval_display = st.session_state.intraday_refresh_interval if data_mode == "intraday" else st.session_state.refresh_interval
+        st.info(f"🔄 Автообновление включено (каждые {interval_display} сек.)")
     
     # ==========================================
     # КАРТОЧКИ ОБЛИГАЦИЙ
@@ -723,6 +772,36 @@ def main():
         stats['p75'], 
         stats['p90']
     )
+    
+    # ==========================================
+    # СОХРАНЕНИЕ ДАННЫХ (intraday режим)
+    # ==========================================
+    if data_mode == "intraday" and st.session_state.save_data and current1 and current2:
+        try:
+            save_intraday_snapshot(
+                bond1_data={
+                    'isin': bond1.isin,
+                    'name': bond1.name,
+                    'ytm': current1.get('yield'),
+                    'price': current1.get('price')
+                },
+                bond2_data={
+                    'isin': bond2.isin,
+                    'name': bond2.name,
+                    'ytm': current2.get('yield'),
+                    'price': current2.get('price')
+                },
+                spread_data={
+                    'spread_bp': stats['current'],
+                    'signal': signal['signal'],
+                    'p25': stats['p25'],
+                    'p75': stats['p75']
+                },
+                interval=candle_interval
+            )
+            st.session_state.saved_count += 1
+        except Exception as e:
+            logger.warning(f"Ошибка сохранения данных: {e}")
     
     # Отображение сигнала
     col1, col2, col3 = st.columns([1, 2, 1])
