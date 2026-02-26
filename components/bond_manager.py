@@ -5,6 +5,7 @@
 """
 import streamlit as st
 import pandas as pd
+import requests
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
 import logging
@@ -168,46 +169,78 @@ def show_bond_manager_dialog():
 
     with col_refresh:
         if st.button("🔄 Обновить с MOEX", use_container_width=True):
-            with st.spinner("Загрузка данных с MOEX..."):
+            fetcher = None
+            status_placeholder = st.empty()
+            status_placeholder.info("Подключение к MOEX API...")
+            
+            try:
                 fetcher = get_moex_fetcher()
-                try:
-                    # Получаем все ОФЗ с рыночными данными
-                    all_bonds = fetcher.fetch_ofz_with_market_data(include_details=True)
-
-                    # Фильтруем
-                    from api.moex_bonds import filter_ofz_for_trading
-                    filtered_bonds = filter_ofz_for_trading(all_bonds)
-
-                    # Сохраняем/обновляем в БД
-                    for bond in filtered_bonds:
-                        # Сохраняем текущий статус избранного
-                        existing = db.load_bond(bond['isin'])
-                        is_favorite = existing.get('is_favorite', 0) if existing else 0
-
-                        db.save_bond({
-                            'isin': bond['isin'],
-                            'name': bond.get('name'),
-                            'short_name': bond.get('short_name'),
-                            'coupon_rate': bond.get('coupon_rate'),
-                            'maturity_date': bond.get('maturity_date'),
-                            'issue_date': bond.get('issue_date'),
-                            'face_value': bond.get('face_value', 1000),
-                            'coupon_frequency': bond.get('coupon_frequency', 2),
-                            'day_count': bond.get('day_count', 'ACT/ACT'),
-                            'is_favorite': is_favorite,
-                            'last_price': bond.get('last_price'),
-                            'last_ytm': bond.get('last_ytm'),
-                            'duration_years': bond.get('duration_years'),
-                            'duration_days': bond.get('duration_days'),
-                            'last_trade_date': bond.get('last_trade_date'),
-                        })
-
-                    st.success(f"Обновлено {len(filtered_bonds)} облигаций")
-                    st.rerun()
-
-                except Exception as e:
-                    st.error(f"Ошибка обновления: {e}")
-                finally:
+                status_placeholder.info("Получение списка ОФЗ...")
+                
+                # Получаем все ОФЗ с рыночными данными
+                all_bonds = fetcher.fetch_ofz_with_market_data(include_details=True)
+                
+                if not all_bonds:
+                    status_placeholder.warning("MOEX не вернул данные. Проверьте соединение.")
+                    return
+                
+                status_placeholder.info(f"Получено {len(all_bonds)} облигаций")
+                
+                # Фильтруем
+                from api.moex_bonds import filter_ofz_for_trading
+                filtered_bonds = filter_ofz_for_trading(all_bonds)
+                
+                if not filtered_bonds:
+                    status_placeholder.warning("Нет облигаций, соответствующих фильтрам.")
+                    return
+                
+                status_placeholder.info(f"После фильтрации: {len(filtered_bonds)}")
+                
+                # Сохраняем/обновляем в БД
+                saved_count = 0
+                progress_bar = st.progress(0)
+                
+                for i, bond in enumerate(filtered_bonds):
+                    progress_bar.progress((i + 1) / len(filtered_bonds))
+                    
+                    # Сохраняем текущий статус избранного
+                    existing = db.load_bond(bond['isin'])
+                    is_favorite = existing.get('is_favorite', 0) if existing else 0
+                    
+                    db.save_bond({
+                        'isin': bond['isin'],
+                        'name': bond.get('name'),
+                        'short_name': bond.get('short_name'),
+                        'coupon_rate': bond.get('coupon_rate'),
+                        'maturity_date': bond.get('maturity_date'),
+                        'issue_date': bond.get('issue_date'),
+                        'face_value': bond.get('face_value', 1000),
+                        'coupon_frequency': bond.get('coupon_frequency', 2),
+                        'day_count': bond.get('day_count', 'ACT/ACT'),
+                        'is_favorite': is_favorite,
+                        'last_price': bond.get('last_price'),
+                        'last_ytm': bond.get('last_ytm'),
+                        'duration_years': bond.get('duration_years'),
+                        'duration_days': bond.get('duration_days'),
+                        'last_trade_date': bond.get('last_trade_date'),
+                    })
+                    saved_count += 1
+                
+                progress_bar.empty()
+                st.success(f"Обновлено {saved_count} облигаций")
+                st.rerun()
+                
+            except requests.exceptions.Timeout:
+                st.error("Таймаут подключения к MOEX. Попробуйте позже.")
+            except requests.exceptions.ConnectionError as e:
+                st.error(f"Ошибка соединения: {e}")
+            except Exception as e:
+                import traceback
+                st.error(f"Ошибка обновления: {e}")
+                with st.expander("Детали ошибки"):
+                    st.code(traceback.format_exc())
+            finally:
+                if fetcher:
                     fetcher.close()
 
     with col_info:
