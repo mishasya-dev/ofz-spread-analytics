@@ -435,14 +435,24 @@ def main():
             )
             st.session_state.period = period
         else:
-            # Для внутридневного режима - меньше дней
+            # Для внутридневного режима - зависит от интервала
+            # 1 минута: макс 3 дня (много данных)
+            # 10 минут и 1 час: макс 30 дней
+            if candle_interval == "1":
+                max_days = 3
+                default_days = 1
+            else:
+                max_days = 30
+                default_days = 7
+            
             period = st.slider(
-                "Дней истории",
+                f"Дней истории (макс {max_days} для {candle_interval} мин)",
                 min_value=1,
-                max_value=7,
-                value=3,
+                max_value=max_days,
+                value=min(st.session_state.get('intraday_period', default_days), max_days),
                 step=1
             )
+            st.session_state.intraday_period = period
         
         st.divider()
         
