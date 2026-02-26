@@ -1146,3 +1146,17 @@ def should_save(st_session_state, interval_seconds: int = 60) -> bool:
     
     elapsed = (datetime.now() - st_session_state.last_save_time).total_seconds()
     return elapsed >= interval_seconds
+
+
+def cleanup_old_data(days_to_keep: int = 90) -> int:
+    """
+    Удалить старые данные (для совместимости)
+    
+    Args:
+        days_to_keep: Количество дней для хранения
+        
+    Returns:
+        Количество удалённых записей
+    """
+    db = get_db()
+    return db.cleanup_old_data(days_to_keep)
