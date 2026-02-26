@@ -1,25 +1,39 @@
 @echo off
-chcp 65001 > nul
-echo ========================================
-echo    OFZ Analytics - Запуск
-echo ========================================
+chcp 65001 >nul
+title OFZ Spread Analytics
+
+echo ╔══════════════════════════════════════╗
+echo ║     OFZ Spread Analytics             ║
+echo ║     Автоматический запуск            ║
+echo ╚══════════════════════════════════════╝
 echo.
 
-echo Проверка зависимостей...
-pip show streamlit > nul 2>&1
+python --version >nul 2>&1
 if errorlevel 1 (
-    echo [ВНИМАНИЕ] Зависимости не установлены!
-    echo Запустите install.bat
+    echo [ОШИБКА] Python не установлен!
+    echo Скачайте: https://www.python.org/downloads/
     pause
     exit /b 1
 )
 
-echo Запуск приложения...
+if not exist "venv" (
+    echo [*] Создание виртуального окружения...
+    python -m venv venv
+)
+
+call venv\Scripts\activate.bat
+
+pip show streamlit >nul 2>&1
+if errorlevel 1 (
+    echo [*] Установка зависимостей...
+    pip install -r requirements.txt -q
+)
+
 echo.
-echo Приложение откроется в браузере: http://localhost:8501
-echo Для остановки нажмите Ctrl+C
+echo  Приложение запускается...
+echo  Браузер: http://localhost:8501
+echo  Остановка: Ctrl+C
 echo.
 
-streamlit run app.py --server.headless=true
-
+streamlit run app.py
 pause
