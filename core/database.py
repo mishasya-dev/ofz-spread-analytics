@@ -1011,3 +1011,138 @@ def get_db() -> DatabaseManager:
     if _db_manager is None:
         _db_manager = DatabaseManager()
     return _db_manager
+
+
+# ==========================================
+# ФУНКЦИИ СОВМЕСТИМОСТИ (из data_storage.py)
+# ==========================================
+
+def save_intraday_snapshot(
+    bond1_data: Dict[str, Any],
+    bond2_data: Dict[str, Any],
+    spread_data: Dict[str, Any],
+    interval: str
+) -> int:
+    """
+    Сохранить снимок intraday данных (для совместимости)
+    
+    Args:
+        bond1_data: Данные облигации 1 {isin, ytm, price, name}
+        bond2_data: Данные облигации 2
+        spread_data: Данные спреда {spread_bp, signal, p25, p75}
+        interval: Интервал свечей
+        
+    Returns:
+        ID снимка
+    """
+    db = get_db()
+    
+    return db.save_snapshot(
+        isin_1=bond1_data.get('isin'),
+        isin_2=bond2_data.get('isin'),
+        interval=interval,
+        ytm_1=bond1_data.get('ytm'),
+        ytm_2=bond2_data.get('ytm'),
+        price_1=bond1_data.get('price'),
+        price_2=bond2_data.get('price'),
+        spread_bp=spread_data.get('spread_bp'),
+        signal=spread_data.get('signal'),
+        p25=spread_data.get('p25'),
+        p75=spread_data.get('p75')
+    )
+
+
+def load_intraday_history(
+    isin_1: str = None,
+    isin_2: str = None,
+    interval: str = '60',
+    hours: int = 168
+) -> pd.DataFrame:
+    """
+    Загрузить историю intraday данных (для совместимости)
+    
+    Args:
+        isin_1: ISIN облигации 1 (опционально)
+        isin_2: ISIN облигации 2 (опционально)
+        interval: Интервал
+        hours: Количество часов
+        
+    Returns:
+        DataFrame с историей
+    """
+    db = get_db()
+    
+    if isin_1 and isin_2:
+        return db.load_snapshots(isin_1, isin_2, interval, hours=hours)
+    
+    # Если ISIN не указаны, загружаем все снимки
+    conn = get_connection()
+    
+    since = (datetime.now() - timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
+    
+    query = '''
+        SELECT * FROM snapshots
+        WHERE interval = ? AND timestamp >= ?
+        ORDER BY timestamp
+    '''
+    
+    df = pd.read_sql_query(query, conn, params=[interval, since])
+    conn.close()
+    
+    if not df.empty:
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df = df.set_index('timestamp')
+    
+    return df
+
+
+def get_saved_data_info() -> Dict[str, Any]:
+    """
+    Получить информацию о сохранённых данных (для совместимости)
+    
+    Returns:
+        Словарь с информацией
+    """
+    db = get_db()
+    stats = db.get_stats()
+    
+    return {
+        'total_files': (
+            stats.get('candles_count', 0) + 
+            stats.get('daily_ytm_count', 0) + 
+            stats.get('intraday_ytm_count', 0) +
+            stats.get('spreads_count', 0) +
+            stats.get('snapshots_count', 0)
+        ),
+        'snapshots': [{'count': stats.get('snapshots_count', 0)}],
+        'candles': [{'count': stats.get('candles_count', 0)}],
+        'oldest': None,
+        'newest': stats.get('last_daily_ytm') or stats.get('last_intraday_ytm')
+    }
+
+
+def init_session_storage(st_session_state):
+    """Инициализировать хранилище в session state"""
+    if 'saved_snapshots' not in st_session_state:
+        st_session_state.saved_snapshots = []
+    
+    if 'last_save_time' not in st_session_state:
+        st_session_state.last_save_time = None
+
+
+def should_save(st_session_state, interval_seconds: int = 60) -> bool:
+    """
+    Проверить нужно ли сохранять данные
+    
+    Args:
+        st_session_state: Streamlit session state
+        interval_seconds: Минимальный интервал между сохранениями
+        
+    Returns:
+        True если нужно сохранить
+    """
+    if st_session_state.last_save_time is None:
+        return True
+    
+    elapsed = (datetime.now() - st_session_state.last_save_time).total_seconds()
+    return elapsed >= interval_seconds

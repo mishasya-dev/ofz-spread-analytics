@@ -20,8 +20,11 @@ from api.moex_history import HistoryFetcher
 from api.moex_candles import CandleFetcher, CandleInterval
 from core.spread import SpreadCalculator, SpreadStats
 from core.signals import SignalGenerator, TradingSignal, SignalType
-from core.data_storage import save_intraday_snapshot, load_intraday_history, get_saved_data_info, cleanup_old_data
-from core.database import get_db, DatabaseManager
+from core.database import (
+    get_db, DatabaseManager,
+    save_intraday_snapshot, load_intraday_history, 
+    get_saved_data_info, cleanup_old_data
+)
 from components.charts import ChartBuilder
 
 # Настройка логирования
