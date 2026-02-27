@@ -60,6 +60,9 @@ def show_bond_manager_dialog():
     with col_refresh:
         if st.button("🔄 Обновить", use_container_width=True):
             st.session_state.bond_manager_reload = True
+            # Генерируем новый UUID для повторного открытия диалога
+            st.session_state.bond_manager_open_id = str(uuid.uuid4())
+            st.session_state.bond_manager_last_shown_id = None
             st.rerun()
 
     st.markdown("""
