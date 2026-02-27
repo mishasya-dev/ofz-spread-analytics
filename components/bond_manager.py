@@ -6,6 +6,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+import uuid
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
 import logging
@@ -59,8 +60,8 @@ def load_bonds_for_display() -> List[Dict[str, Any]]:
             for bond in filtered_bonds:
                 db.save_bond({
                     'isin': bond['isin'],
-                    'name': bond.get('name'),
-                    'short_name': bond.get('short_name'),
+                    'name': bond.get('name') or bond.get('short_name') or bond['isin'],
+                    'short_name': bond.get('short_name') or bond['isin'],
                     'coupon_rate': bond.get('coupon_rate'),
                     'maturity_date': bond.get('maturity_date'),
                     'issue_date': bond.get('issue_date'),
@@ -210,8 +211,8 @@ def show_bond_manager_dialog():
                     
                     db.save_bond({
                         'isin': bond['isin'],
-                        'name': bond.get('name'),
-                        'short_name': bond.get('short_name'),
+                        'name': bond.get('name') or bond.get('short_name') or bond['isin'],
+                        'short_name': bond.get('short_name') or bond['isin'],
                         'coupon_rate': bond.get('coupon_rate'),
                         'maturity_date': bond.get('maturity_date'),
                         'issue_date': bond.get('issue_date'),
@@ -246,7 +247,18 @@ def show_bond_manager_dialog():
 
     with col_info:
         favorites = db.get_favorite_bonds()
-        st.info(f"⭐ Избранных: **{len(favorites)}** | Выберите облигации для отображения в sidebar")
+        fav_col1, fav_col2 = st.columns([3, 1])
+        with fav_col1:
+            st.info(f"⭐ Избранных: **{len(favorites)}** | Выберите облигации для отображения в sidebar")
+        with fav_col2:
+            if len(favorites) > 0:
+                if st.button("🗑️ Очистить", key="clear_favorites", help="Убрать все облигации из избранного"):
+                    cleared = db.clear_all_favorites()
+                    if cleared > 0:
+                        # Перерисовываем диалог без закрытия
+                        st.session_state.bond_manager_open_id = str(uuid.uuid4())
+                        st.session_state.bond_manager_last_shown_id = None
+                        st.rerun()
 
     st.divider()
 
@@ -257,110 +269,83 @@ def show_bond_manager_dialog():
         st.warning("Нет облигаций в базе данных. Нажмите 'Обновить с MOEX'")
         return
 
-    # Создаём DataFrame для отображения
+    # Создаём DataFrame для data_editor
     df_data = []
     for b in bonds:
+        # Вычисляем годы до погашения для отображения
+        maturity_str = b.get("maturity_date", "")
+        years_to_maturity = ""
+        if maturity_str:
+            try:
+                maturity_dt = datetime.strptime(maturity_str, "%Y-%m-%d")
+                years_to_maturity = round((maturity_dt - datetime.now()).days / 365.25, 1)
+            except:
+                pass
+        
         df_data.append({
             "ISIN": b.get("isin"),
-            "Название": b.get("name") or b.get("short_name"),
-            "Купон": format_coupon(b.get("coupon_rate")),
-            "Погашение": format_maturity(b.get("maturity_date")),
-            "Дюрация": format_duration(b.get("duration_years")),
-            "YTM": format_ytm(b.get("last_ytm")),
-            "⭐": "⭐" if b.get("is_favorite") else "☆",
-            "is_favorite": b.get("is_favorite"),
-            "duration_years_raw": b.get("duration_years") or 0,
+            "Название": b.get("name") or b.get("short_name") or b.get("isin"),
+            "Купон, %": b.get("coupon_rate"),
+            "Погашение": maturity_str,
+            "До погаш., лет": years_to_maturity,
+            "Дюрация, лет": b.get("duration_years"),
+            "YTM, %": b.get("last_ytm"),
+            "⭐": b.get("is_favorite", 0) == 1,
         })
 
     df = pd.DataFrame(df_data)
+    
+    # Сортируем по дюрации по умолчанию
+    df = df.sort_values(by="Дюрация, лет", ascending=True, na_position="last")
 
-    # Сортировка
-    sort_col = st.selectbox(
-        "Сортировать по",
-        ["Дюрации", "YTM", "Купону", "Погашению", "Названию"],
-        index=0
+    # Отображаем редактируемую таблицу
+    edited_df = st.data_editor(
+        df,
+        column_config={
+            "ISIN": st.column_config.TextColumn("ISIN", width="medium"),
+            "Название": st.column_config.TextColumn("Название", width="medium"),
+            "Купон, %": st.column_config.NumberColumn("Купон, %", format="%.2f%%", width="small"),
+            "Погашение": st.column_config.DateColumn("Погашение", format="DD.MM.YYYY", width="small"),
+            "До погаш., лет": st.column_config.NumberColumn("До погаш., лет", format="%.1f", width="small"),
+            "Дюрация, лет": st.column_config.NumberColumn("Дюрация, лет", format="%.1f", width="small"),
+            "YTM, %": st.column_config.NumberColumn("YTM, %", format="%.2f%%", width="small"),
+            "⭐": st.column_config.CheckboxColumn("⭐", default=False, width="tiny"),
+        },
+        hide_index=True,
+        use_container_width=True,
+        num_rows="fixed",
+        key="bonds_table_editor",
     )
-
-    sort_map = {
-        "Дюрации": "duration_years_raw",
-        "YTM": "YTM",
-        "Купону": "Купон",
-        "Погашению": "Погашение",
-        "Названию": "Название",
-    }
-
-    ascending = True
-    df = df.sort_values(by=sort_map[sort_col], ascending=ascending)
-
-    # Отображаем таблицу
-    # Используем columns для заголовка
-    header_col1, header_col2, header_col3, header_col4, header_col5, header_col6, header_col7 = st.columns(
-        [3, 2, 1, 2, 1, 1, 0.5]
-    )
-
-    with header_col1:
-        st.markdown("**ISIN**")
-    with header_col2:
-        st.markdown("**Название**")
-    with header_col3:
-        st.markdown("**Купон**")
-    with header_col4:
-        st.markdown("**Погашение**")
-    with header_col5:
-        st.markdown("**Дюр.**")
-    with header_col6:
-        st.markdown("**YTM**")
-    with header_col7:
-        st.markdown("**⭐**")
-
-    st.divider()
-
-    # Отображаем облигации
-    for idx, row in df.iterrows():
-        col1, col2, col3, col4, col5, col6, col7 = st.columns(
-            [3, 2, 1, 2, 1, 1, 0.5]
-        )
-
-        isin = row["ISIN"]
-        is_favorite = row["is_favorite"]
-
-        with col1:
-            st.markdown(f"`{isin}`")
-
-        with col2:
-            st.write(row["Название"])
-
-        with col3:
-            st.write(row["Купон"])
-
-        with col4:
-            st.write(row["Погашение"])
-
-        with col5:
-            st.write(row["Дюрация"])
-
-        with col6:
-            st.write(row["YTM"])
-
-        with col7:
-            # Кнопка избранного
-            btn_label = "⭐" if is_favorite else "☆"
-            btn_type = "primary" if is_favorite else "secondary"
-
-            if st.button(
-                btn_label,
-                key=f"fav_{isin}",
-                type=btn_type,
-                help="Нажмите, чтобы добавить/удалить из избранного"
-            ):
-                # Автосохранение
-                db.set_favorite(isin, not is_favorite)
-                st.rerun()
-
-        st.divider()
+    
+    # Проверяем изменения в колонке избранного
+    if not df.empty and not edited_df.empty:
+        # Создаём словарь исходных состояний по ISIN
+        original_favorites = dict(zip(df["ISIN"], df["⭐"]))
+        # Проверяем изменения
+        changes_made = False
+        for _, row in edited_df.iterrows():
+            isin = row["ISIN"]
+            new_favorite = row["⭐"]
+            if isin in original_favorites and original_favorites[isin] != new_favorite:
+                db.set_favorite(isin, new_favorite)
+                changes_made = True
+        
+        if changes_made:
+            # Обновляем диалог без закрытия
+            st.session_state.bond_manager_open_id = str(uuid.uuid4())
+            st.session_state.bond_manager_last_shown_id = None
+            st.rerun()
 
     # Итого
     st.markdown(f"**Всего облигаций:** {len(df)}")
+    
+    st.divider()
+    
+    # Кнопка закрытия (сбрасывает флаг открытия)
+    if st.button("✅ Готово", use_container_width=True, type="primary"):
+        st.session_state.bond_manager_open_id = None
+        st.session_state.bond_manager_last_shown_id = None
+        st.rerun()
 
 
 def render_bond_manager_button():
@@ -368,6 +353,31 @@ def render_bond_manager_button():
     Кнопка для открытия модального окна управления облигациями
 
     Разместить в sidebar
+    
+    Логика управления диалогом:
+    - bond_manager_open_id: уникальный ID для каждого открытия
+    - bond_manager_last_shown_id: ID последнего показанного диалога
+    - Если ID совпадают -> диалог уже показывали, не открываем снова
     """
+    # Инициализируем состояние
+    if 'bond_manager_open_id' not in st.session_state:
+        st.session_state.bond_manager_open_id = None
+    if 'bond_manager_last_shown_id' not in st.session_state:
+        st.session_state.bond_manager_last_shown_id = None
+    
+    # Кнопка открытия
     if st.button("📊 Управление облигациями", use_container_width=True):
+        # Генерируем новый ID для этого открытия
+        st.session_state.bond_manager_open_id = str(uuid.uuid4())
+        st.rerun()
+    
+    # Проверяем нужно ли открыть диалог
+    current_id = st.session_state.bond_manager_open_id
+    last_shown = st.session_state.bond_manager_last_shown_id
+    
+    if current_id and current_id != last_shown:
+        # Это новое открытие - показываем диалог
+        st.session_state.bond_manager_last_shown_id = current_id
         show_bond_manager_dialog()
+    # Если current_id == last_shown -> диалог уже показывали для этого ID
+    # При следующем rerun (от X или клика вне) диалог не откроется снова

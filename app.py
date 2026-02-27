@@ -112,7 +112,9 @@ def get_years_to_maturity(maturity_str: str) -> float:
 def format_bond_label(bond: BondConfig, ytm: float = None, duration_years: float = None) -> str:
     """Форматирует метку облигации с YTM, дюрацией и годами до погашения"""
     years = get_years_to_maturity(bond.maturity_date)
-    parts = [f"{bond.name}"]
+    # Fallback: name -> short_name -> ISIN
+    display_name = bond.name or getattr(bond, 'short_name', None) or bond.isin
+    parts = [f"{display_name}"]
     
     if ytm is not None:
         parts.append(f"YTM: {ytm:.2f}%")
@@ -205,7 +207,8 @@ def get_bonds_list() -> List:
     class BondItem:
         def __init__(self, data):
             self.isin = data.get('isin')
-            self.name = data.get('name', '')
+            self.name = data.get('name') or data.get('short_name') or data.get('isin', '')
+            self.short_name = data.get('short_name', '')
             self.maturity_date = data.get('maturity_date', '')
             self.coupon_rate = data.get('coupon_rate')
             self.face_value = data.get('face_value', 1000)

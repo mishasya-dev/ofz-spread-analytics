@@ -8,6 +8,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **None вместо названия облигации:** если MOEX не возвращает `NAME` или `SHORTNAME`, отображается ISIN
+  - Добавлен fallback: `name → short_name → isin`
+  - Исправлено в `app.py`, `bond_manager.py`, `database.py`
 - **LASTTRADEDATE недоступна:** MOEX API не возвращает эту колонку в marketdata
   - Заменено на `NUMTRADES` и `VALTODAY` для определения активности торгов
   - Фильтрация теперь по `has_trades` (num_trades > 0)
@@ -27,6 +30,26 @@ All notable changes to this project will be documented in this file.
 - `fetch_ofz_only()` — один запрос вместо многих
 - `fetch_all_market_data()` — пакетный запрос рыночных данных
 - Общее время загрузки: **~1.7 сек** для 33 ОФЗ (было 30+ сек)
+
+---
+
+## [0.2.1-patch1] - 2026-02-27
+
+### Fixed
+
+- **ImportError в `__init__.py`:** при запуске pytest относительные импорты не работали
+  - Добавлен try/except с fallback на абсолютные импорты
+  - Теперь работает и как пакет, и как отдельный модуль
+- **Отсутствующий `tests/conftest.py`:** pytest не находил модули
+  - Создан файл с настройкой путей для тестов
+- **Тесты `test_moex_bonds.py`:** 6 тестов падали из-за устаревших тестовых данных
+  - Обновлены тестовые данные: добавлены поля `has_trades` и `num_trades`
+  - Тест `test_fetch_ofz_only` теперь использует реальный API вызов
+
+### Tests
+
+- Все **79 тестов** проходят успешно
+- MOEX API проверен: 33 ОФЗ загружаются за 0.5 сек, 84 часовых свечи за 0.8 сек
 
 ---
 

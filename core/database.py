@@ -987,6 +987,30 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    def clear_all_favorites(self) -> int:
+        """
+        Снять флаг избранного со всех облигаций
+
+        Returns:
+            Количество обновлённых записей
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('''
+                UPDATE bonds
+                SET is_favorite = 0, last_updated = ?
+                WHERE is_favorite = 1
+            ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),))
+            conn.commit()
+            return cursor.rowcount
+        except Exception as e:
+            logger.error(f"Ошибка очистки избранного: {e}")
+            return 0
+        finally:
+            conn.close()
+
     def update_bond_market_data(
         self,
         isin: str,
@@ -1111,7 +1135,8 @@ class DatabaseManager:
             isin = bond['isin']
             result[isin] = {
                 'isin': isin,
-                'name': bond.get('name', ''),
+                'name': bond.get('name') or bond.get('short_name') or isin,
+                'short_name': bond.get('short_name') or isin,
                 'maturity_date': bond.get('maturity_date', ''),
                 'coupon_rate': bond.get('coupon_rate'),
                 'face_value': bond.get('face_value', 1000),
