@@ -360,17 +360,40 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
         
         db_ytm_df = history_df
     elif not db_ytm_df.empty:
-        # Проверяем есть ли пропуски в данных
+        # Проверяем есть ли пропуски в данных (как в начале, так и в конце)
+        first_db_datetime = db_ytm_df.index[0] if not db_ytm_df.empty else None
         last_db_datetime = db_ytm_df.index[-1] if not db_ytm_df.empty else None
         needed_end = date.today() - timedelta(days=1)
         
+        # 1. Проверяем пропуски в начале (запрашиваемый период больше имеющегося)
+        if first_db_datetime is not None:
+            first_db_date = first_db_datetime.date() if hasattr(first_db_datetime, 'date') else first_db_datetime
+            if isinstance(first_db_date, datetime):
+                first_db_date = first_db_date.date()
+            
+            if first_db_date > start_date:
+                # Есть пропуски в начале - загружаем недостающие исторические данные
+                logger.info(f"Загрузка недостающих исторических данных: {start_date} -> {first_db_date - timedelta(days=1)}")
+                history_fill_df = fetcher.fetch_candles(
+                    isin,
+                    bond_config=bond_config,
+                    interval=candle_interval,
+                    start_date=start_date,
+                    end_date=first_db_date - timedelta(days=1)
+                )
+                
+                if not history_fill_df.empty and 'ytm_close' in history_fill_df.columns:
+                    db.save_intraday_ytm(isin, interval, history_fill_df)
+                    db_ytm_df = pd.concat([history_fill_df, db_ytm_df])
+        
+        # 2. Проверяем пропуски в конце (последние данные устарели)
         if last_db_datetime is not None:
             last_db_date = last_db_datetime.date() if hasattr(last_db_datetime, 'date') else last_db_datetime
             if isinstance(last_db_date, datetime):
                 last_db_date = last_db_date.date()
             
             if (needed_end - last_db_date).days > 1:
-                # Есть пропуски - загружаем недостающие данные
+                # Есть пропуски в конце - загружаем недостающие данные
                 fill_start = last_db_date + timedelta(days=1) if isinstance(last_db_date, date) else start_date
                 fill_df = fetcher.fetch_candles(
                     isin,

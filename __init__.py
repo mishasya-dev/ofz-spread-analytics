@@ -1,12 +1,22 @@
 """
 OFZ Analytics - Аналитика спредов ОФЗ
 """
-from .config import AppConfig, BondConfig, TradingHours, BacktestConfig, SignalConfig, ExportConfig
-from .api import TradingChecker, TradingStatus, HistoryFetcher, CandleFetcher
-from .core import YTMCalculator, SpreadCalculator, SignalGenerator, TradingSignal, Backtester
-from .export import SignalSender, JSONFormatter, TelegramFormatter, WebhookFormatter
-from .modes import DailyMode, IntradayMode
-from .components import ChartBuilder
+# Безопасный импорт - работает и как пакет и как модуль
+try:
+    from .config import AppConfig, BondConfig, TradingHours, BacktestConfig, SignalConfig, ExportConfig
+    from .api import TradingChecker, TradingStatus, HistoryFetcher, CandleFetcher
+    from .core import YTMCalculator, SpreadCalculator, SignalGenerator, TradingSignal, Backtester
+    from .export import SignalSender, JSONFormatter, TelegramFormatter, WebhookFormatter
+    from .modes import DailyMode, IntradayMode
+    from .components import ChartBuilder
+except ImportError:
+    # Fallback для запуска без пакета
+    from config import AppConfig, BondConfig, TradingHours, BacktestConfig, SignalConfig, ExportConfig
+    from api import TradingChecker, TradingStatus, HistoryFetcher, CandleFetcher
+    from core import YTMCalculator, SpreadCalculator, SignalGenerator, TradingSignal, Backtester
+    from export import SignalSender, JSONFormatter, TelegramFormatter, WebhookFormatter
+    from modes import DailyMode, IntradayMode
+    from components import ChartBuilder
 
 __version__ = "2.0.0"
 __author__ = "OFZ Analytics Team"
