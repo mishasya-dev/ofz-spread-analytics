@@ -114,6 +114,15 @@ def show_bond_manager_dialog():
             b.get('isin') for b in db.get_favorite_bonds()
         )
     
+    # ВАЖНО: читаем состояние из data_editor ПЕРЕД созданием DataFrame
+    # Если data_editor уже был отрендерен и есть его состояние в session_state
+    if 'bonds_table_editor' in st.session_state and st.session_state['bonds_table_editor'] is not None:
+        existing_df = st.session_state['bonds_table_editor']
+        if hasattr(existing_df, 'columns') and '⭐' in existing_df.columns:
+            st.session_state.bond_manager_current_favorites = set(
+                existing_df[existing_df['⭐']]['ISIN']
+            )
+    
     current_favorites = st.session_state.bond_manager_current_favorites or set()
     original_favorites = st.session_state.bond_manager_original_favorites or set()
 
