@@ -1,5 +1,36 @@
 # OFZ Spread Analytics - Журнал работы
 
+## v0.2.1-patch1 — Исправление тестов (27.02.2026)
+
+### Найденные и исправленные проблемы
+
+| # | Проблема | Решение |
+|---|----------|---------|
+| 1 | `ImportError` в `__init__.py` при запуске pytest | try/except с fallback на абсолютные импорты |
+| 2 | Отсутствует `tests/conftest.py` | Создан файл с настройкой путей |
+| 3 | 6 тестов падали в `test_moex_bonds.py` | Обновлены тестовые данные (`has_trades`, `num_trades`) |
+
+### Изменённые файлы
+
+- `streamlit-app/__init__.py` — fallback импорты
+- `streamlit-app/tests/conftest.py` — новый файл для pytest
+- `streamlit-app/tests/test_moex_bonds.py` — обновлены тестовые данные
+
+### Результаты тестирования
+
+```
+pytest streamlit-app/tests/ -v
+================================
+79 passed in 12.34s
+```
+
+### Git
+
+- Ветка: `fix/v0.2.1-tests-and-imports`
+- Репозиторий: `mishasya-dev/ofz-spread-analytics`
+
+---
+
 ## v0.2.2 — Оптимизация (27.02.2026)
 
 ### Найденные и исправленные проблемы

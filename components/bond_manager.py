@@ -1,7 +1,14 @@
 """
 Компонент управления облигациями
 
-Модальное окно для выбора избранных облигаций (версия 0.2.0)
+Модальное окно для выбора избранных облигаций (версия 0.2.2)
+
+Логика:
+- Загружаем список с MOEX API (не из БД)
+- Галочки = избранное (сравниваем с БД)
+- Изменения только в памяти
+- "Готово" = INSERT новых + DELETE убранных
+- "Отменить" = закрыть без сохранения
 """
 import streamlit as st
 import pandas as pd
@@ -32,128 +39,19 @@ def get_moex_fetcher():
     return MOEXBondsFetcher()
 
 
-def load_bonds_for_display() -> List[Dict[str, Any]]:
-    """
-    Загрузить облигации для отображения в модальном окне
-
-    Сначала из БД, если пусто - загрузить с MOEX и сохранить
-    """
-    db = get_bond_manager()
-
-    # Проверяем есть ли облигации в БД
-    bonds = db.get_all_bonds()
-
-    if not bonds:
-        # Загружаем с MOEX
-        st.info("Загружаем список облигаций с MOEX...")
-        fetcher = get_moex_fetcher()
-
-        try:
-            # Получаем все ОФЗ с рыночными данными
-            all_bonds = fetcher.fetch_ofz_with_market_data(include_details=False)
-
-            # Фильтруем
-            from api.moex_bonds import filter_ofz_for_trading
-            filtered_bonds = filter_ofz_for_trading(all_bonds)
-
-            # Сохраняем в БД
-            for bond in filtered_bonds:
-                db.save_bond({
-                    'isin': bond['isin'],
-                    'name': bond.get('name') or bond.get('short_name') or bond['isin'],
-                    'short_name': bond.get('short_name') or bond['isin'],
-                    'coupon_rate': bond.get('coupon_rate'),
-                    'maturity_date': bond.get('maturity_date'),
-                    'issue_date': bond.get('issue_date'),
-                    'face_value': bond.get('face_value', 1000),
-                    'coupon_frequency': bond.get('coupon_frequency', 2),
-                    'day_count': bond.get('day_count', 'ACT/ACT'),
-                    'is_favorite': 0,
-                    'last_price': bond.get('last_price'),
-                    'last_ytm': bond.get('last_ytm'),
-                    'duration_years': bond.get('duration_years'),
-                    'duration_days': bond.get('duration_days'),
-                    'last_trade_date': bond.get('last_trade_date'),
-                })
-
-            bonds = db.get_all_bonds()
-            st.success(f"Загружено {len(bonds)} облигаций")
-
-        except Exception as e:
-            logger.error(f"Ошибка загрузки облигаций: {e}")
-            st.error(f"Ошибка загрузки: {e}")
-            return []
-        finally:
-            fetcher.close()
-
-    return bonds
-
-
-def format_duration(duration_years: Optional[float]) -> str:
-    """Форматировать дюрацию"""
-    if duration_years is None:
-        return "Н/Д"
-    return f"{duration_years:.1f}г."
-
-
-def format_ytm(ytm: Optional[float]) -> str:
-    """Форматировать YTM"""
-    if ytm is None:
-        return "Н/Д"
-    return f"{ytm:.2f}%"
-
-
-def format_coupon(coupon: Optional[float]) -> str:
-    """Форматировать купон"""
-    if coupon is None:
-        return "Н/Д"
-    return f"{coupon:.2f}%"
-
-
-def format_maturity(maturity_date: Optional[str]) -> str:
-    """Форматировать дату погашения"""
-    if not maturity_date:
-        return "Н/Д"
-    try:
-        dt = datetime.strptime(maturity_date, "%Y-%m-%d")
-        years = (dt - datetime.now()).days / 365.25
-        return f"{dt.strftime('%d.%m.%Y')} ({years:.1f}г.)"
-    except (ValueError, TypeError) as e:
-        logger.debug(f"Ошибка парсинга даты погашения: {maturity_date}, {e}")
-        return maturity_date
-
-
 @st.dialog("Управление облигациями", width="large")
 def show_bond_manager_dialog():
     """
     Модальное окно для управления списком облигаций
 
-    Функции:
-    - Показать все отфильтрованные облигации
-    - Отметить/снять избранное (автосохранение)
-    - Сортировка по колонкам
+    Логика:
+    - Загружаем список с MOEX API (не из БД)
+    - Галочки = избранное (сравниваем с БД)
+    - Изменения только в памяти
+    - "Готово" = INSERT новых + DELETE убранных
+    - "Отменить" = закрыть без сохранения
     """
     db = get_bond_manager()
-
-    # CSS для читаемости
-    st.markdown("""
-    <style>
-        .bond-table-row {
-            padding: 10px 0;
-            border-bottom: 1px solid #eee;
-        }
-        .bond-isin {
-            font-family: monospace;
-            background: #f0f0f0;
-            padding: 2px 6px;
-            border-radius: 4px;
-            color: #333 !important;
-        }
-        .stMarkdown p {
-            color: #333 !important;
-        }
-    </style>
-    """, unsafe_allow_html=True)
 
     # Заголовок с информацией
     st.markdown("""
@@ -166,113 +64,46 @@ def show_bond_manager_dialog():
     - Наличие дюрации
     """)
 
-    # Кнопка обновления с MOEX
-    col_refresh, col_info = st.columns([1, 3])
-
-    with col_refresh:
-        if st.button("🔄 Обновить с MOEX", use_container_width=True):
-            fetcher = None
-            status_placeholder = st.empty()
-            status_placeholder.info("Подключение к MOEX API...")
-            
+    # Загружаем список облигаций с MOEX
+    if 'bond_manager_bonds' not in st.session_state or st.session_state.get('bond_manager_reload', False):
+        with st.spinner("Загрузка с MOEX API..."):
+            fetcher = get_moex_fetcher()
             try:
-                fetcher = get_moex_fetcher()
-                status_placeholder.info("Получение списка ОФЗ...")
-                
                 # Получаем все ОФЗ с рыночными данными
                 all_bonds = fetcher.fetch_ofz_with_market_data(include_details=False)
-                
-                if not all_bonds:
-                    status_placeholder.warning("MOEX не вернул данные. Проверьте соединение.")
-                    return
-                
-                status_placeholder.info(f"Получено {len(all_bonds)} облигаций")
                 
                 # Фильтруем
                 from api.moex_bonds import filter_ofz_for_trading
                 filtered_bonds = filter_ofz_for_trading(all_bonds)
                 
-                if not filtered_bonds:
-                    status_placeholder.warning("Нет облигаций, соответствующих фильтрам.")
-                    return
-                
-                status_placeholder.info(f"После фильтрации: {len(filtered_bonds)}")
-                
-                # Сохраняем/обновляем в БД
-                saved_count = 0
-                progress_bar = st.progress(0)
-                
-                for i, bond in enumerate(filtered_bonds):
-                    progress_bar.progress((i + 1) / len(filtered_bonds))
-                    
-                    # Сохраняем текущий статус избранного
-                    existing = db.load_bond(bond['isin'])
-                    is_favorite = existing.get('is_favorite', 0) if existing else 0
-                    
-                    db.save_bond({
-                        'isin': bond['isin'],
-                        'name': bond.get('name') or bond.get('short_name') or bond['isin'],
-                        'short_name': bond.get('short_name') or bond['isin'],
-                        'coupon_rate': bond.get('coupon_rate'),
-                        'maturity_date': bond.get('maturity_date'),
-                        'issue_date': bond.get('issue_date'),
-                        'face_value': bond.get('face_value', 1000),
-                        'coupon_frequency': bond.get('coupon_frequency', 2),
-                        'day_count': bond.get('day_count', 'ACT/ACT'),
-                        'is_favorite': is_favorite,
-                        'last_price': bond.get('last_price'),
-                        'last_ytm': bond.get('last_ytm'),
-                        'duration_years': bond.get('duration_years'),
-                        'duration_days': bond.get('duration_days'),
-                        'last_trade_date': bond.get('last_trade_date'),
-                    })
-                    saved_count += 1
-                
-                progress_bar.empty()
-                st.success(f"Обновлено {saved_count} облигаций")
-                # Переоткрываем диалог с новыми данными
-                st.session_state.bond_manager_open_id = str(uuid.uuid4())
-                st.session_state.bond_manager_last_shown_id = None
-                st.rerun()
-                
-            except requests.exceptions.Timeout:
-                st.error("Таймаут подключения к MOEX. Попробуйте позже.")
-            except requests.exceptions.ConnectionError as e:
-                st.error(f"Ошибка соединения: {e}")
+                st.session_state.bond_manager_bonds = filtered_bonds
+                st.session_state.bond_manager_reload = False
+                st.session_state.bond_manager_bonds_time = datetime.now().strftime('%H:%M:%S')
             except Exception as e:
-                import traceback
-                st.error(f"Ошибка обновления: {e}")
-                with st.expander("Детали ошибки"):
-                    st.code(traceback.format_exc())
+                st.error(f"Ошибка загрузки: {e}")
+                return
             finally:
-                if fetcher:
-                    fetcher.close()
-
-    with col_info:
-        # Используем кэшированное количество избранных (обновляется только при открытии диалога)
-        favorites_count = st.session_state.get('cached_favorites_count', 0)
-        fav_col1, fav_col2 = st.columns([3, 1])
-        with fav_col1:
-            st.info(f"⭐ Избранных: **{favorites_count}** | Выберите облигации для отображения в sidebar")
-        with fav_col2:
-            if favorites_count > 0:
-                if st.button("🗑️ Очистить", key="clear_favorites", help="Убрать все облигации из избранного"):
-                    cleared = db.clear_all_favorites()
-                    if cleared > 0:
-                        # Обновляем кэш и закрываем диалог
-                        st.session_state.cached_favorites_count = 0
-                        st.session_state.bond_manager_open_id = None
-                        st.session_state.bond_manager_last_shown_id = None
-                        st.rerun()
-
-    st.divider()
-
-    # Загружаем облигации
-    bonds = db.get_all_bonds()
-
+                fetcher.close()
+    
+    bonds = st.session_state.bond_manager_bonds
+    
     if not bonds:
-        st.warning("Нет облигаций в базе данных. Нажмите 'Обновить с MOEX'")
+        st.warning("Нет облигаций. Проверьте соединение с MOEX.")
         return
+
+    # Получаем список избранных из БД (только ISIN)
+    original_favorites = set(b.get('isin') for b in db.get_favorite_bonds())
+    favorite_isins = original_favorites.copy()  # Копия для модификации
+    
+    # Показываем счётчик
+    load_time = st.session_state.get('bond_manager_bonds_time', '')
+    st.info(f"⭐ Избранных: **{len(original_favorites)}** | Всего: **{len(bonds)}** | Загружено: {load_time}")
+
+    # Проверяем флаг "очистить всё"
+    clear_all_triggered = st.session_state.get('bond_manager_clear_all', False)
+    if clear_all_triggered:
+        st.session_state.bond_manager_clear_all = False  # Сбрасываем флаг
+        favorite_isins = set()  # Временно пустой набор для отображения
 
     # Создаём DataFrame для data_editor
     df_data = []
@@ -286,7 +117,7 @@ def show_bond_manager_dialog():
                 years_to_maturity = round((maturity_dt - datetime.now()).days / 365.25, 1)
             except:
                 pass
-        
+
         df_data.append({
             "ISIN": b.get("isin"),
             "Название": b.get("name") or b.get("short_name") or b.get("isin"),
@@ -295,13 +126,13 @@ def show_bond_manager_dialog():
             "До погаш., лет": years_to_maturity,
             "Дюрация, лет": b.get("duration_years"),
             "YTM, %": b.get("last_ytm"),
-            "⭐": b.get("is_favorite", 0) == 1,
+            "⭐": b.get("isin") in favorite_isins,
         })
 
     df = pd.DataFrame(df_data)
     
-    # Сортируем по дюрации по умолчанию
-    df = df.sort_values(by="Дюрация, лет", ascending=True, na_position="last")
+    # Сортируем: избранное первыми, потом по дюрации
+    df = df.sort_values(by=["⭐", "Дюрация, лет"], ascending=[False, True], na_position="last")
 
     # Отображаем редактируемую таблицу
     edited_df = st.data_editor(
@@ -311,7 +142,7 @@ def show_bond_manager_dialog():
             "Название": st.column_config.TextColumn("Название", width="medium"),
             "Купон, %": st.column_config.NumberColumn("Купон, %", format="%.2f%%", width="small"),
             "Погашение": st.column_config.TextColumn("Погашение", width="small"),
-            "До погаш., лет": st.column_config.NumberColumn("До погаш., лет", format="%.1f", width="small"),
+            "До погащ., лет": st.column_config.NumberColumn("До погащ., лет", format="%.1f", width="small"),
             "Дюрация, лет": st.column_config.NumberColumn("Дюрация, лет", format="%.1f", width="small"),
             "YTM, %": st.column_config.NumberColumn("YTM, %", format="%.2f%%", width="small"),
             "⭐": st.column_config.CheckboxColumn("⭐", default=False, width="tiny"),
@@ -322,28 +153,77 @@ def show_bond_manager_dialog():
         key="bonds_table_editor",
     )
     
-    # Проверяем изменения в колонке избранного (сохраняем без rerun)
-    if not df.empty and not edited_df.empty:
-        # Создаём словарь исходных состояний по ISIN
-        original_favorites = dict(zip(df["ISIN"], df["⭐"]))
-        # Сохраняем изменения в БД
-        for _, row in edited_df.iterrows():
-            isin = row["ISIN"]
-            new_favorite = row["⭐"]
-            if isin in original_favorites and original_favorites[isin] != new_favorite:
-                db.set_favorite(isin, new_favorite)
-        # Без rerun - диалог остаётся открытым, счётчик обновится при следующем открытии
-
-    # Итого
-    st.markdown(f"**Всего облигаций:** {len(df)}")
-    
-    st.divider()
-    
-    # Кнопка закрытия (сбрасывает флаг открытия)
-    if st.button("✅ Готово", use_container_width=True, type="primary"):
-        st.session_state.bond_manager_open_id = None
-        st.session_state.bond_manager_last_shown_id = None
+    # Кнопка "Очистить избранное" - снимает все галочки
+    if st.button("🗑️ Очистить избранное", use_container_width=True):
+        st.session_state.bond_manager_clear_all = True
         st.rerun()
+
+    # Кнопки действий
+    st.divider()
+    col_done, col_cancel, col_refresh = st.columns([1, 1, 1])
+
+    with col_done:
+        if st.button("✅ Готово", use_container_width=True, type="primary"):
+            # Синхронизируем с БД
+            new_favorites = set(edited_df[edited_df["⭐"]]["ISIN"])
+            old_favorites = original_favorites  # Сравниваем с исходным состоянием БД
+            
+            # INSERT новых
+            to_add = new_favorites - old_favorites
+            # DELETE убранных
+            to_remove = old_favorites - new_favorites
+            
+            added_count = 0
+            removed_count = 0
+            
+            # Добавляем новые в БД
+            for isin in to_add:
+                # Находим данные облигации
+                bond_data = next((b for b in bonds if b.get('isin') == isin), None)
+                if bond_data:
+                    db.save_bond({
+                        'isin': isin,
+                        'name': bond_data.get('name') or bond_data.get('short_name') or isin,
+                        'short_name': bond_data.get('short_name') or isin,
+                        'coupon_rate': bond_data.get('coupon_rate'),
+                        'maturity_date': bond_data.get('maturity_date'),
+                        'issue_date': bond_data.get('issue_date'),
+                        'face_value': bond_data.get('face_value', 1000),
+                        'coupon_frequency': bond_data.get('coupon_frequency', 2),
+                        'day_count': bond_data.get('day_count', 'ACT/ACT'),
+                        'is_favorite': 1,
+                        'last_price': bond_data.get('last_price'),
+                        'last_ytm': bond_data.get('last_ytm'),
+                        'duration_years': bond_data.get('duration_years'),
+                        'duration_days': bond_data.get('duration_days'),
+                    })
+                    added_count += 1
+            
+            # Удаляем убранные из БД
+            for isin in to_remove:
+                db.delete_bond(isin)
+                removed_count += 1
+            
+            # Обновляем кэш
+            st.session_state.cached_favorites_count = len(new_favorites)
+            st.session_state.bond_manager_open_id = None
+            st.session_state.bond_manager_last_shown_id = None
+            
+            # Показываем результат и закрываем
+            if added_count or removed_count:
+                st.toast(f"✅ Добавлено: {added_count}, Убрано: {removed_count}")
+            st.rerun()
+    
+    with col_cancel:
+        if st.button("❌ Отменить и закрыть", use_container_width=True):
+            st.session_state.bond_manager_open_id = None
+            st.session_state.bond_manager_last_shown_id = None
+            st.rerun()
+    
+    with col_refresh:
+        if st.button("🔄 Обновить", use_container_width=True):
+            st.session_state.bond_manager_reload = True
+            st.rerun()
 
 
 def render_bond_manager_button():
@@ -367,7 +247,7 @@ def render_bond_manager_button():
     if st.button("📊 Управление облигациями", use_container_width=True):
         # Генерируем новый ID для этого открытия
         st.session_state.bond_manager_open_id = str(uuid.uuid4())
-        # Кэшируем количество избранных (обновится только при следующем открытии)
+        # Кэшируем количество избранных
         from core.database import get_db
         db = get_db()
         st.session_state.cached_favorites_count = len(db.get_favorite_bonds())
@@ -382,4 +262,4 @@ def render_bond_manager_button():
         st.session_state.bond_manager_last_shown_id = current_id
         show_bond_manager_dialog()
     # Если current_id == last_shown -> диалог уже показывали для этого ID
-    # При следующем rerun (от X или клика вне) диалог не откроется снова
+    # При следующем rerun диалог не откроется снова

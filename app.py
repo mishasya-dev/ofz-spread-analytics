@@ -130,22 +130,30 @@ def init_session_state():
     if 'config' not in st.session_state:
         st.session_state.config = AppConfig()
     
-    # Миграция и загрузка облигаций из БД
+    # Миграция при первом запуске
     if 'bonds_loaded' not in st.session_state:
         db = get_db()
-        # Миграция при первом запуске
         config = st.session_state.config
         migrated = db.migrate_config_bonds(config.bonds)
         if migrated > 0:
             logger.info(f"Мигрировано {migrated} облигаций из config.py в БД")
-        
-        # Загружаем избранные облигации из БД
-        favorites = db.get_favorite_bonds_as_config()
-        
-        if favorites:
+        st.session_state.bonds_loaded = True
+    
+    # Загрузка/обновление облигаций из БД (при каждом rerun проверяем избранное)
+    db = get_db()
+    favorites = db.get_favorite_bonds_as_config()
+    
+    if favorites:
+        # Обновляем только если изменилось количество или ключи
+        current_keys = set(st.session_state.get('bonds', {}).keys())
+        new_keys = set(favorites.keys())
+        if current_keys != new_keys:
             st.session_state.bonds = favorites
-        else:
-            # Если нет избранного - используем config
+            logger.info(f"Обновлён список облигаций: {len(favorites)} избранное")
+    else:
+        # Если нет избранного - используем config (только при первом запуске)
+        if 'bonds' not in st.session_state:
+            config = st.session_state.config
             st.session_state.bonds = {
                 isin: {
                     'isin': isin,
@@ -159,8 +167,6 @@ def init_session_state():
                 }
                 for isin, bond in config.bonds.items()
             }
-        
-        st.session_state.bonds_loaded = True
     
     if 'selected_bond1' not in st.session_state:
         st.session_state.selected_bond1 = 0
