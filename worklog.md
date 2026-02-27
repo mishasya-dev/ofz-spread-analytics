@@ -179,8 +179,9 @@ UI-тесты:    12/12 ✅
 
 ### Git
 
-- Ветка: `fix/v0.2.1-tests-and-imports`
-- Коммит: `5774b12` — chore(ci): add Git Flow, CI/CD pipeline
+- Ветка: `fix/v0.2.1-tests-and-imports` → merged to `main`
+- Коммит merge: `4f3b623`
+- Тег: `v0.2.3`
 - Push: https://github.com/mishasya-dev/ofz-spread-analytics
 
 ### Архив
