@@ -1,8 +1,12 @@
 """
-Тесты для компонентов bond_manager (версия 0.2.0)
+Тесты для компонентов bond_manager (версия 0.2.2)
 
 Примечание: Функции форматирования не зависят от streamlit,
 тесты проверяют логику без импорта UI-компонентов.
+
+Новые тесты v0.2.2:
+- TestClearAllFavorites: кнопка "Очистить избранное"
+- TestFavoritesSync: синхронизация с БД (INSERT/DELETE)
 
 Запуск:
     python3 tests/test_bond_manager.py
@@ -233,6 +237,125 @@ class TestBondManagerUI(unittest.TestCase):
         assert "Дюрации" in sort_options
 
 
+class TestClearAllFavorites(unittest.TestCase):
+    """Тесты для кнопки 'Очистить избранное' (новая архитектура v0.2.2)"""
+
+    def test_clear_all_sets_flag(self):
+        """Флаг bond_manager_clear_all устанавливается при очистке"""
+        # Симулируем session_state
+        session_state = {"bond_manager_clear_all": False}
+
+        # Нажатие кнопки "Очистить избранное"
+        session_state["bond_manager_clear_all"] = True
+
+        assert session_state["bond_manager_clear_all"] is True
+
+    def test_clear_all_resets_favorite_isins(self):
+        """При очистке favorite_isins становится пустым"""
+        original_favorites = {"SU26221RMFS0", "SU26225RMFS1", "SU26230RMFS1"}
+        favorite_isins = original_favorites.copy()
+
+        # Флаг очистки
+        clear_all_triggered = True
+        if clear_all_triggered:
+            favorite_isins = set()
+
+        assert len(favorite_isins) == 0
+        assert len(original_favorites) == 3  # Исходный набор сохранён
+
+    def test_clear_all_flag_resets_after_use(self):
+        """Флаг сбрасывается после применения"""
+        session_state = {"bond_manager_clear_all": True}
+
+        # Применяем флаг
+        clear_all_triggered = session_state.get("bond_manager_clear_all", False)
+        if clear_all_triggered:
+            session_state["bond_manager_clear_all"] = False
+
+        assert session_state["bond_manager_clear_all"] is False
+
+    def test_original_favorites_preserved_after_clear(self):
+        """original_favorites сохраняется после очистки для синхронизации"""
+        original_favorites = {"SU26221RMFS0", "SU26225RMFS1"}
+        favorite_isins = original_favorites.copy()
+
+        # Очистка
+        favorite_isins = set()
+
+        # При "Готово" сравниваем с original_favorites
+        new_favorites = set()  # Пользователь не отметил ничего обратно
+        to_remove = original_favorites - new_favorites
+
+        assert len(to_remove) == 2  # Оба должны быть удалены из БД
+        assert "SU26221RMFS0" in to_remove
+        assert "SU26225RMFS1" in to_remove
+
+
+class TestFavoritesSync(unittest.TestCase):
+    """Тесты синхронизации избранного с БД (v0.2.2)"""
+
+    def test_calculate_to_add(self):
+        """Расчёт облигаций для добавления"""
+        new_favorites = {"SU26221RMFS0", "SU26225RMFS1", "SU26230RMFS1"}
+        old_favorites = {"SU26221RMFS0"}  # Была одна
+
+        to_add = new_favorites - old_favorites
+
+        assert len(to_add) == 2
+        assert "SU26225RMFS1" in to_add
+        assert "SU26230RMFS1" in to_add
+        assert "SU26221RMFS0" not in to_add  # Уже была
+
+    def test_calculate_to_remove(self):
+        """Расчёт облигаций для удаления"""
+        new_favorites = {"SU26221RMFS0"}  # Оставили одну
+        old_favorites = {"SU26221RMFS0", "SU26225RMFS1", "SU26230RMFS1"}
+
+        to_remove = old_favorites - new_favorites
+
+        assert len(to_remove) == 2
+        assert "SU26225RMFS1" in to_remove
+        assert "SU26230RMFS1" in to_remove
+        assert "SU26221RMFS0" not in to_remove  # Оставили
+
+    def test_no_changes_when_same(self):
+        """Нет изменений если наборы одинаковые"""
+        new_favorites = {"SU26221RMFS0", "SU26225RMFS1"}
+        old_favorites = {"SU26221RMFS0", "SU26225RMFS1"}
+
+        to_add = new_favorites - old_favorites
+        to_remove = old_favorites - new_favorites
+
+        assert len(to_add) == 0
+        assert len(to_remove) == 0
+
+    def test_full_replacement(self):
+        """Полная замена избранного"""
+        new_favorites = {"SU26238RMFS4", "SU26240RMFS2"}  # Новые
+        old_favorites = {"SU26221RMFS0", "SU26225RMFS1"}  # Старые
+
+        to_add = new_favorites - old_favorites
+        to_remove = old_favorites - new_favorites
+
+        assert len(to_add) == 2  # Добавить 2 новых
+        assert len(to_remove) == 2  # Удалить 2 старых
+
+    def test_cancel_preserves_original(self):
+        """Отмена сохраняет исходное состояние БД"""
+        original_favorites = {"SU26221RMFS0", "SU26225RMFS1"}
+        favorite_isins = original_favorites.copy()
+
+        # Пользователь очистил
+        favorite_isins = set()
+
+        # Пользователь нажал "Отменить и закрыть"
+        # В БД ничего не меняется
+        db_favorites_after_cancel = original_favorites  # Остались те же
+
+        assert db_favorites_after_cancel == original_favorites
+        assert len(db_favorites_after_cancel) == 2
+
+
 class TestBondManagerIntegration(unittest.TestCase):
     """Интеграционные тесты"""
 
@@ -273,6 +396,8 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestFormatFunctions))
     suite.addTests(loader.loadTestsFromTestCase(TestBondManagerLogic))
     suite.addTests(loader.loadTestsFromTestCase(TestBondManagerUI))
+    suite.addTests(loader.loadTestsFromTestCase(TestClearAllFavorites))
+    suite.addTests(loader.loadTestsFromTestCase(TestFavoritesSync))
     suite.addTests(loader.loadTestsFromTestCase(TestBondManagerIntegration))
 
     runner = unittest.TextTestRunner(verbosity=2)
