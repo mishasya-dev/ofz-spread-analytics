@@ -46,3 +46,18 @@ Thumbs.db
 # Database
 data/*.db
 data/intraday/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.cover
+
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Pre-commit
+.pre-commit-config.local.yaml

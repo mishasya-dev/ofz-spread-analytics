@@ -143,12 +143,66 @@ start.bat
 
 ```bash
 # Все тесты
-python3 tests/run_tests.py
-python3 tests/test_database.py
-python3 tests/test_sidebar.py
+pytest tests/ -v
+
+# Конкретный модуль
+pytest tests/test_ytm_calculation.py -v
+
+# С покрытием кода
+pytest tests/ -v --cov=. --cov-report=html
 ```
 
-**Результат:** 90 тестов, все проходят ✅
+**Результат:** 97 юнит-тестов + 12 UI-тестов, все проходят ✅
+
+## Разработка
+
+### Git Flow
+
+```
+main (стабильный релиз)
+  └── develop (интеграция)
+        ├── feature/xxx  — новые фичи
+        ├── fix/xxx      — багфиксы
+        └── refactor/xxx — рефакторинг
+```
+
+### Настройка окружения
+
+```bash
+# Установка зависимостей для разработки
+pip install -r requirements.txt
+pip install pytest pytest-cov pre-commit black isort flake8 commitizen
+
+# Установка pre-commit hooks
+pre-commit install
+pre-commit install --hook-type commit-msg
+```
+
+### Коммиты (Conventional Commits)
+
+```bash
+feat(ui): add bond manager modal
+fix(ytm): correct settlement date calculation
+refactor(db): split into repositories
+test(api): add moex_bonds tests
+docs: update README
+```
+
+### Запуск проверок
+
+```bash
+# Форматирование
+black . --line-length=100
+isort . --profile=black --line-length=100
+
+# Линтер
+flake8 . --max-line-length=100 --ignore=E501,W503,E203
+
+# Pre-commit (все проверки)
+pre-commit run --all-files
+```
+
+Подробнее: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Требования
 
