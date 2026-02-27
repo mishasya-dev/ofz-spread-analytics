@@ -58,8 +58,14 @@ def show_bond_manager_dialog():
     with col_title:
         st.markdown("### 📊 Список ОФЗ для торговли")
     with col_refresh:
-        if st.button("🔄 Обновить", use_container_width=True):
+        if st.button("🔄 Обновить", width="stretch"):
             st.session_state.bond_manager_reload = True
+            # Очищаем DataFrame для пересоздания с новыми данными
+            if 'bond_manager_df' in st.session_state:
+                del st.session_state['bond_manager_df']
+            # Очищаем состояние data_editor
+            if 'bonds_table_editor' in st.session_state:
+                del st.session_state['bonds_table_editor']
             # Генерируем новый UUID, но НЕ сбрасываем last_shown_id
             # Тогда при rerun: open_id != last_shown_id → диалог откроется
             st.session_state.bond_manager_open_id = str(uuid.uuid4())
@@ -107,26 +113,28 @@ def show_bond_manager_dialog():
         st.session_state.bond_manager_current_favorites = set(
             b.get('isin') for b in db.get_favorite_bonds()
         )
-    
+
     # Сохраняем исходное состояние для сравнения при "Готово"
     if st.session_state.get('bond_manager_original_favorites') is None:
         st.session_state.bond_manager_original_favorites = set(
             b.get('isin') for b in db.get_favorite_bonds()
         )
-    
-    # ВАЖНО: читаем состояние из ПРЕДЫДУЩЕГО рендера data_editor
-    # st.session_state["bonds_table_editor"] содержит DataFrame ПОСЛЕ редактирования
-    # из предыдущего rerun
-    if "bonds_table_editor" in st.session_state:
-        prev_edited_df = st.session_state["bonds_table_editor"]
-        if prev_edited_df is not None and hasattr(prev_edited_df, 'columns') and '⭐' in prev_edited_df.columns:
-            # Обновляем current_favorites из предыдущего состояния редактора
-            st.session_state.bond_manager_current_favorites = set(
-                prev_edited_df[prev_edited_df['⭐']]['ISIN']
-            )
-    
+
     current_favorites = st.session_state.bond_manager_current_favorites or set()
     original_favorites = st.session_state.bond_manager_original_favorites or set()
+
+    # ========================================
+    # ВОССТАНОВЛЕНИЕ СОСТОЯНИЯ ЧЕКБОКСОВ
+    # ========================================
+    # КРИТИЧЕСКИ ВАЖНО: если data_editor уже рендерился в этой сессии,
+    # берём состояние чекбоксов из session_state["bonds_table_editor"]
+    # Это происходит ДО создания DataFrame!
+    if "bonds_table_editor" in st.session_state:
+        prev_state = st.session_state["bonds_table_editor"]
+        if prev_state is not None and hasattr(prev_state, 'columns') and '⭐' in prev_state.columns:
+            # Обновляем current_favourites из предыдущего состояния
+            current_favorites = set(prev_state[prev_state['⭐']]['ISIN'])
+            st.session_state.bond_manager_current_favorites = current_favorites
 
     # ========================================
     # СТРОКА С ИНФОРМАЦИЕЙ + КНОПКА "ОЧИСТИТЬ"
@@ -137,9 +145,15 @@ def show_bond_manager_dialog():
     with col_info:
         st.info(f"⭐ Избранных: **{len(current_favorites)}** | Всего: **{len(bonds)}** | Загружено: {load_time}")
     with col_clear:
-        if st.button("🗑️ Очистить", use_container_width=True):
+        if st.button("🗑️ Очистить", width="stretch"):
             # Очищаем текущий набор (без сохранения в БД)
             st.session_state.bond_manager_current_favorites = set()
+            # Удаляем DataFrame чтобы пересоздать с очищенными чекбоксами
+            if 'bond_manager_df' in st.session_state:
+                del st.session_state.bond_manager_df
+            # Очищаем состояние data_editor
+            if "bonds_table_editor" in st.session_state:
+                del st.session_state["bonds_table_editor"]
             # Генерируем новый UUID для reopen диалога (НЕ сбрасываем last_shown_id)
             st.session_state.bond_manager_open_id = str(uuid.uuid4())
             st.rerun()
@@ -147,32 +161,66 @@ def show_bond_manager_dialog():
     # ========================================
     # ТАБЛИЦА С ГАЛОЧКАМИ
     # ========================================
-    df_data = []
-    for b in bonds:
-        maturity_str = b.get("maturity_date", "")
-        years_to_maturity = ""
-        if maturity_str:
-            try:
-                maturity_dt = datetime.strptime(maturity_str, "%Y-%m-%d")
-                years_to_maturity = round((maturity_dt - datetime.now()).days / 365.25, 1)
-            except:
-                pass
+    # КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: храним DataFrame в session_state и не пересоздаём
+    # Это позволяет st.data_editor сохранять состояние чекбоксов между rerun
 
-        df_data.append({
-            "ISIN": b.get("isin"),
-            "Название": b.get("name") or b.get("short_name") or b.get("isin"),
-            "Купон, %": b.get("coupon_rate"),
-            "Погашение": maturity_str,
-            "До погаш., лет": years_to_maturity,
-            "Дюрация, лет": b.get("duration_years"),
-            "YTM, %": b.get("last_ytm"),
-            "⭐": b.get("isin") in current_favorites,
-        })
+    need_create_df = False
 
-    df = pd.DataFrame(df_data)
-    
-    # Сортируем: избранное первыми, потом по дюрации
-    df = df.sort_values(by=["⭐", "Дюрация, лет"], ascending=[False, True], na_position="last")
+    # Проверяем, нужно ли создать DataFrame заново
+    if 'bond_manager_df' not in st.session_state:
+        need_create_df = True
+    elif st.session_state.get('bond_manager_reload', False):
+        need_create_df = True
+    # Проверяем, что ISIN в DataFrame совпадают с загруженными bonds
+    elif 'bond_manager_df' in st.session_state:
+        existing_df = st.session_state.bond_manager_df
+        if existing_df is None or not hasattr(existing_df, 'columns'):
+            need_create_df = True
+        else:
+            existing_isins = set(existing_df['ISIN'].tolist())
+            loaded_isins = set(b.get('isin') for b in bonds)
+            if existing_isins != loaded_isins:
+                need_create_df = True
+
+    if need_create_df:
+        # Создаём DataFrame
+        df_data = []
+        for b in bonds:
+            maturity_str = b.get("maturity_date", "")
+            years_to_maturity = ""
+            if maturity_str:
+                try:
+                    maturity_dt = datetime.strptime(maturity_str, "%Y-%m-%d")
+                    years_to_maturity = round((maturity_dt - datetime.now()).days / 365.25, 1)
+                except:
+                    pass
+
+            df_data.append({
+                "ISIN": b.get("isin"),
+                "Название": b.get("name") or b.get("short_name") or b.get("isin"),
+                "Купон, %": b.get("coupon_rate"),
+                "Погашение": maturity_str,
+                "До погаш., лет": years_to_maturity,
+                "Дюрация, лет": b.get("duration_years"),
+                "YTM, %": b.get("last_ytm"),
+                "⭐": b.get("isin") in current_favorites,
+            })
+
+        df = pd.DataFrame(df_data)
+
+        # Сортируем по дюрации (стабильный порядок, не зависящий от чекбоксов)
+        df = df.sort_values(by=["Дюрация, лет"], ascending=True, na_position="last")
+        df = df.reset_index(drop=True)
+
+        # Сохраняем в session_state
+        st.session_state.bond_manager_df = df
+
+        # Очищаем старое состояние data_editor при создании нового DataFrame
+        if "bonds_table_editor" in st.session_state:
+            del st.session_state["bonds_table_editor"]
+
+    # Используем DataFrame из session_state
+    df = st.session_state.bond_manager_df
 
     # Отображаем редактируемую таблицу
     edited_df = st.data_editor(
@@ -188,7 +236,7 @@ def show_bond_manager_dialog():
             "⭐": st.column_config.CheckboxColumn("⭐", default=False, width="tiny"),
         },
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         num_rows="fixed",
         key="bonds_table_editor",
     )
@@ -209,16 +257,21 @@ def show_bond_manager_dialog():
     col_cancel, col_done = st.columns([1, 1])
 
     with col_cancel:
-        if st.button("❌ Отменить и закрыть", use_container_width=True):
+        if st.button("❌ Отменить и закрыть", width="stretch"):
             # Очищаем состояние
             st.session_state.bond_manager_open_id = None
             st.session_state.bond_manager_last_shown_id = None
             st.session_state.bond_manager_current_favorites = None
             st.session_state.bond_manager_original_favorites = None
+            # Очищаем DataFrame и состояние data_editor
+            if 'bond_manager_df' in st.session_state:
+                del st.session_state['bond_manager_df']
+            if "bonds_table_editor" in st.session_state:
+                del st.session_state["bonds_table_editor"]
             st.rerun()
 
     with col_done:
-        if st.button("✅ Готово", use_container_width=True, type="primary"):
+        if st.button("✅ Готово", width="stretch", type="primary"):
             # Синхронизируем с БД
             new_favorites = current_favorites or set()
             old_favorites = original_favorites or set()
@@ -263,6 +316,11 @@ def show_bond_manager_dialog():
             st.session_state.bond_manager_last_shown_id = None
             st.session_state.bond_manager_current_favorites = None
             st.session_state.bond_manager_original_favorites = None
+            # Очищаем DataFrame и состояние data_editor
+            if 'bond_manager_df' in st.session_state:
+                del st.session_state['bond_manager_df']
+            if "bonds_table_editor" in st.session_state:
+                del st.session_state["bonds_table_editor"]
             st.session_state.cached_favorites_count = len(new_favorites)
             
             # Показываем результат и закрываем
@@ -289,12 +347,18 @@ def render_bond_manager_button():
         st.session_state.bond_manager_last_shown_id = None
     
     # Кнопка открытия
-    if st.button("📊 Выбор инструментов для анализа", use_container_width=True):
+    if st.button("📊 Выбор инструментов для анализа", width="stretch"):
         # Генерируем новый ID для этого открытия
         st.session_state.bond_manager_open_id = str(uuid.uuid4())
         # Сбрасываем состояние галочек для нового открытия
         st.session_state.bond_manager_current_favorites = None
         st.session_state.bond_manager_original_favorites = None
+        # Очищаем DataFrame для пересоздания
+        if 'bond_manager_df' in st.session_state:
+            del st.session_state['bond_manager_df']
+        # Очищаем состояние data_editor
+        if 'bonds_table_editor' in st.session_state:
+            del st.session_state['bonds_table_editor']
         # Кэшируем количество избранных
         from core.database import get_db
         db = get_db()
