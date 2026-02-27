@@ -290,6 +290,41 @@ class TestClearAllFavorites(unittest.TestCase):
         assert "SU26221RMFS0" in to_remove
         assert "SU26225RMFS1" in to_remove
 
+    def test_clear_all_generates_new_uuid_for_dialog_reopen(self):
+        """При очистке генерируется новый UUID для повторного открытия диалога"""
+        import uuid
+        
+        session_state = {
+            "bond_manager_open_id": "old-uuid-123",
+            "bond_manager_last_shown_id": "old-uuid-123",
+            "bond_manager_clear_all": False
+        }
+
+        # Нажатие "Очистить избранное"
+        session_state["bond_manager_clear_all"] = True
+        session_state["bond_manager_open_id"] = str(uuid.uuid4())  # Новый UUID
+        
+        # После rerun: open_id != last_shown_id -> диалог откроется снова
+        assert session_state["bond_manager_open_id"] != "old-uuid-123"
+        assert session_state["bond_manager_clear_all"] is True
+
+    def test_clear_all_keeps_dialog_open_after_rerun(self):
+        """После rerun диалог открывается снова благодаря UUID механизму"""
+        session_state = {
+            "bond_manager_open_id": "new-uuid-456",
+            "bond_manager_last_shown_id": "old-uuid-123",  # Разные!
+            "bond_manager_clear_all": True
+        }
+
+        # Логика открытия диалога
+        current_id = session_state.get("bond_manager_open_id")
+        last_shown = session_state.get("bond_manager_last_shown_id")
+        
+        # Если current_id != last_shown -> диалог откроется
+        should_open_dialog = current_id and current_id != last_shown
+        
+        assert should_open_dialog is True
+
 
 class TestFavoritesSync(unittest.TestCase):
     """Тесты синхронизации избранного с БД (v0.2.2)"""

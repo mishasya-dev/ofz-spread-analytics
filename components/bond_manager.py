@@ -153,9 +153,12 @@ def show_bond_manager_dialog():
         key="bonds_table_editor",
     )
     
-    # Кнопка "Очистить избранное" - снимает все галочки
+    # Кнопка "Очистить избранное" - снимает все галочки и оставляет окно открытым
     if st.button("🗑️ Очистить избранное", use_container_width=True):
         st.session_state.bond_manager_clear_all = True
+        # Генерируем новый UUID для повторного открытия диалога после rerun
+        st.session_state.bond_manager_open_id = str(uuid.uuid4())
+        st.session_state.bond_manager_last_shown_id = None  # Сброс для reopen
         st.rerun()
 
     # Кнопки действий
