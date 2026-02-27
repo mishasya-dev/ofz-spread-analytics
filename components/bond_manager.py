@@ -60,9 +60,9 @@ def show_bond_manager_dialog():
     with col_refresh:
         if st.button("🔄 Обновить", use_container_width=True):
             st.session_state.bond_manager_reload = True
-            # Генерируем новый UUID для повторного открытия диалога
+            # Генерируем новый UUID, но НЕ сбрасываем last_shown_id
+            # Тогда при rerun: open_id != last_shown_id → диалог откроется
             st.session_state.bond_manager_open_id = str(uuid.uuid4())
-            st.session_state.bond_manager_last_shown_id = None
             st.rerun()
 
     st.markdown("""
@@ -129,9 +129,8 @@ def show_bond_manager_dialog():
         if st.button("🗑️ Очистить", use_container_width=True):
             # Очищаем текущий набор (без сохранения в БД)
             st.session_state.bond_manager_current_favorites = set()
-            # Генерируем новый UUID для reopen диалога
+            # Генерируем новый UUID для reopen диалога (НЕ сбрасываем last_shown_id)
             st.session_state.bond_manager_open_id = str(uuid.uuid4())
-            st.session_state.bond_manager_last_shown_id = None
             st.rerun()
 
     # ========================================
