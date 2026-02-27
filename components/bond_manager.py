@@ -230,6 +230,9 @@ def show_bond_manager_dialog():
                 
                 progress_bar.empty()
                 st.success(f"Обновлено {saved_count} облигаций")
+                # Переоткрываем диалог с новыми данными
+                st.session_state.bond_manager_open_id = str(uuid.uuid4())
+                st.session_state.bond_manager_last_shown_id = None
                 st.rerun()
                 
             except requests.exceptions.Timeout:
@@ -246,17 +249,19 @@ def show_bond_manager_dialog():
                     fetcher.close()
 
     with col_info:
-        favorites = db.get_favorite_bonds()
+        # Используем кэшированное количество избранных (обновляется только при открытии диалога)
+        favorites_count = st.session_state.get('cached_favorites_count', 0)
         fav_col1, fav_col2 = st.columns([3, 1])
         with fav_col1:
-            st.info(f"⭐ Избранных: **{len(favorites)}** | Выберите облигации для отображения в sidebar")
+            st.info(f"⭐ Избранных: **{favorites_count}** | Выберите облигации для отображения в sidebar")
         with fav_col2:
-            if len(favorites) > 0:
+            if favorites_count > 0:
                 if st.button("🗑️ Очистить", key="clear_favorites", help="Убрать все облигации из избранного"):
                     cleared = db.clear_all_favorites()
                     if cleared > 0:
-                        # Перерисовываем диалог без закрытия
-                        st.session_state.bond_manager_open_id = str(uuid.uuid4())
+                        # Обновляем кэш и закрываем диалог
+                        st.session_state.cached_favorites_count = 0
+                        st.session_state.bond_manager_open_id = None
                         st.session_state.bond_manager_last_shown_id = None
                         st.rerun()
 
@@ -362,6 +367,10 @@ def render_bond_manager_button():
     if st.button("📊 Управление облигациями", use_container_width=True):
         # Генерируем новый ID для этого открытия
         st.session_state.bond_manager_open_id = str(uuid.uuid4())
+        # Кэшируем количество избранных (обновится только при следующем открытии)
+        from core.database import get_db
+        db = get_db()
+        st.session_state.cached_favorites_count = len(db.get_favorite_bonds())
         st.rerun()
     
     # Проверяем нужно ли открыть диалог
