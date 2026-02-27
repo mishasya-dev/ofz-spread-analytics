@@ -238,92 +238,93 @@ class TestBondManagerUI(unittest.TestCase):
 
 
 class TestClearAllFavorites(unittest.TestCase):
-    """Тесты для кнопки 'Очистить избранное' (новая архитектура v0.2.2)"""
+    """Тесты для кнопки 'Очистить' (v0.2.2 - новая логика session_state)"""
 
-    def test_clear_all_sets_flag(self):
-        """Флаг bond_manager_clear_all устанавливается при очистке"""
-        # Симулируем session_state
-        session_state = {"bond_manager_clear_all": False}
+    def test_clear_sets_current_favorites_to_empty(self):
+        """При очистке bond_manager_current_favorites становится пустым"""
+        session_state = {
+            "bond_manager_current_favorites": {"SU26221RMFS0", "SU26225RMFS1"},
+        }
 
-        # Нажатие кнопки "Очистить избранное"
-        session_state["bond_manager_clear_all"] = True
+        # Нажатие "Очистить"
+        session_state["bond_manager_current_favorites"] = set()
 
-        assert session_state["bond_manager_clear_all"] is True
+        assert len(session_state["bond_manager_current_favorites"]) == 0
 
-    def test_clear_all_resets_favorite_isins(self):
-        """При очистке favorite_isins становится пустым"""
-        original_favorites = {"SU26221RMFS0", "SU26225RMFS1", "SU26230RMFS1"}
-        favorite_isins = original_favorites.copy()
-
-        # Флаг очистки
-        clear_all_triggered = True
-        if clear_all_triggered:
-            favorite_isins = set()
-
-        assert len(favorite_isins) == 0
-        assert len(original_favorites) == 3  # Исходный набор сохранён
-
-    def test_clear_all_flag_resets_after_use(self):
-        """Флаг сбрасывается после применения"""
-        session_state = {"bond_manager_clear_all": True}
-
-        # Применяем флаг
-        clear_all_triggered = session_state.get("bond_manager_clear_all", False)
-        if clear_all_triggered:
-            session_state["bond_manager_clear_all"] = False
-
-        assert session_state["bond_manager_clear_all"] is False
-
-    def test_original_favorites_preserved_after_clear(self):
-        """original_favorites сохраняется после очистки для синхронизации"""
-        original_favorites = {"SU26221RMFS0", "SU26225RMFS1"}
-        favorite_isins = original_favorites.copy()
+    def test_clear_preserves_original_favorites(self):
+        """original_favorites сохраняется для сравнения при 'Готово'"""
+        session_state = {
+            "bond_manager_current_favorites": {"SU26221RMFS0", "SU26225RMFS1"},
+            "bond_manager_original_favorites": {"SU26221RMFS0", "SU26225RMFS1"},
+        }
 
         # Очистка
-        favorite_isins = set()
+        session_state["bond_manager_current_favorites"] = set()
 
-        # При "Готово" сравниваем с original_favorites
-        new_favorites = set()  # Пользователь не отметил ничего обратно
-        to_remove = original_favorites - new_favorites
+        # original_favorites не изменился
+        assert len(session_state["bond_manager_original_favorites"]) == 2
 
-        assert len(to_remove) == 2  # Оба должны быть удалены из БД
-        assert "SU26221RMFS0" in to_remove
-        assert "SU26225RMFS1" in to_remove
-
-    def test_clear_all_generates_new_uuid_for_dialog_reopen(self):
+    def test_clear_generates_new_uuid_for_dialog_reopen(self):
         """При очистке генерируется новый UUID для повторного открытия диалога"""
         import uuid
         
         session_state = {
             "bond_manager_open_id": "old-uuid-123",
             "bond_manager_last_shown_id": "old-uuid-123",
-            "bond_manager_clear_all": False
+            "bond_manager_current_favorites": {"SU26221RMFS0"},
         }
 
-        # Нажатие "Очистить избранное"
-        session_state["bond_manager_clear_all"] = True
-        session_state["bond_manager_open_id"] = str(uuid.uuid4())  # Новый UUID
+        # Нажатие "Очистить"
+        session_state["bond_manager_current_favorites"] = set()
+        session_state["bond_manager_open_id"] = str(uuid.uuid4())
+        session_state["bond_manager_last_shown_id"] = None
         
-        # После rerun: open_id != last_shown_id -> диалог откроется снова
+        assert len(session_state["bond_manager_current_favorites"]) == 0
         assert session_state["bond_manager_open_id"] != "old-uuid-123"
-        assert session_state["bond_manager_clear_all"] is True
+        assert session_state["bond_manager_last_shown_id"] is None
 
-    def test_clear_all_keeps_dialog_open_after_rerun(self):
-        """После rerun диалог открывается снова благодаря UUID механизму"""
+    def test_checkbox_change_updates_current_favorites(self):
+        """Изменение чекбокса обновляет current_favorites без загрузки из БД"""
         session_state = {
-            "bond_manager_open_id": "new-uuid-456",
-            "bond_manager_last_shown_id": "old-uuid-123",  # Разные!
-            "bond_manager_clear_all": True
+            "bond_manager_current_favorites": set(),  # После очистки
+            "bond_manager_original_favorites": {"SU26221RMFS0", "SU26225RMFS1"},
         }
 
-        # Логика открытия диалога
-        current_id = session_state.get("bond_manager_open_id")
-        last_shown = session_state.get("bond_manager_last_shown_id")
-        
-        # Если current_id != last_shown -> диалог откроется
-        should_open_dialog = current_id and current_id != last_shown
-        
-        assert should_open_dialog is True
+        # Пользователь кликнул на один чекбокс (симуляция)
+        session_state["bond_manager_current_favorites"] = {"SU26230RMFS1"}
+
+        # current_favorites изменился, но НЕ вернулся к original_favorites
+        assert session_state["bond_manager_current_favorites"] == {"SU26230RMFS1"}
+        assert session_state["bond_manager_original_favorites"] == {"SU26221RMFS0", "SU26225RMFS1"}
+
+    def test_done_compares_current_with_original(self):
+        """При 'Готово' сравниваем current_favorites с original_favorites"""
+        current_favorites = {"SU26230RMFS1"}  # Новая облигация
+        original_favorites = {"SU26221RMFS0", "SU26225RMFS1"}  # Старые
+
+        to_add = current_favorites - original_favorites
+        to_remove = original_favorites - current_favorites
+
+        assert to_add == {"SU26230RMFS1"}
+        assert to_remove == {"SU26221RMFS0", "SU26225RMFS1"}
+
+    def test_cancel_clears_session_state(self):
+        """При 'Отменить' очищается session_state"""
+        session_state = {
+            "bond_manager_open_id": "some-uuid",
+            "bond_manager_last_shown_id": "some-uuid",
+            "bond_manager_current_favorites": {"SU26221RMFS0"},
+            "bond_manager_original_favorites": {"SU26221RMFS0", "SU26225RMFS1"},
+        }
+
+        # Отмена
+        session_state["bond_manager_open_id"] = None
+        session_state["bond_manager_last_shown_id"] = None
+        session_state["bond_manager_current_favorites"] = None
+        session_state["bond_manager_original_favorites"] = None
+
+        assert session_state["bond_manager_current_favorites"] is None
+        assert session_state["bond_manager_original_favorites"] is None
 
 
 class TestFavoritesSync(unittest.TestCase):

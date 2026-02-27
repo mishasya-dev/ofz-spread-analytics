@@ -1,13 +1,12 @@
 """
-Компонент управления облигациями
+Компонент выбора инструментов для анализа
 
-Модальное окно для выбора избранных облигаций (версия 0.2.2)
+Модальное окно для выбора облигаций (версия 0.2.2)
 
 Логика:
 - Загружаем список с MOEX API (не из БД)
-- Галочки = избранное (сравниваем с БД)
-- Изменения только в памяти
-- "Готово" = INSERT новых + DELETE убранных
+- Галочки = избранное (хранится в session_state до нажатия "Готово")
+- "Готово" = INSERT новых + DELETE убранных в БД
 - "Отменить" = закрыть без сохранения
 """
 import streamlit as st
@@ -39,24 +38,31 @@ def get_moex_fetcher():
     return MOEXBondsFetcher()
 
 
-@st.dialog("Управление облигациями", width="large")
+@st.dialog("Выбор инструментов для анализа", width="large")
 def show_bond_manager_dialog():
     """
-    Модальное окно для управления списком облигаций
+    Модальное окно для выбора облигаций
 
     Логика:
     - Загружаем список с MOEX API (не из БД)
-    - Галочки = избранное (сравниваем с БД)
-    - Изменения только в памяти
-    - "Готово" = INSERT новых + DELETE убранных
+    - Галочки = избранное (хранится в session_state)
+    - "Готово" = INSERT новых + DELETE убранных в БД
     - "Отменить" = закрыть без сохранения
     """
     db = get_bond_manager()
 
-    # Заголовок с информацией
+    # ========================================
+    # ЗАГОЛОВОК + КНОПКА "ОБНОВИТЬ"
+    # ========================================
+    col_title, col_refresh = st.columns([4, 1])
+    with col_title:
+        st.markdown("### 📊 Список ОФЗ для торговли")
+    with col_refresh:
+        if st.button("🔄 Обновить", use_container_width=True):
+            st.session_state.bond_manager_reload = True
+            st.rerun()
+
     st.markdown("""
-    ### 📊 Список ОФЗ для торговли
-    
     **Фильтры применены:**
     - ОФЗ-ПД (26xxx, 25xxx, 24xxx серии)
     - Срок до погашения > 0.5 года
@@ -64,15 +70,14 @@ def show_bond_manager_dialog():
     - Наличие дюрации
     """)
 
-    # Загружаем список облигаций с MOEX
+    # ========================================
+    # ЗАГРУЗКА ДАННЫХ С MOEX
+    # ========================================
     if 'bond_manager_bonds' not in st.session_state or st.session_state.get('bond_manager_reload', False):
         with st.spinner("Загрузка с MOEX API..."):
             fetcher = get_moex_fetcher()
             try:
-                # Получаем все ОФЗ с рыночными данными
                 all_bonds = fetcher.fetch_ofz_with_market_data(include_details=False)
-                
-                # Фильтруем
                 from api.moex_bonds import filter_ofz_for_trading
                 filtered_bonds = filter_ofz_for_trading(all_bonds)
                 
@@ -91,24 +96,50 @@ def show_bond_manager_dialog():
         st.warning("Нет облигаций. Проверьте соединение с MOEX.")
         return
 
-    # Получаем список избранных из БД (только ISIN)
-    original_favorites = set(b.get('isin') for b in db.get_favorite_bonds())
-    favorite_isins = original_favorites.copy()  # Копия для модификации
+    # ========================================
+    # УПРАВЛЕНИЕ СОСТОЯНИЕМ ГАЛОЧЕК (session_state)
+    # ========================================
+    # Инициализация при первом открытии или после "Готово/Отменить"
+    if 'bond_manager_current_favorites' not in st.session_state:
+        st.session_state.bond_manager_current_favorites = None
     
-    # Показываем счётчик
+    # Если current_favorites не установлен - загружаем из БД
+    if st.session_state.bond_manager_current_favorites is None:
+        st.session_state.bond_manager_current_favorites = set(
+            b.get('isin') for b in db.get_favorite_bonds()
+        )
+    
+    # Сохраняем исходное состояние для сравнения при "Готово"
+    if 'bond_manager_original_favorites' not in st.session_state:
+        st.session_state.bond_manager_original_favorites = set(
+            b.get('isin') for b in db.get_favorite_bonds()
+        )
+    
+    current_favorites = st.session_state.bond_manager_current_favorites
+    original_favorites = st.session_state.bond_manager_original_favorites
+
+    # ========================================
+    # СТРОКА С ИНФОРМАЦИЕЙ + КНОПКА "ОЧИСТИТЬ"
+    # ========================================
     load_time = st.session_state.get('bond_manager_bonds_time', '')
-    st.info(f"⭐ Избранных: **{len(original_favorites)}** | Всего: **{len(bonds)}** | Загружено: {load_time}")
+    
+    col_info, col_clear = st.columns([4, 1])
+    with col_info:
+        st.info(f"⭐ Избранных: **{len(current_favorites)}** | Всего: **{len(bonds)}** | Загружено: {load_time}")
+    with col_clear:
+        if st.button("🗑️ Очистить", use_container_width=True):
+            # Очищаем текущий набор (без сохранения в БД)
+            st.session_state.bond_manager_current_favorites = set()
+            # Генерируем новый UUID для reopen диалога
+            st.session_state.bond_manager_open_id = str(uuid.uuid4())
+            st.session_state.bond_manager_last_shown_id = None
+            st.rerun()
 
-    # Проверяем флаг "очистить всё"
-    clear_all_triggered = st.session_state.get('bond_manager_clear_all', False)
-    if clear_all_triggered:
-        st.session_state.bond_manager_clear_all = False  # Сбрасываем флаг
-        favorite_isins = set()  # Временно пустой набор для отображения
-
-    # Создаём DataFrame для data_editor
+    # ========================================
+    # ТАБЛИЦА С ГАЛОЧКАМИ
+    # ========================================
     df_data = []
     for b in bonds:
-        # Вычисляем годы до погашения для отображения
         maturity_str = b.get("maturity_date", "")
         years_to_maturity = ""
         if maturity_str:
@@ -126,7 +157,7 @@ def show_bond_manager_dialog():
             "До погаш., лет": years_to_maturity,
             "Дюрация, лет": b.get("duration_years"),
             "YTM, %": b.get("last_ytm"),
-            "⭐": b.get("isin") in favorite_isins,
+            "⭐": b.get("isin") in current_favorites,
         })
 
     df = pd.DataFrame(df_data)
@@ -153,23 +184,35 @@ def show_bond_manager_dialog():
         key="bonds_table_editor",
     )
     
-    # Кнопка "Очистить избранное" - снимает все галочки и оставляет окно открытым
-    if st.button("🗑️ Очистить избранное", use_container_width=True):
-        st.session_state.bond_manager_clear_all = True
-        # Генерируем новый UUID для повторного открытия диалога после rerun
-        st.session_state.bond_manager_open_id = str(uuid.uuid4())
-        st.session_state.bond_manager_last_shown_id = None  # Сброс для reopen
-        st.rerun()
+    # ========================================
+    # СИНХРОНИЗАЦИЯ ГАЛОЧЕК С session_state
+    # ========================================
+    # Читаем текущее состояние из edited_df и сохраняем в session_state
+    new_favorites_from_ui = set(edited_df[edited_df["⭐"]]["ISIN"])
+    if new_favorites_from_ui != current_favorites:
+        st.session_state.bond_manager_current_favorites = new_favorites_from_ui
+        current_favorites = new_favorites_from_ui
 
-    # Кнопки действий
+    # ========================================
+    # КНОПКИ ДЕЙСТВИЙ
+    # ========================================
     st.divider()
-    col_done, col_cancel, col_refresh = st.columns([1, 1, 1])
+    col_cancel, col_done = st.columns([1, 1])
+
+    with col_cancel:
+        if st.button("❌ Отменить и закрыть", use_container_width=True):
+            # Очищаем состояние
+            st.session_state.bond_manager_open_id = None
+            st.session_state.bond_manager_last_shown_id = None
+            st.session_state.bond_manager_current_favorites = None
+            st.session_state.bond_manager_original_favorites = None
+            st.rerun()
 
     with col_done:
         if st.button("✅ Готово", use_container_width=True, type="primary"):
             # Синхронизируем с БД
-            new_favorites = set(edited_df[edited_df["⭐"]]["ISIN"])
-            old_favorites = original_favorites  # Сравниваем с исходным состоянием БД
+            new_favorites = current_favorites
+            old_favorites = original_favorites
             
             # INSERT новых
             to_add = new_favorites - old_favorites
@@ -181,7 +224,6 @@ def show_bond_manager_dialog():
             
             # Добавляем новые в БД
             for isin in to_add:
-                # Находим данные облигации
                 bond_data = next((b for b in bonds if b.get('isin') == isin), None)
                 if bond_data:
                     db.save_bond({
@@ -207,31 +249,22 @@ def show_bond_manager_dialog():
                 db.delete_bond(isin)
                 removed_count += 1
             
-            # Обновляем кэш
-            st.session_state.cached_favorites_count = len(new_favorites)
+            # Очищаем состояние
             st.session_state.bond_manager_open_id = None
             st.session_state.bond_manager_last_shown_id = None
+            st.session_state.bond_manager_current_favorites = None
+            st.session_state.bond_manager_original_favorites = None
+            st.session_state.cached_favorites_count = len(new_favorites)
             
             # Показываем результат и закрываем
             if added_count or removed_count:
                 st.toast(f"✅ Добавлено: {added_count}, Убрано: {removed_count}")
             st.rerun()
-    
-    with col_cancel:
-        if st.button("❌ Отменить и закрыть", use_container_width=True):
-            st.session_state.bond_manager_open_id = None
-            st.session_state.bond_manager_last_shown_id = None
-            st.rerun()
-    
-    with col_refresh:
-        if st.button("🔄 Обновить", use_container_width=True):
-            st.session_state.bond_manager_reload = True
-            st.rerun()
 
 
 def render_bond_manager_button():
     """
-    Кнопка для открытия модального окна управления облигациями
+    Кнопка для открытия модального окна выбора инструментов
 
     Разместить в sidebar
     
@@ -247,9 +280,12 @@ def render_bond_manager_button():
         st.session_state.bond_manager_last_shown_id = None
     
     # Кнопка открытия
-    if st.button("📊 Управление облигациями", use_container_width=True):
+    if st.button("📊 Выбор инструментов для анализа", use_container_width=True):
         # Генерируем новый ID для этого открытия
         st.session_state.bond_manager_open_id = str(uuid.uuid4())
+        # Сбрасываем состояние галочек для нового открытия
+        st.session_state.bond_manager_current_favorites = None
+        st.session_state.bond_manager_original_favorites = None
         # Кэшируем количество избранных
         from core.database import get_db
         db = get_db()
@@ -264,5 +300,3 @@ def render_bond_manager_button():
         # Это новое открытие - показываем диалог
         st.session_state.bond_manager_last_shown_id = current_id
         show_bond_manager_dialog()
-    # Если current_id == last_shown -> диалог уже показывали для этого ID
-    # При следующем rerun диалог не откроется снова
