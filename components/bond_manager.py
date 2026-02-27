@@ -305,7 +305,7 @@ def show_bond_manager_dialog():
             "ISIN": st.column_config.TextColumn("ISIN", width="medium"),
             "Название": st.column_config.TextColumn("Название", width="medium"),
             "Купон, %": st.column_config.NumberColumn("Купон, %", format="%.2f%%", width="small"),
-            "Погашение": st.column_config.DateColumn("Погашение", format="DD.MM.YYYY", width="small"),
+            "Погашение": st.column_config.TextColumn("Погашение", width="small"),
             "До погаш., лет": st.column_config.NumberColumn("До погаш., лет", format="%.1f", width="small"),
             "Дюрация, лет": st.column_config.NumberColumn("Дюрация, лет", format="%.1f", width="small"),
             "YTM, %": st.column_config.NumberColumn("YTM, %", format="%.2f%%", width="small"),
@@ -317,24 +317,17 @@ def show_bond_manager_dialog():
         key="bonds_table_editor",
     )
     
-    # Проверяем изменения в колонке избранного
+    # Проверяем изменения в колонке избранного (сохраняем без rerun)
     if not df.empty and not edited_df.empty:
         # Создаём словарь исходных состояний по ISIN
         original_favorites = dict(zip(df["ISIN"], df["⭐"]))
-        # Проверяем изменения
-        changes_made = False
+        # Сохраняем изменения в БД
         for _, row in edited_df.iterrows():
             isin = row["ISIN"]
             new_favorite = row["⭐"]
             if isin in original_favorites and original_favorites[isin] != new_favorite:
                 db.set_favorite(isin, new_favorite)
-                changes_made = True
-        
-        if changes_made:
-            # Обновляем диалог без закрытия
-            st.session_state.bond_manager_open_id = str(uuid.uuid4())
-            st.session_state.bond_manager_last_shown_id = None
-            st.rerun()
+        # Без rerun - диалог остаётся открытым, счётчик обновится при следующем открытии
 
     # Итого
     st.markdown(f"**Всего облигаций:** {len(df)}")
