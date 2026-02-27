@@ -279,7 +279,7 @@ class CandleFetcher:
         Рассчитать YTM для всех свечей в DataFrame
         
         Args:
-            df: DataFrame с ценами свечей
+            df: DataFrame с ценами свечей (индекс = datetime)
             bond_config: Конфигурация облигации
             
         Returns:
@@ -295,19 +295,36 @@ class CandleFetcher:
         # Получаем НКД с MOEX
         accrued_interest = self._get_accrued_interest(bond_config.isin)
         
-        # Рассчитываем YTM для каждой цены
-        df['ytm_open'] = df['open'].apply(
-            lambda p: self._safe_calculate_ytm(p, bond_params, accrued_interest)
-        )
-        df['ytm_high'] = df['high'].apply(
-            lambda p: self._safe_calculate_ytm(p, bond_params, accrued_interest)
-        )
-        df['ytm_low'] = df['low'].apply(
-            lambda p: self._safe_calculate_ytm(p, bond_params, accrued_interest)
-        )
-        df['ytm_close'] = df['close'].apply(
-            lambda p: self._safe_calculate_ytm(p, bond_params, accrued_interest)
-        )
+        # Рассчитываем YTM для каждой свечи с её датой
+        ytm_open_list = []
+        ytm_high_list = []
+        ytm_low_list = []
+        ytm_close_list = []
+        
+        for idx, row in df.iterrows():
+            # Получаем дату из индекса (datetime -> date)
+            if hasattr(idx, 'date'):
+                settlement_date = idx.date()
+            else:
+                settlement_date = idx if isinstance(idx, date) else None
+            
+            ytm_open_list.append(
+                self._safe_calculate_ytm(row.get('open'), bond_params, accrued_interest, settlement_date)
+            )
+            ytm_high_list.append(
+                self._safe_calculate_ytm(row.get('high'), bond_params, accrued_interest, settlement_date)
+            )
+            ytm_low_list.append(
+                self._safe_calculate_ytm(row.get('low'), bond_params, accrued_interest, settlement_date)
+            )
+            ytm_close_list.append(
+                self._safe_calculate_ytm(row.get('close'), bond_params, accrued_interest, settlement_date)
+            )
+        
+        df['ytm_open'] = ytm_open_list
+        df['ytm_high'] = ytm_high_list
+        df['ytm_low'] = ytm_low_list
+        df['ytm_close'] = ytm_close_list
         
         # Основной YTM = YTM закрытия
         df['ytm'] = df['ytm_close']
@@ -387,7 +404,8 @@ class CandleFetcher:
         self, 
         price: float, 
         bond_params: BondParams, 
-        accrued_interest: float = 0.0
+        accrued_interest: float = 0.0,
+        settlement_date: date = None
     ) -> Optional[float]:
         """
         Безопасный расчёт YTM с обработкой ошибок
@@ -396,6 +414,7 @@ class CandleFetcher:
             price: Цена в % от номинала
             bond_params: Параметры облигации
             accrued_interest: НКД в рублях
+            settlement_date: Дата расчёта (если None - используется дата свечи)
             
         Returns:
             YTM в % годовых
@@ -404,11 +423,15 @@ class CandleFetcher:
             return None
         
         try:
-            return self._ytm_calculator.calculate_ytm(price, bond_params, accrued_interest=accrued_interest)
+            return self._ytm_calculator.calculate_ytm(
+                price, bond_params, 
+                settlement_date=settlement_date,
+                accrued_interest=accrued_interest
+            )
         except Exception as e:
             logger.debug(f"Ошибка расчёта YTM: {e}")
             # Возвращаем упрощённый расчёт
-            return self._ytm_calculator.calculate_ytm_simple(price, bond_params)
+            return self._ytm_calculator.calculate_ytm_simple(price, bond_params, settlement_date)
     
     def _make_request(self, url: str, params: Dict) -> requests.Response:
         """
