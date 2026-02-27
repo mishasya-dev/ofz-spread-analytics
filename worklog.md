@@ -1,5 +1,36 @@
 # OFZ Spread Analytics - Журнал работы
 
+## v0.2.1-patch1 — Исправление тестов (27.02.2026)
+
+### Найденные и исправленные проблемы
+
+| # | Проблема | Решение |
+|---|----------|---------|
+| 1 | `ImportError` в `__init__.py` при запуске pytest | try/except с fallback на абсолютные импорты |
+| 2 | Отсутствует `tests/conftest.py` | Создан файл с настройкой путей |
+| 3 | 6 тестов падали в `test_moex_bonds.py` | Обновлены тестовые данные (`has_trades`, `num_trades`) |
+
+### Изменённые файлы
+
+- `streamlit-app/__init__.py` — fallback импорты
+- `streamlit-app/tests/conftest.py` — новый файл для pytest
+- `streamlit-app/tests/test_moex_bonds.py` — обновлены тестовые данные
+
+### Результаты тестирования
+
+```
+pytest streamlit-app/tests/ -v
+================================
+79 passed in 12.34s
+```
+
+### Git
+
+- Ветка: `fix/v0.2.1-tests-and-imports`
+- Репозиторий: `mishasya-dev/ofz-spread-analytics`
+
+---
+
 ## v0.2.2 — Оптимизация (27.02.2026)
 
 ### Найденные и исправленные проблемы
@@ -86,6 +117,75 @@ tests/test_sidebar.py:  14/14 ✅
 - Расчёт YTM из цен свечей
 - Торговые сигналы
 - 76 тестов
+
+---
+
+## v0.2.3 — Git Flow & CI/CD Setup (27.02.2026)
+
+### Выполненная работа
+
+#### 1. UI тесты (Playwright)
+- Создан `tests/test_ui.py` — 12 UI тестов
+- Тесты: загрузка приложения, sidebar, метрики, графики, отсутствие ошибок
+- Responsive тесты: mobile (375x667), tablet (768x1024)
+- Результат: **12/12 PASSED**
+
+#### 2. Git Flow настройка
+
+| Файл | Описание |
+|------|----------|
+| `.commitlintrc.json` | Conventional Commits конфигурация |
+| `.pre-commit-config.yaml` | Pre-commit hooks (black, isort, flake8, pytest) |
+| `pyproject.toml` | Конфигурация инструментов (black, isort, pytest, commitizen) |
+| `requirements-dev.txt` | Dev-зависимости |
+| `CONTRIBUTING.md` | Руководство по разработке |
+
+#### 3. GitHub Actions CI/CD
+
+`.github/workflows/ci.yml`:
+- **lint** — black, isort, flake8 проверки
+- **test** — pytest с coverage
+- **build** — создание архива
+- **release** — автоматический релиз при теге
+
+#### 4. Шаблоны
+
+- `.github/PULL_REQUEST_TEMPLATE.md`
+- `.github/ISSUE_TEMPLATE/bug_report.md`
+- `.github/ISSUE_TEMPLATE/feature_request.md`
+
+#### 5. Документация
+
+- `README.md` — добавлен раздел "Разработка"
+- `CONTRIBUTING.md` — Git Flow, коммиты, тестирование, code style
+
+### Структура коммитов
+
+```
+<type>(<scope>): <subject>
+
+Типы: feat, fix, refactor, test, docs, style, chore, perf, ci
+Scope: api, db, ui, ytm, charts, test
+```
+
+### Тесты (итого)
+
+```
+Юнит-тесты:  97/97 ✅
+UI-тесты:    12/12 ✅
+────────────────────
+Итого:       109/109 ✅
+```
+
+### Git
+
+- Ветка: `fix/v0.2.1-tests-and-imports`
+- Коммит: `5774b12` — chore(ci): add Git Flow, CI/CD pipeline
+- Push: https://github.com/mishasya-dev/ofz-spread-analytics
+
+### Архив
+
+- `/home/z/my-project/download/ofz-spread-analytics-refactored-v0.2.2.zip` (157 KB)
 
 ---
 
