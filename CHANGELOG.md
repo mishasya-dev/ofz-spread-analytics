@@ -15,6 +15,14 @@ All notable changes to this project will be documented in this file.
   - Заменено на `NUMTRADES` и `VALTODAY` для определения активности торгов
   - Фильтрация теперь по `has_trades` (num_trades > 0)
 - **Дубли облигаций:** добавлен `seen_isins` для удаления дублей из securities
+- **YTM расчёт:** settlement_date не передавался, использовалась текущая дата вместо даты свечи
+  - YTM показывал 26.6% вместо 17.22% от MOEX
+  - Исправлено в `moex_candles.py`: добавлен параметр `settlement_date`
+- **Чекбоксы в модальном окне:** галочки исчезали при каждом втором клике
+  - DataFrame пересоздавался на каждом rerun
+  - Решение: сохранение DataFrame в `session_state` (`bond_manager_df`)
+  - Убрана сортировка по столбцу ⭐ для стабильного порядка строк
+- **Deprecation warning:** заменён `use_container_width=True` на `width="stretch"`
 
 ### Changed
 
@@ -48,7 +56,8 @@ All notable changes to this project will be documented in this file.
 
 ### Tests
 
-- Все **79 тестов** проходят успешно
+- Все **97 тестов** проходят успешно
+- Добавлены 6 тестов для YTM расчёта (`test_ytm_calculation.py`)
 - MOEX API проверен: 33 ОФЗ загружаются за 0.5 сек, 84 часовых свечи за 0.8 сек
 
 ---
@@ -145,6 +154,10 @@ All notable changes to this project will be documented in this file.
 
 | Дата | Коммит | Описание |
 |------|--------|----------|
+| 27.02.26 | `7f1b7ba` | Fix: чекбоксы сохраняются между reruns (DataFrame в session_state) |
+| 27.02.26 | `c465c89` | Fix: YTM использует дату свечи вместо текущей даты |
+| 27.02.26 | `adc4f47` | Redesign модального окна выбора инструментов |
+| 27.02.26 | `99b2a7c` | Тесты для архитектуры избранного (v0.2.2) |
 | 26.02.26 | `d8dba03` | SQLite для YTM и спредов + кнопка "Обновить БД" |
 | 26.02.26 | `631fd97` | SQLite для хранения свечей |
 | 26.02.26 | `27fde1c` | Intraday хранилище данных |
