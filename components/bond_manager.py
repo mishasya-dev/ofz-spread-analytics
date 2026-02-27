@@ -100,23 +100,19 @@ def show_bond_manager_dialog():
     # УПРАВЛЕНИЕ СОСТОЯНИЕМ ГАЛОЧЕК (session_state)
     # ========================================
     # Инициализация при первом открытии или после "Готово/Отменить"
-    if 'bond_manager_current_favorites' not in st.session_state:
-        st.session_state.bond_manager_current_favorites = None
-    
-    # Если current_favorites не установлен - загружаем из БД
-    if st.session_state.bond_manager_current_favorites is None:
+    if st.session_state.get('bond_manager_current_favorites') is None:
         st.session_state.bond_manager_current_favorites = set(
             b.get('isin') for b in db.get_favorite_bonds()
         )
     
     # Сохраняем исходное состояние для сравнения при "Готово"
-    if 'bond_manager_original_favorites' not in st.session_state:
+    if st.session_state.get('bond_manager_original_favorites') is None:
         st.session_state.bond_manager_original_favorites = set(
             b.get('isin') for b in db.get_favorite_bonds()
         )
     
-    current_favorites = st.session_state.bond_manager_current_favorites
-    original_favorites = st.session_state.bond_manager_original_favorites
+    current_favorites = st.session_state.bond_manager_current_favorites or set()
+    original_favorites = st.session_state.bond_manager_original_favorites or set()
 
     # ========================================
     # СТРОКА С ИНФОРМАЦИЕЙ + КНОПКА "ОЧИСТИТЬ"
@@ -211,8 +207,8 @@ def show_bond_manager_dialog():
     with col_done:
         if st.button("✅ Готово", use_container_width=True, type="primary"):
             # Синхронизируем с БД
-            new_favorites = current_favorites
-            old_favorites = original_favorites
+            new_favorites = current_favorites or set()
+            old_favorites = original_favorites or set()
             
             # INSERT новых
             to_add = new_favorites - old_favorites

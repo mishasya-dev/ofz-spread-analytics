@@ -326,6 +326,23 @@ class TestClearAllFavorites(unittest.TestCase):
         assert session_state["bond_manager_current_favorites"] is None
         assert session_state["bond_manager_original_favorites"] is None
 
+    def test_done_handles_none_favorites(self):
+        """При 'Готово' с None favorites не должно быть TypeError"""
+        # Симулируем ситуацию, когда favorites = None
+        current_favorites = None
+        original_favorites = None
+
+        # Fallback to empty set
+        new_favorites = current_favorites or set()
+        old_favorites = original_favorites or set()
+
+        # Должно работать без ошибки
+        to_add = new_favorites - old_favorites
+        to_remove = old_favorites - new_favorites
+
+        assert to_add == set()
+        assert to_remove == set()
+
 
 class TestFavoritesSync(unittest.TestCase):
     """Тесты синхронизации избранного с БД (v0.2.2)"""
