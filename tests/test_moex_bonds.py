@@ -483,6 +483,230 @@ class TestFilterOfzForTrading(unittest.TestCase):
         assert len(filtered) == 0
 
 
+class TestFilterRequireTrades(unittest.TestCase):
+    """Тесты для параметра require_trades - работа в выходные и торговые дни"""
+
+    def setUp(self):
+        """Подготовка тестовых данных"""
+        self.today = date.today()
+        
+        # Облигации БЕЗ торгов (выходной/праздник)
+        self.bonds_no_trades = [
+            {
+                "isin": "SU26221RMFS0",
+                "name": "ОФЗ 26221",
+                "maturity_date": (self.today + timedelta(days=365)).strftime("%Y-%m-%d"),
+                "duration_days": 2000,
+                "duration_years": 5.5,
+                "has_trades": False,
+                "num_trades": 0,
+            },
+            {
+                "isin": "SU26225RMFS1",
+                "name": "ОФЗ 26225",
+                "maturity_date": (self.today + timedelta(days=730)).strftime("%Y-%m-%d"),
+                "duration_days": 1500,
+                "duration_years": 4.1,
+                "has_trades": False,
+                "num_trades": None,
+            },
+        ]
+
+        # Облигации С торговлей (будний день)
+        self.bonds_with_trades = [
+            {
+                "isin": "SU26230RMFS1",
+                "name": "ОФЗ 26230",
+                "maturity_date": (self.today + timedelta(days=365)).strftime("%Y-%m-%d"),
+                "duration_days": 2000,
+                "duration_years": 5.5,
+                "has_trades": True,
+                "num_trades": 150,
+            },
+        ]
+
+        # Смешанный список
+        self.bonds_mixed = self.bonds_no_trades + self.bonds_with_trades
+
+    def test_require_trades_true_on_trading_day(self):
+        """Торговый день: require_trades=True показывает только с торгами"""
+        filtered = filter_ofz_for_trading(
+            self.bonds_with_trades,
+            require_trades=True
+        )
+        
+        assert len(filtered) == 1
+        assert filtered[0]["isin"] == "SU26230RMFS1"
+
+    def test_require_trades_true_on_weekend(self):
+        """Выходной: require_trades=True НЕ показывает облигации без торгов"""
+        filtered = filter_ofz_for_trading(
+            self.bonds_no_trades,
+            require_trades=True
+        )
+        
+        # Все отфильтрованы - нет торгов!
+        assert len(filtered) == 0
+
+    def test_require_trades_false_on_weekend(self):
+        """Выходной: require_trades=False показывает облигации без торгов"""
+        filtered = filter_ofz_for_trading(
+            self.bonds_no_trades,
+            require_trades=False
+        )
+        
+        # Все проходят!
+        assert len(filtered) == 2
+        isins = [b["isin"] for b in filtered]
+        assert "SU26221RMFS0" in isins
+        assert "SU26225RMFS1" in isins
+
+    def test_require_trades_false_on_trading_day(self):
+        """Торговый день: require_trades=False показывает все облигации"""
+        filtered = filter_ofz_for_trading(
+            self.bonds_with_trades,
+            require_trades=False
+        )
+        
+        assert len(filtered) == 1
+
+    def test_require_trades_false_mixed_bonds(self):
+        """Смешанный список: require_trades=False показывает все"""
+        filtered = filter_ofz_for_trading(
+            self.bonds_mixed,
+            require_trades=False
+        )
+        
+        # Все 3 облигации проходят
+        assert len(filtered) == 3
+
+    def test_require_trades_true_mixed_bonds(self):
+        """Смешанный список: require_trades=True показывает только с торгами"""
+        filtered = filter_ofz_for_trading(
+            self.bonds_mixed,
+            require_trades=True
+        )
+        
+        # Только 1 с торгами
+        assert len(filtered) == 1
+        assert filtered[0]["isin"] == "SU26230RMFS1"
+
+    def test_require_trades_with_has_trades_flag(self):
+        """Проверка по флагу has_trades=True"""
+        bonds = [
+            {
+                "isin": "SU26221RMFS0",
+                "name": "ОФЗ 26221",
+                "maturity_date": (self.today + timedelta(days=365)).strftime("%Y-%m-%d"),
+                "duration_days": 2000,
+                "has_trades": True,  # Флаг установлен
+                "num_trades": 0,     # Но num_trades=0 (неожиданно)
+            }
+        ]
+        
+        filtered = filter_ofz_for_trading(bonds, require_trades=True)
+        # Должно пройти по флагу has_trades
+        assert len(filtered) == 1
+
+    def test_require_trades_with_num_trades_only(self):
+        """Проверка только по num_trades (has_trades отсутствует)"""
+        bonds = [
+            {
+                "isin": "SU26221RMFS0",
+                "name": "ОФЗ 26221",
+                "maturity_date": (self.today + timedelta(days=365)).strftime("%Y-%m-%d"),
+                "duration_days": 2000,
+                "num_trades": 50,  # Есть торги
+                # has_trades отсутствует
+            }
+        ]
+        
+        filtered = filter_ofz_for_trading(bonds, require_trades=True)
+        # Должно пройти по num_trades
+        assert len(filtered) == 1
+
+    def test_require_trades_false_with_require_duration_false(self):
+        """Комбинация: require_trades=False + require_duration=False"""
+        bonds = [
+            {
+                "isin": "SU26221RMFS0",
+                "name": "ОФЗ 26221",
+                "maturity_date": (self.today + timedelta(days=365)).strftime("%Y-%m-%d"),
+                # Нет дюрации
+                "duration_days": None,
+                "num_trades": 0,
+            }
+        ]
+        
+        filtered = filter_ofz_for_trading(
+            bonds,
+            require_trades=False,
+            require_duration=False
+        )
+        
+        # Проходит: нет требования торгов, нет требования дюрации
+        assert len(filtered) == 1
+
+    def test_bond_manager_scenario_weekend(self):
+        """Сценарий bond_manager в выходной:require_trades=False"""
+        # Симулируем выходной - MOEX вернул облигации без торгов
+        weekend_bonds = [
+            {
+                "isin": "SU26221RMFS0",
+                "name": "ОФЗ 26221",
+                "maturity_date": (self.today + timedelta(days=365)).strftime("%Y-%m-%d"),
+                "duration_days": 2000,
+                "duration_years": 5.5,
+                "last_ytm": 15.2,
+                "num_trades": 0,
+            },
+            {
+                "isin": "SU26225RMFS1",
+                "name": "ОФЗ 26225", 
+                "maturity_date": (self.today + timedelta(days=730)).strftime("%Y-%m-%d"),
+                "duration_days": 1500,
+                "duration_years": 4.1,
+                "last_ytm": 14.8,
+                "num_trades": 0,
+            },
+        ]
+        
+        # bond_manager вызывает с require_trades=False
+        filtered = filter_ofz_for_trading(weekend_bonds, require_trades=False)
+        
+        # Облигации показываются пользователю
+        assert len(filtered) == 2
+
+    def test_bond_manager_scenario_trading_day(self):
+        """Сценарий bond_manager в торговый день"""
+        # Симулируем торговый день - часть облигаций с торгами
+        trading_day_bonds = [
+            {
+                "isin": "SU26221RMFS0",
+                "name": "ОФЗ 26221",
+                "maturity_date": (self.today + timedelta(days=365)).strftime("%Y-%m-%d"),
+                "duration_days": 2000,
+                "duration_years": 5.5,
+                "last_ytm": 15.2,
+                "num_trades": 150,
+            },
+            {
+                "isin": "SU26225RMFS1",
+                "name": "ОФЗ 26225",
+                "maturity_date": (self.today + timedelta(days=730)).strftime("%Y-%m-%d"),
+                "duration_days": 1500,
+                "duration_years": 4.1,
+                "last_ytm": 14.8,
+                "num_trades": 80,
+            },
+        ]
+        
+        # bond_manager вызывает с require_trades=False (показываем все)
+        filtered = filter_ofz_for_trading(trading_day_bonds, require_trades=False)
+        
+        assert len(filtered) == 2
+
+
 class TestFetchAndFilterOfz(unittest.TestCase):
     """Тесты для fetch_and_filter_ofz"""
 
@@ -533,6 +757,7 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestConvenienceFunctions))
     suite.addTests(loader.loadTestsFromTestCase(TestParseFunctions))
     suite.addTests(loader.loadTestsFromTestCase(TestFilterOfzForTrading))
+    suite.addTests(loader.loadTestsFromTestCase(TestFilterRequireTrades))
     suite.addTests(loader.loadTestsFromTestCase(TestFetchAndFilterOfz))
     suite.addTests(loader.loadTestsFromTestCase(TestConstants))
 
