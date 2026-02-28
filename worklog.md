@@ -498,6 +498,45 @@ period = st.slider(
 
 ---
 
+## v0.3.0-tests — Новые тесты (28.02.2026)
+
+### Новые тестовые файлы
+
+| Файл | Тестов | Что тестирует |
+|------|--------|---------------|
+| `test_charts_v030.py` | 28 | Новые графики v0.3.0 |
+| `test_models_bond.py` | 26 | Модель Bond (dataclass) |
+
+### Покрытие test_charts_v030.py
+
+- `calculate_future_range()` — расчёт оси X с запасом
+- `create_daily_ytm_chart()` — график YTM по дневным данным
+- `create_daily_spread_chart()` — график спреда с перцентилями
+- `create_combined_ytm_chart()` — склеенный график (история + свечи)
+- `create_intraday_spread_chart()` — intraday спред с референсом
+
+### Покрытие test_models_bond.py
+
+- Bond dataclass: создание, defaults
+- `Bond.from_dict()` / `from_db_row()` — конвертация
+- `Bond.to_dict()` / `to_db_dict()` — сериализация
+- `get_years_to_maturity()` — расчёт лет до погашения
+- `format_label()` — форматирование метки
+- BondPair: расчёт спреда
+
+### Итого
+
+```
+Было:  97 тестов
+Стало: 151 тест (+54)
+```
+
+### Git
+
+- Коммит: `756b986`
+
+---
+
 ## v0.3.0 — Unified Charts (27.02.2026)
 
 ### Выполненная работа
