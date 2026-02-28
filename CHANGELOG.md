@@ -2,189 +2,53 @@
 
 All notable changes to this project will be documented in this file.
 
-Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/).
-
-## [0.2.2] - 2026-02-27
-
-### Fixed
-
-- **None вместо названия облигации:** если MOEX не возвращает `NAME` или `SHORTNAME`, отображается ISIN
-  - Добавлен fallback: `name → short_name → isin`
-  - Исправлено в `app.py`, `bond_manager.py`, `database.py`
-- **LASTTRADEDATE недоступна:** MOEX API не возвращает эту колонку в marketdata
-  - Заменено на `NUMTRADES` и `VALTODAY` для определения активности торгов
-  - Фильтрация теперь по `has_trades` (num_trades > 0)
-- **Дубли облигаций:** добавлен `seen_isins` для удаления дублей из securities
-- **YTM расчёт:** settlement_date не передавался, использовалась текущая дата вместо даты свечи
-  - YTM показывал 26.6% вместо 17.22% от MOEX
-  - Исправлено в `moex_candles.py`: добавлен параметр `settlement_date`
-- **Чекбоксы в модальном окне:** галочки исчезали при каждом втором клике
-  - DataFrame пересоздавался на каждом rerun
-  - Решение: сохранение DataFrame в `session_state` (`bond_manager_df`)
-  - Убрана сортировка по столбцу ⭐ для стабильного порядка строк
-- **Deprecation warning:** заменён `use_container_width=True` на `width="stretch"`
-
-### Changed
-
-- **Intraday: часовые свечи** — максимальный период увеличен с 30 до **365 дней**
-  - Пагинация работает (~6 сек для 4000+ свечей)
-- **Удалён расчёт спредов при обновлении БД:**
-  - Спреды рассчитываются на лету из YTM
-  - Убран O(n²) цикл для всех пар
-  - Для 64 облигаций: было 2016 расчётов → стало 0
-
-### Optimized
-
-- `fetch_ofz_only()` — один запрос вместо многих
-- `fetch_all_market_data()` — пакетный запрос рыночных данных
-- Общее время загрузки: **~1.7 сек** для 33 ОФЗ (было 30+ сек)
-
----
-
-## [0.2.1-patch1] - 2026-02-27
-
-### Fixed
-
-- **ImportError в `__init__.py`:** при запуске pytest относительные импорты не работали
-  - Добавлен try/except с fallback на абсолютные импорты
-  - Теперь работает и как пакет, и как отдельный модуль
-- **Отсутствующий `tests/conftest.py`:** pytest не находил модули
-  - Создан файл с настройкой путей для тестов
-- **Тесты `test_moex_bonds.py`:** 6 тестов падали из-за устаревших тестовых данных
-  - Обновлены тестовые данные: добавлены поля `has_trades` и `num_trades`
-  - Тест `test_fetch_ofz_only` теперь использует реальный API вызов
-
-### Tests
-
-- Все **97 тестов** проходят успешно
-- Добавлены 6 тестов для YTM расчёта (`test_ytm_calculation.py`)
-- MOEX API проверен: 33 ОФЗ загружаются за 0.5 сек, 84 часовых свечи за 0.8 сек
-
----
-
-## [0.2.1] - 2026-02-27
-
-### Fixed
-
-- **FutureWarning:** заменён устаревший `freq='H'` на `freq='h'` в тестах
-- **Пустой except:** добавлена обработка `(ValueError, TypeError)` с логированием
-- **Медленный MOEX API:** добавлен метод `fetch_all_market_data()` для пакетного запроса
-  - Время загрузки: **~2 сек** вместо **30+ сек**
-- **bond_manager.py:** убран `include_details=True` для быстрой загрузки
-
-### Changed
-
-- `fetch_ofz_with_market_data()` теперь использует пакетный запрос по умолчанию (`use_batch=True`)
-- Добавлен параметр `use_batch` для выбора метода загрузки
-
----
-
-## [0.2.0] - 2026-02-27
+## [v0.3.0] - 2026-02-28
 
 ### Added
-
-#### Динамическое управление облигациями
-- Таблица `bonds` в SQLite для хранения облигаций
-- Загрузка всех ОФЗ с MOEX API
-- Автоматическая фильтрация:
-  - Только ОФЗ-ПД (постоянный купон, 26xxx, 25xxx, 24xxx)
-  - Срок до погашения > 0.5 года
-  - Торги за последние 10 дней
-- Поле `is_favorite` для пользовательского выбора
-- Модальное окно (`@st.dialog`) для управления списком
-- Дюрация из MOEX (обязательное поле)
-
-#### Архитектура
-- Уровни: Все ОФЗ (300+) → Отфильтрованные (30-40) → Избранные → Активные (2)
-- Migration: 16 облигаций из config.py перенесены в БД с `is_favorite=1`
-- Погашенные/не торгующиеся облигации не сохраняются в БД
-
-#### Тесты
-- 14 новых тестов в `tests/test_sidebar.py`
-- Итого: **90 тестов**
-
----
-
-## [0.1.0] - 2026-02-26
-
-### Added
-
-#### База данных SQLite
-- Таблица `daily_ytm` — дневные YTM с MOEX (без расчёта)
-- Таблица `intraday_ytm` — рассчитанные YTM из цен свечей
-- Таблица `spreads` — спреды между облигациями с сигналами
-- Кнопка **"Обновить БД"** с прогресс-баром
-- Статистика БД в sidebar (количество записей, последние даты)
-
-#### Режимы работы
-- **Данные биржи (daily)** — YTM из YIELDCLOSE MOEX
-- **Внутридневной (intraday)** — YTM рассчитывается из цен свечей
-
-#### Интервалы свечей
-- 1 минута (макс 3 дня)
-- 10 минут (макс 7 дней)
-- 1 час (макс 30 дней)
-
-#### Расчёт YTM
-- Метод Ньютона-Рафсона для расчёта YTM из цены
-- Fallback на метод бисекции
-- Учёт НКД (накопленный купонный доход)
-
-#### Тестирование
-- 38 основных тестов (`tests/run_tests.py`)
-- 38 тестов БД (`tests/test_database.py`)
-- Итого: **76 тестов**
+- **Unified 4-Chart Layout**: Replaced daily/intraday mode with always-visible 4 synchronized charts
+- **Linked Zoom**: Zoom on chart 1 automatically applies to chart 2,- **Single Period Slider**: One slider controls all charts (30-730 days)
+- **Candle Interval Selector**: Choose 1min/10min/1hour for charts 3+4
+- **NKD Calculation Fix**: NKD (accrued interest) now calculated for each candle date,- **+77 New Tests**: Added comprehensive test suite for v0.3.0
 
 ### Changed
-
-- Оптимизация загрузки данных: только новые данные с MOEX
-- Исторические данные загружаются из SQLite
-- Переименовано "Дневные данные" → "Данные биржи (day close YTM)"
+- **Chart Colors**: History uses dashed lines, candles use solid lines
+- **Future Range**: 15% extra space on X-axis for future dates
+- **Spread Percentiles**: Intraday charts use daily percentiles as reference
 
 ### Fixed
+- **YTM Divergence Bug**: Fixed NKD calculation that was using current NKD for all historical candles
+- **Slider TypeError**: Fixed `format_func` parameter (not supported by `st.slider`)
 
-- Исправлены ISIN коды облигаций
-- Исправлен URL API (убран `/boards/{board}/`)
-- Исправлено поле YTM: `YIELDCLOSE` вместо `YIELDCOUPON`
-- Убраны неподдерживаемые интервалы (30 мин, 4 часа)
+## [v0.2.2] - 2026-02-27
 
----
+### Added
+- **Bond Management Modal**: Dynamic addition/removal of tracked bonds
+- **Database Migration**: Automatic migration from config.py to SQLite
 
-## История коммитов
+### Changed
+- **MOEX API Optimization**: Batch requests instead of per-bond queries
+- **Intraday Limits**: 1-hour candles now support 365 days (was 30)
 
-| Дата | Коммит | Описание |
-|------|--------|----------|
-| 27.02.26 | `7f1b7ba` | Fix: чекбоксы сохраняются между reruns (DataFrame в session_state) |
-| 27.02.26 | `c465c89` | Fix: YTM использует дату свечи вместо текущей даты |
-| 27.02.26 | `adc4f47` | Redesign модального окна выбора инструментов |
-| 27.02.26 | `99b2a7c` | Тесты для архитектуры избранного (v0.2.2) |
-| 26.02.26 | `d8dba03` | SQLite для YTM и спредов + кнопка "Обновить БД" |
-| 26.02.26 | `631fd97` | SQLite для хранения свечей |
-| 26.02.26 | `27fde1c` | Intraday хранилище данных |
-| 26.02.26 | `efd0c9f` | Комплексные тесты (38 тестов) |
-| 26.02.26 | `eccef31` | Переименование режима |
-| 26.02.26 | `bbf365f` | Динамические лимиты истории |
-| 26.02.26 | `bc501f7` | Исправление интервалов свечей |
-| 26.02.26 | `9582f6f` | Intraday режим с расчётом YTM |
-| 26.02.26 | `3047a58` | Расчёт YTM из цены свечей |
-| 26.02.26 | `1e6849b` | Базовая версия: 16 ОФЗ, MOEX API, графики, сигналы |
+## [v0.2.1] - 2026-02-27
 
----
+### Fixed
+- Import errors in `__init__.py`
+- Test failures in `test_moex_bonds.py`
 
-## Roadmap
+## [v0.2.0] - 2026-02-27
 
-### Планируется
+### Added
+- **SQLite Database**: Persistent storage for bonds, YTM, and spreads
+- **Bond Favorites**: Mark bonds as favorites in database
+- **Dynamic Bond Selection**: Add/remove bonds from UI
 
-- [ ] Экспорт сигналов (Telegram, Email)
-- [ ] Бэктестинг стратегий
-- [ ] Исторические сигналы с PnL
-- [ ] График PnL портфеля
-- [ ] Алерты при достижении порогов спреда
-- [ ] REST API для внешних систем
+### Changed
+- **Refactored Architecture**: Separated concerns into api/, core/, components/
 
----
+## [v0.1.0] - 2026-02-26
 
-## Ссылки
-
-- **Репозиторий:** https://github.com/mishasya-dev/ofz-spread-analytics
-- **MOEX API:** https://iss.moex.com/iss/reference/
+### Added
+- **Initial Release**: Basic YTM tracking and spread analysis
+- **MOEX Integration**: Real-time data from Moscow Exchange
+- **Daily/Intraday Modes**: Two separate analysis modes
+- **Trading Signals**: BUY/SELL signals based on spread percentiles

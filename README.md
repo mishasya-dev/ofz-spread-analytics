@@ -1,163 +1,157 @@
 # OFZ Spread Analytics
 
-Анализ спредов облигаций ОФЗ с данными Московской биржи (MOEX).
+Аналитика спредов доходности облигаций ОФЗ
 
-**Текущая версия:** 0.2.2
+## Описание
 
-## Функционал
+OFZ Spread Analytics — приложение для анализа of yield spreads between Russian government bonds (OFZ). It helps identify trading opportunities by tracking the spread between different maturity bonds.
 
-### Режимы работы
+## Features
 
-| Режим | Источник YTM | Описание |
-|-------|--------------|----------|
-| 📅 **Данные биржи** | MOEX YIELDCLOSE | Дневные данные закрытия торгов |
-| ⏱️ **Внутридневной** | Расчёт из цен свечей | 1 мин, 10 мин, 1 час |
+### Unified 4-Chart Layout (v0.3.0)
 
-### Основные возможности
+The application displays 4 synchronized charts:
 
-- 📊 **Динамическое управление облигациями** — загрузка с MOEX API
-- 📈 **Графики YTM** (Plotly) для двух облигаций
-- 📉 **Анализ спредов** с перцентилями (P10, P25, P75, P90)
-- 🎯 **Торговые сигналы** (SELL_BUY / BUY_SELL / NEUTRAL)
-- 🔄 **Автообновление** данных (настраиваемый интервал)
-- 🗄️ **SQLite база данных** для накопления истории
-- ⚡ **Оптимизированный MOEX API** — ~2 сек для загрузки данных
+| Chart | Data | Description |
+|-------|------|-------------|
+| 1 | YTM Daily | YIELDCLOSE from MOEX | Yield history + statistics |
+| 2 | Spread Daily | Calculated from YTM | Percentiles P10, P25, P75, P90 |
+| 3 | YTM Combined | History + Candles | Combined chart |
+| 4 | Spread Intraday | Candle data + reference | Daily percentiles as reference |
 
-### Intraday режим
+### Key Features
 
-| Интервал | Макс период | Свечей |
-|----------|-------------|--------|
-| 1 минута | 3 дня | ~1200 |
-| 10 минут | 30 дней | ~400 |
-| **1 час** | **365 дней** | ~4000 |
+- **Real-time MOEX Data**: Direct connection to Moscow Exchange API
+- **YTM Calculation**: Accurate yield-to-maturity calculation from candle prices
+- **Spread Analysis**: Automatic spread calculation between any two bonds
+- **Trading Signals**: BUY/SELL signals based on percentile analysis
+- **Linked Zoom**: Synchronized zoom between paired charts
+- **Database Storage**: SQLite for historical data
+- **Bond Management**: Dynamic addition/removal of tracked bonds
 
-## Структура проекта
+## Installation
+
+```bash
+# Clone repository
+git clone https://github.com/mishasya-dev/ofz-spread-analytics.git
+cd ofz-spread-analytics
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run application
+streamlit run streamlit-app/app.py
+```
+
+## Configuration
+
+Bonds are configured in `config.py`:
+
+### Adding a New Bond
+
+```python
+from config import BondConfig
+
+# Add bond to config
+bonds["SU26255RMFS1"] = BondConfig(
+    isin="SU26255RMFS1",
+    name="ОФЗ 26225",
+    maturity_date="2034-05-10",
+    coupon_rate=7.25,
+    face_value=1000,
+    coupon_frequency=2,
+)
+```
+
+## Usage
+
+1. Select two bonds from the sidebar
+2. Adjust analysis period (30 days - 2 years)
+3. Select candle interval (1min/10min/1hour)
+4. Charts will update automatically
+
+## Project Structure
 
 ```
 streamlit-app/
-├── app.py                    # Главный файл Streamlit
-├── config.py                 # Конфигурация (16 ОФЗ по умолчанию)
-├── requirements.txt          # Зависимости Python
-├── start.bat                 # Запуск для Windows
+├── app.py                 # Main Streamlit application
+├── config.py              # Bond configuration
 ├── api/
-│   ├── moex_bonds.py         # Загрузка облигаций с MOEX
-│   ├── moex_history.py       # Исторические данные (YIELDCLOSE)
-│   ├── moex_trading.py       # Торговые данные (live)
-│   └── moex_candles.py       # Внутридневные свечи + расчёт YTM
+│   ├── moex_bonds.py      # Bond list from MOEX
+│   ├── moex_candles.py    # Candle data + YTM calculation
+│   ├── moex_history.py    # Historical YTM data
+│   └── moex_trading.py    # Trading status
 ├── core/
-│   ├── database.py           # SQLite БД
-│   ├── ytm_calculator.py     # Расчёт YTM методом Ньютона-Рафсона
-│   ├── spread.py             # Расчёт спредов
-│   └── signals.py            # Торговые сигналы
+│   ├── database.py        # SQLite database manager
+│   ├── ytm_calculator.py  # YTM calculation engine
+│   ├── spread.py           # Spread calculations
+│   └── signals.py          # Trading signal generation
 ├── components/
-│   ├── charts.py             # Графики Plotly
-│   └── bond_manager.py       # Управление облигациями (модальное окно)
-└── tests/
-    ├── run_tests.py          # Основные тесты
-    ├── test_database.py      # Тесты БД
-    ├── test_moex_bonds.py    # Тесты MOEX API
-    └── test_sidebar.py       # Тесты sidebar
+│   ├── charts.py           # Plotly chart builders
+│   ├── sidebar.py          # Sidebar components
+│   └── bond_manager.py     # Bond selection modal
+├── models/
+│   └── bond.py              # Bond dataclass model
+└── tests/                  # Test suite (287 tests)
 ```
 
-## Производительность
-
-### MOEX API (оптимизировано)
-
-| Операция | Время |
-|----------|-------|
-| Загрузка списка ОФЗ | ~1.7 сек |
-| Пакетный запрос рыночных данных | ~1.0 сек |
-| Intraday (2 облигации) | ~1.2 сек |
-
-### Оптимизации
-
-- **Пакетные запросы** — один запрос для всех рыночных данных
-- **Пагинация** — загрузка большого количества свечей
-- **Кэширование в SQLite** — загрузка только новых данных
-- **Спреды на лету** — расчёт из YTM без предварительного сохранения
-
-## Установка
+## Testing
 
 ```bash
-pip install -r requirements.txt
+# Run all tests
+cd streamlit-app
+python -m pytest tests/ -v
+
+# Run specific test file
+python -m pytest tests/test_ytm_calculation.py -v
 ```
 
-## Запуск
+### Test Coverage
 
-```bash
-# Linux/macOS
-streamlit run app.py
+| File | Tests | Description |
+|------|-------|-------------|
+| test_ytm_calculation.py | 6 | YTM calculation accuracy |
+| test_app_integration.py | 30 | App integration tests |
+| test_edge_cases.py | 25 | Edge cases (empty data, NaN) |
+| test_linked_zoom.py | 22 | Linked zoom functionality |
+| test_sidebar_v030.py | 36 | Sidebar components |
+| test_charts_v030.py | 28 | Chart creation |
+| test_models_bond.py | 26 | Bond dataclass |
+| test_database.py | ~100 | Database operations |
 
-# Windows
-start.bat
+## API Reference
+
+### MOEX API Endpoints
+
+- **Securities List**: `https://iss.moex.com/iss/engines/stock/markets/bonds/securities.json`
+- **Historical YTM**: `https://iss.moex.com/iss/engines/stock/markets/bonds/boards/TQOB/securities/{ISIN}/candles.json`
+- **Candles**: `https://iss.moex.com/iss/engines/stock/markets/bonds/boards/TQOB/securities/{ISIN}/candles.json`
+
+### YTM Calculation
+
+The application calculates YTM using Newton-Raphson method:
+
+```python
+from core.ytm_calculator import YTMCalculator
+
+calculator = YTMCalculator()
+ytm = calculator.calculate_ytm(
+    price_percent=95.5,  # Price as % of face value
+    bond_params=bond_params,
+    settlement_date=date(2025, 2, 28),
+    accrued_interest=13.43  # Current NKD
+)
 ```
 
-## Торговые сигналы
+## License
 
-| Сигнал | Условие | Действие |
-|--------|---------|----------|
-| SELL_BUY | Спред < P25 | Продать Облигацию 1, Купить Облигацию 2 |
-| BUY_SELL | Спред > P75 | Купить Облигацию 1, Продать Облигацию 2 |
-| NEUTRAL | P25 ≤ Спред ≤ P75 | Удерживать позиции |
+MIT License
 
-**Сила сигнала:**
-- **Сильный** — спред < P10 или > P90
-- **Средний** — спред < P25 или > P75
+## Author
 
-## Динамическое управление облигациями
+Developed for analysis of Russian government bond market.
 
-### Уровни фильтрации
+## Links
 
-```
-Все ОФЗ (300+) → Торгующиеся (30-40) → Избранные → Активные (2)
-```
-
-### Критерии фильтрации
-
-- ОФЗ-ПД (26xxx, 25xxx, 24xxx)
-- Срок до погашения > 0.5 года
-- Есть сделки (num_trades > 0)
-- Есть дюрация
-
-### Модальное окно
-
-Кнопка **"Управление облигациями"** в sidebar позволяет:
-- Загрузить актуальный список ОФЗ с MOEX
-- Добавить/удалить из избранного (⭐)
-- Сортировать по дюрации, YTM, купону
-
-## Расчёт YTM из цен свечей
-
-**Метод:** Ньютона-Рафсона с fallback на бисекцию
-
-**Учитывает:**
-- Номинал (1000 руб.)
-- Купонная ставка
-- Частота купонов (2 раза в год)
-- Дата погашения
-- НКД (накопленный купонный доход)
-
-**Точность:** ~5 б.п. vs рыночная доходность MOEX
-
-## Тестирование
-
-```bash
-# Все тесты
-python3 tests/run_tests.py
-python3 tests/test_database.py
-python3 tests/test_sidebar.py
-```
-
-**Результат:** 90 тестов, все проходят ✅
-
-## Требования
-
-- Python 3.10+
-- Streamlit
-- Pandas, NumPy
-- Plotly
-- Requests
-
-## Лицензия
-
-MIT
+- [MOEX ISS API Documentation](https://www.moex.com/a2193)
+- [Streamlit Documentation](https://docs.streamlit.io)
