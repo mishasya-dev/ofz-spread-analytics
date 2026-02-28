@@ -434,10 +434,15 @@ def prepare_spread_dataframe(df1: pd.DataFrame, df2: pd.DataFrame, is_intraday: 
     if ytm_col not in df1.columns or ytm_col not in df2.columns:
         return pd.DataFrame()
     
-    # Объединяем по индексу
-    merged = pd.DataFrame(index=df1.index)
-    merged['ytm1'] = df1[ytm_col]
-    merged['ytm2'] = df2[ytm_col]
+    # Удаляем дубликаты в индексах перед объединением
+    df1_clean = df1[~df1.index.duplicated(keep='last')][[ytm_col]].copy()
+    df2_clean = df2[~df2.index.duplicated(keep='last')][[ytm_col]].copy()
+    
+    # Объединяем по индексу с помощью join
+    merged = df1_clean.join(df2_clean, lsuffix='_1', rsuffix='_2', how='inner')
+    
+    # Переименовываем колонки
+    merged.columns = ['ytm1', 'ytm2']
     
     # Удаляем NaN
     merged = merged.dropna()
