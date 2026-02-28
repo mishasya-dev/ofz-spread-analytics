@@ -26,6 +26,7 @@ from components.charts import (
     create_intraday_spread_chart,
     apply_zoom_range
 )
+from version import format_version_badge
 
 # Настройка логирования
 logging.basicConfig(
@@ -81,16 +82,38 @@ st.markdown("""
         color: #333 !important;
     }
     /* Version badge in sidebar */
-    .sidebar-version {
+    .version-badge-full {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
-        padding: 6px 16px;
-        border-radius: 20px;
-        font-size: 0.85rem;
-        font-weight: 600;
+        padding: 12px 16px;
+        border-radius: 12px;
+        margin-bottom: 12px;
+        box-shadow: 0 3px 12px rgba(102, 126, 234, 0.35);
         text-align: center;
-        margin-bottom: 10px;
-        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+    }
+    .version-badge-full .version-main {
+        font-size: 1.3rem;
+        font-weight: 700;
+        margin-bottom: 8px;
+        letter-spacing: 0.5px;
+    }
+    .version-badge-full .version-details {
+        display: flex;
+        justify-content: space-around;
+        font-size: 0.75rem;
+        opacity: 0.95;
+        margin-bottom: 6px;
+        gap: 8px;
+    }
+    .version-badge-full .version-details span {
+        background: rgba(255,255,255,0.15);
+        padding: 2px 8px;
+        border-radius: 10px;
+    }
+    .version-badge-full .version-commit {
+        font-size: 0.7rem;
+        opacity: 0.7;
+        font-family: monospace;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -517,7 +540,7 @@ def main():
     # ==========================================
     with st.sidebar:
         # Значок версии над настройками
-        st.markdown('<div class="sidebar-version">v0.3.0</div>', unsafe_allow_html=True)
+        st.markdown(format_version_badge(), unsafe_allow_html=True)
         st.header("⚙️ Настройки")
         
         # Кнопка управления облигациями
