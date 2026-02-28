@@ -75,7 +75,6 @@ def show_bond_manager_dialog():
     **Фильтры применены:**
     - ОФЗ-ПД (26xxx, 25xxx, 24xxx серии)
     - Срок до погашения > 0.5 года
-    - Торги за последние 10 дней
     - Наличие дюрации
     """)
 
@@ -88,7 +87,8 @@ def show_bond_manager_dialog():
             try:
                 all_bonds = fetcher.fetch_ofz_with_market_data(include_details=False)
                 from api.moex_bonds import filter_ofz_for_trading
-                filtered_bonds = filter_ofz_for_trading(all_bonds)
+                # require_trades=False - показываем облигации даже если сегодня нет торгов
+                filtered_bonds = filter_ofz_for_trading(all_bonds, require_trades=False)
                 
                 st.session_state.bond_manager_bonds = filtered_bonds
                 st.session_state.bond_manager_reload = False
