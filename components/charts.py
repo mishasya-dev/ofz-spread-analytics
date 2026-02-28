@@ -25,13 +25,18 @@ COLORS = {
     "dark": "#343a40",
 }
 
-# Цвета для облигаций
-BOND_COLORS = [
-    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
-    "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
-    "#bcbd22", "#17becf", "#aec7e8", "#ffbb78",
-    "#98df8a", "#ff9896", "#c5b0d5", "#c49c94"
-]
+# Цвета для облигаций (история -> свечи)
+BOND1_COLORS = {
+    "history": "#1a5276",   # Тёмно-синий
+    "intraday": "#3498DB",  # Ярко-синий
+}
+BOND2_COLORS = {
+    "history": "#922B21",   # Тёмно-красный
+    "intraday": "#E74C3C",  # Ярко-красный
+}
+
+# Цвета для спредов
+SPREAD_COLOR = "#9B59B6"  # Фиолетовый
 
 # Цвета для сигналов
 SIGNAL_COLORS = {
@@ -585,3 +590,418 @@ def create_backtest_chart(backtest_result: Any, **kwargs) -> go.Figure:
     """Создать график бэктеста"""
     builder = ChartBuilder()
     return builder.create_backtest_chart(backtest_result, **kwargs)
+
+
+# ============================================
+# НОВЫЕ ФУНКЦИИ ДЛЯ СВЯЗАННЫХ ГРАФИКОВ v0.3.0
+# ============================================
+
+def calculate_future_range(df_index, future_percent: float = 0.15):
+    """
+    Рассчитать диапазон оси X с запасом для "будущего"
+    
+    Args:
+        df_index: Индекс DataFrame (datetime)
+        future_percent: Процент от длины для будущего
+        
+    Returns:
+        (x_min, x_max) tuple
+    """
+    if len(df_index) == 0:
+        return None, None
+    
+    start = df_index[0]
+    end = df_index[-1]
+    
+    # Добавляем future_percent от длины периода
+    period_length = (end - start).total_seconds() if hasattr(end, 'total_seconds') else (end - start).days
+    future_length = period_length * future_percent
+    
+    if hasattr(end, 'total_seconds'):
+        future_end = end + pd.Timedelta(seconds=future_length)
+    else:
+        future_end = end + pd.Timedelta(days=future_length)
+    
+    return start, future_end
+
+
+def create_daily_ytm_chart(
+    df1: pd.DataFrame,
+    df2: pd.DataFrame,
+    bond1_name: str,
+    bond2_name: str,
+    x_range: Optional[Tuple] = None,
+    future_percent: float = 0.15
+) -> go.Figure:
+    """
+    Создать график YTM по дневным данным (YIELDCLOSE)
+    
+    Args:
+        df1: DataFrame с YTM облигации 1
+        df2: DataFrame с YTM облигации 2
+        bond1_name: Название облигации 1
+        bond2_name: Название облигации 2
+        x_range: Диапазон оси X (для синхронизации)
+        future_percent: Процент места для будущего
+        
+    Returns:
+        Plotly Figure
+    """
+    fig = go.Figure()
+    
+    ytm_col = 'ytm'  # Дневные данные
+    
+    # Облигация 1 - тёмно-синий
+    if not df1.empty and ytm_col in df1.columns:
+        fig.add_trace(go.Scatter(
+            x=df1.index,
+            y=df1[ytm_col],
+            name=bond1_name,
+            line=dict(color=BOND1_COLORS["history"], width=2),
+            hovertemplate=f'{bond1_name}: %{{y:.2f}}%<extra></extra>'
+        ))
+    
+    # Облигация 2 - тёмно-красный
+    if not df2.empty and ytm_col in df2.columns:
+        fig.add_trace(go.Scatter(
+            x=df2.index,
+            y=df2[ytm_col],
+            name=bond2_name,
+            line=dict(color=BOND2_COLORS["history"], width=2),
+            hovertemplate=f'{bond2_name}: %{{y:.2f}}%<extra></extra>'
+        ))
+    
+    # Рассчитать диапазон с будущим
+    all_index = list(df1.index) + list(df2.index)
+    if all_index:
+        x_min, x_max = calculate_future_range(pd.DatetimeIndex(all_index), future_percent)
+    else:
+        x_min, x_max = None, None
+    
+    fig.update_layout(
+        title="📈 YTM по закрытию дня (история)",
+        xaxis_title="Дата",
+        yaxis_title="YTM (%)",
+        hovermode='x unified',
+        template="plotly_white",
+        height=350,
+        margin=dict(l=60, r=30, t=50, b=40),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
+    )
+    
+    if x_min and x_max:
+        fig.update_xaxes(range=[x_min, x_max])
+    
+    return fig
+
+
+def create_daily_spread_chart(
+    spread_df: pd.DataFrame,
+    stats: Optional[Dict] = None,
+    x_range: Optional[Tuple] = None,
+    future_percent: float = 0.15
+) -> go.Figure:
+    """
+    Создать график спреда по дневным данным
+    
+    Args:
+        spread_df: DataFrame со спредом
+        stats: Статистика спреда (mean, p10, p25, p75, p90)
+        x_range: Диапазон оси X (для синхронизации)
+        future_percent: Процент места для будущего
+        
+    Returns:
+        Plotly Figure
+    """
+    fig = go.Figure()
+    
+    if not spread_df.empty and 'spread' in spread_df.columns:
+        # Линия спреда
+        fig.add_trace(go.Scatter(
+            x=spread_df['date'] if 'date' in spread_df.columns else spread_df.index,
+            y=spread_df['spread'],
+            name='Спред',
+            line=dict(color=SPREAD_COLOR, width=2),
+            fill='tozeroy',
+            fillcolor='rgba(155, 89, 182, 0.1)',
+            hovertemplate='Спред: %{y:.1f} б.п.<extra></extra>'
+        ))
+    
+    # Перцентили
+    if stats:
+        # Среднее
+        if 'mean' in stats:
+            fig.add_hline(
+                y=stats['mean'],
+                line_dash='dot',
+                line_color='gray',
+                annotation_text=f"Среднее: {stats['mean']:.1f}",
+                annotation_position="left"
+            )
+        
+        # P25
+        if 'p25' in stats:
+            fig.add_hline(
+                y=stats['p25'],
+                line_dash='dash',
+                line_color='green',
+                annotation_text=f"P25: {stats['p25']:.1f}",
+                annotation_position="left"
+            )
+        
+        # P75
+        if 'p75' in stats:
+            fig.add_hline(
+                y=stats['p75'],
+                line_dash='dash',
+                line_color='red',
+                annotation_text=f"P75: {stats['p75']:.1f}",
+                annotation_position="left"
+            )
+    
+    # Диапазон с будущим
+    if spread_df is not None and len(spread_df) > 0:
+        x_vals = spread_df['date'] if 'date' in spread_df.columns else spread_df.index
+        x_min, x_max = calculate_future_range(pd.DatetimeIndex(x_vals), future_percent)
+        if x_min and x_max:
+            fig.update_xaxes(range=[x_min, x_max])
+    
+    fig.update_layout(
+        title="📉 Спред доходности (дневные данные)",
+        xaxis_title="Дата",
+        yaxis_title="Спред (б.п.)",
+        hovermode='x unified',
+        template="plotly_white",
+        height=300,
+        margin=dict(l=60, r=30, t=50, b=40)
+    )
+    
+    return fig
+
+
+def create_combined_ytm_chart(
+    daily_df1: pd.DataFrame,
+    daily_df2: pd.DataFrame,
+    intraday_df1: pd.DataFrame,
+    intraday_df2: pd.DataFrame,
+    bond1_name: str,
+    bond2_name: str,
+    x_range: Optional[Tuple] = None,
+    future_percent: float = 0.15
+) -> go.Figure:
+    """
+    Создать склеенный график YTM (история + свечи)
+    
+    Args:
+        daily_df1: DataFrame с дневными YTM облигации 1
+        daily_df2: DataFrame с дневными YTM облигации 2
+        intraday_df1: DataFrame с intraday YTM облигации 1
+        intraday_df2: DataFrame с intraday YTM облигации 2
+        bond1_name: Название облигации 1
+        bond2_name: Название облигации 2
+        x_range: Диапазон оси X (для синхронизации)
+        future_percent: Процент места для будущего
+        
+    Returns:
+        Plotly Figure
+    """
+    fig = go.Figure()
+    
+    # Облигация 1: история (тёмно-синий) + свечи (ярко-синий)
+    ytm_col = 'ytm'
+    ytm_intraday_col = 'ytm_close'
+    
+    # История облигации 1
+    if not daily_df1.empty and ytm_col in daily_df1.columns:
+        fig.add_trace(go.Scatter(
+            x=daily_df1.index,
+            y=daily_df1[ytm_col],
+            name=f"{bond1_name} (история)",
+            line=dict(color=BOND1_COLORS["history"], width=2),
+            hovertemplate=f'{bond1_name}: %{{y:.2f}}%<extra></extra>'
+        ))
+    
+    # Intraday облигации 1
+    if not intraday_df1.empty and ytm_intraday_col in intraday_df1.columns:
+        fig.add_trace(go.Scatter(
+            x=intraday_df1.index,
+            y=intraday_df1[ytm_intraday_col],
+            name=f"{bond1_name} (свечи)",
+            line=dict(color=BOND1_COLORS["intraday"], width=1.5),
+            hovertemplate=f'{bond1_name}: %{{y:.2f}}%<extra></extra>'
+        ))
+    
+    # История облигации 2
+    if not daily_df2.empty and ytm_col in daily_df2.columns:
+        fig.add_trace(go.Scatter(
+            x=daily_df2.index,
+            y=daily_df2[ytm_col],
+            name=f"{bond2_name} (история)",
+            line=dict(color=BOND2_COLORS["history"], width=2),
+            hovertemplate=f'{bond2_name}: %{{y:.2f}}%<extra></extra>'
+        ))
+    
+    # Intraday облигации 2
+    if not intraday_df2.empty and ytm_intraday_col in intraday_df2.columns:
+        fig.add_trace(go.Scatter(
+            x=intraday_df2.index,
+            y=intraday_df2[ytm_intraday_col],
+            name=f"{bond2_name} (свечи)",
+            line=dict(color=BOND2_COLORS["intraday"], width=1.5),
+            hovertemplate=f'{bond2_name}: %{{y:.2f}}%<extra></extra>'
+        ))
+    
+    # Диапазон с будущим
+    all_indices = []
+    for df in [daily_df1, daily_df2, intraday_df1, intraday_df2]:
+        if df is not None and len(df) > 0:
+            all_indices.extend(df.index)
+    
+    if all_indices:
+        x_min, x_max = calculate_future_range(pd.DatetimeIndex(all_indices), future_percent)
+        if x_min and x_max:
+            fig.update_xaxes(range=[x_min, x_max])
+    
+    fig.update_layout(
+        title="📈 YTM (история + свечи)",
+        xaxis_title="Дата/Время",
+        yaxis_title="YTM (%)",
+        hovermode='x unified',
+        template="plotly_white",
+        height=350,
+        margin=dict(l=60, r=30, t=50, b=40),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
+    )
+    
+    return fig
+
+
+def create_intraday_spread_chart(
+    spread_df: pd.DataFrame,
+    daily_stats: Optional[Dict] = None,
+    x_range: Optional[Tuple] = None,
+    future_percent: float = 0.15
+) -> go.Figure:
+    """
+    Создать график intraday спреда с перцентилями от дневных данных
+    
+    Args:
+        spread_df: DataFrame со спредом
+        daily_stats: Статистика от ДНЕВНЫХ данных (mean, p10, p25, p75, p90)
+        x_range: Диапазон оси X (для синхронизации)
+        future_percent: Процент места для будущего
+        
+    Returns:
+        Plotly Figure
+    """
+    fig = go.Figure()
+    
+    # Спред
+    if not spread_df.empty and 'spread' in spread_df.columns:
+        x_vals = spread_df['datetime'] if 'datetime' in spread_df.columns else spread_df.index
+        fig.add_trace(go.Scatter(
+            x=x_vals,
+            y=spread_df['spread'],
+            name='Спред',
+            line=dict(color=SPREAD_COLOR, width=2),
+            hovertemplate='Спред: %{y:.1f} б.п.<extra></extra>'
+        ))
+    
+    # Перцентили от ДНЕВНЫХ данных (референс)
+    if daily_stats:
+        # P10
+        if 'p10' in daily_stats:
+            fig.add_hline(
+                y=daily_stats['p10'],
+                line_dash='dash',
+                line_color='darkgreen',
+                annotation_text=f"P10: {daily_stats['p10']:.1f}",
+                annotation_position="left"
+            )
+        
+        # P25
+        if 'p25' in daily_stats:
+            fig.add_hline(
+                y=daily_stats['p25'],
+                line_dash='dot',
+                line_color='green',
+                annotation_text=f"P25: {daily_stats['p25']:.1f}",
+                annotation_position="left"
+            )
+        
+        # Среднее
+        if 'mean' in daily_stats:
+            fig.add_hline(
+                y=daily_stats['mean'],
+                line_dash='dot',
+                line_color='gray',
+                annotation_text=f"Среднее: {daily_stats['mean']:.1f}",
+                annotation_position="left"
+            )
+        
+        # P75
+        if 'p75' in daily_stats:
+            fig.add_hline(
+                y=daily_stats['p75'],
+                line_dash='dot',
+                line_color='red',
+                annotation_text=f"P75: {daily_stats['p75']:.1f}",
+                annotation_position="left"
+            )
+        
+        # P90
+        if 'p90' in daily_stats:
+            fig.add_hline(
+                y=daily_stats['p90'],
+                line_dash='dash',
+                line_color='darkred',
+                annotation_text=f"P90: {daily_stats['p90']:.1f}",
+                annotation_position="left"
+            )
+    
+    # Диапазон с будущим
+    if spread_df is not None and len(spread_df) > 0:
+        x_vals = spread_df['datetime'] if 'datetime' in spread_df.columns else spread_df.index
+        x_min, x_max = calculate_future_range(pd.DatetimeIndex(x_vals), future_percent)
+        if x_min and x_max:
+            fig.update_xaxes(range=[x_min, x_max])
+    
+    fig.update_layout(
+        title="📉 Спред (intraday) + перцентили от дневных данных",
+        xaxis_title="Время",
+        yaxis_title="Спред (б.п.)",
+        hovermode='x unified',
+        template="plotly_white",
+        height=300,
+        margin=dict(l=60, r=30, t=50, b=40)
+    )
+    
+    return fig
+
+
+def apply_zoom_range(fig: go.Figure, x_range: Optional[Tuple]) -> go.Figure:
+    """
+    Применить диапазон zoom к графику
+    
+    Args:
+        fig: Plotly Figure
+        x_range: (x_min, x_max) tuple или None
+        
+    Returns:
+        Plotly Figure с обновлённым диапазоном
+    """
+    if x_range and x_range[0] and x_range[1]:
+        fig.update_xaxes(range=[x_range[0], x_range[1]])
+    return fig
