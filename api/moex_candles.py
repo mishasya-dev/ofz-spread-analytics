@@ -292,10 +292,7 @@ class CandleFetcher:
             logger.warning(f"Не удалось создать параметры для {bond_config.isin}")
             return df
         
-        # Получаем НКД с MOEX
-        accrued_interest = self._get_accrued_interest(bond_config.isin)
-        
-        # Рассчитываем YTM для каждой свечи с её датой
+        # Рассчитываем YTM для каждой свечи с её датой и НКД
         ytm_open_list = []
         ytm_high_list = []
         ytm_low_list = []
@@ -307,6 +304,11 @@ class CandleFetcher:
                 settlement_date = idx.date()
             else:
                 settlement_date = idx if isinstance(idx, date) else None
+            
+            # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Рассчитываем НКД на дату свечи!
+            accrued_interest = self._ytm_calculator.calculate_accrued_interest_for_date(
+                bond_params, settlement_date
+            )
             
             ytm_open_list.append(
                 self._safe_calculate_ytm(row.get('open'), bond_params, accrued_interest, settlement_date)

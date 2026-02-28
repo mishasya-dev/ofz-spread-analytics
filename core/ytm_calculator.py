@@ -257,13 +257,73 @@ class YTMCalculator:
         if last_coupon_date:
             days_since_last = (settlement_date - last_coupon_date).days
         else:
-            # Упрощение: предполагаем середину купонного периода
-            days_since_last = days_between_coupons // 2
+            # Рассчитываем дату последнего купона
+            last_coupon = self._find_last_coupon_date(bond_params, settlement_date)
+            days_since_last = (settlement_date - last_coupon).days
         
         # НКД
         accrued = coupon_per_period * days_since_last / days_between_coupons
         
         return round(accrued, 2)
+    
+    def calculate_accrued_interest_for_date(
+        self,
+        bond_params: BondParams,
+        settlement_date: date
+    ) -> float:
+        """
+        Рассчитать НКД на конкретную дату (для исторических свечей)
+        
+        Args:
+            bond_params: Параметры облигации
+            settlement_date: Дата расчёта
+            
+        Returns:
+            НКД в рублях
+        """
+        return self.calculate_accrued_interest(bond_params, settlement_date)
+    
+    def _find_last_coupon_date(
+        self,
+        bond_params: BondParams,
+        settlement_date: date
+    ) -> date:
+        """
+        Найти дату последнего купона до settlement_date
+        
+        Args:
+            bond_params: Параметры облигации
+            settlement_date: Дата расчёта
+            
+        Returns:
+            Дата последнего купона
+        """
+        from datetime import timedelta
+        
+        # Генерируем купонные даты от погашения назад до settlement_date
+        maturity = bond_params.maturity_date
+        
+        # Начинаем от погашения и идём назад
+        temp_date = maturity
+        last_coupon = None
+        
+        while temp_date > settlement_date:
+            # Сохраняем предыдущую дату как кандидат на "последний купон"
+            next_temp = self._subtract_period(temp_date, bond_params.coupon_frequency)
+            if next_temp <= settlement_date:
+                last_coupon = next_temp
+                break
+            temp_date = next_temp
+        
+        # Если не нашли (settlement_date до первого купона), используем issue_date
+        if last_coupon is None:
+            if bond_params.issue_date:
+                return bond_params.issue_date
+            # Fallback: предполагаем что это середина купонного периода
+            days_between = 365 // bond_params.coupon_frequency
+            return settlement_date - timedelta(days=days_between // 2)
+        
+        return last_coupon
     
     def _generate_cash_flows(
         self,
