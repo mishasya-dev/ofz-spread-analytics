@@ -50,6 +50,19 @@ st.markdown("""
         font-weight: bold;
         margin-bottom: 1rem;
     }
+    .version-badge {
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 4px 12px;
+        border-radius: 15px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        z-index: 9999;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
     .metric-card {
         background: #f8f9fa;
         padding: 15px;
@@ -81,6 +94,7 @@ st.markdown("""
         color: #333 !important;
     }
 </style>
+<div class="version-badge">v0.3.0</div>
 """, unsafe_allow_html=True)
 
 
