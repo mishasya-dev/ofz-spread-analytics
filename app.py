@@ -542,12 +542,12 @@ def main():
         # Единый период (1 месяц - 2 года)
         st.subheader("📅 Период")
         period = st.slider(
-            "Период анализа",
+            "Период анализа (дней)",
             min_value=30,
             max_value=730,
             value=st.session_state.period,
             step=30,
-            format_func=lambda x: f"{x // 30} мес." if x < 365 else f"{x // 365} год(а)"
+            format="%d дней"
         )
         st.session_state.period = period
         
