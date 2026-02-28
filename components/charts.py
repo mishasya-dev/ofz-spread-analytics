@@ -698,6 +698,20 @@ def create_daily_ytm_chart(
     if x_min and x_max:
         fig.update_xaxes(range=[x_min, x_max])
     
+    # Добавляем сетку
+    fig.update_xaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(200, 200, 200, 0.3)',
+        griddash='dot'
+    )
+    fig.update_yaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(200, 200, 200, 0.3)',
+        griddash='dot'
+    )
+    
     return fig
 
 
@@ -782,6 +796,20 @@ def create_daily_spread_chart(
         margin=dict(l=60, r=30, t=50, b=40)
     )
     
+    # Добавляем сетку
+    fig.update_xaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(200, 200, 200, 0.3)',
+        griddash='dot'
+    )
+    fig.update_yaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(200, 200, 200, 0.3)',
+        griddash='dot'
+    )
+    
     return fig
 
 
@@ -813,48 +841,50 @@ def create_combined_ytm_chart(
     """
     fig = go.Figure()
     
-    # Облигация 1: история (тёмно-синий) + свечи (ярко-синий)
+    # Облигация 1: история (тёмно-синий, пунктир) + свечи (ярко-синий, сплошная)
     ytm_col = 'ytm'
     ytm_intraday_col = 'ytm_close'
     
-    # История облигации 1
+    # История облигации 1 - пунктир, тёмный цвет
     if not daily_df1.empty and ytm_col in daily_df1.columns:
         fig.add_trace(go.Scatter(
             x=daily_df1.index,
             y=daily_df1[ytm_col],
-            name=f"{bond1_name} (история)",
-            line=dict(color=BOND1_COLORS["history"], width=2),
-            hovertemplate=f'{bond1_name}: %{{y:.2f}}%<extra></extra>'
+            name=f"{bond1_name} (дневн.)",
+            line=dict(color=BOND1_COLORS["history"], width=2, dash='dash'),
+            opacity=0.8,
+            hovertemplate=f'{bond1_name} (дневн.): %{{y:.2f}}%<extra></extra>'
         ))
     
-    # Intraday облигации 1
+    # Intraday облигации 1 - сплошная, яркий цвет
     if not intraday_df1.empty and ytm_intraday_col in intraday_df1.columns:
         fig.add_trace(go.Scatter(
             x=intraday_df1.index,
             y=intraday_df1[ytm_intraday_col],
             name=f"{bond1_name} (свечи)",
-            line=dict(color=BOND1_COLORS["intraday"], width=1.5),
-            hovertemplate=f'{bond1_name}: %{{y:.2f}}%<extra></extra>'
+            line=dict(color=BOND1_COLORS["intraday"], width=2),
+            hovertemplate=f'{bond1_name} (свечи): %{{y:.2f}}%<extra></extra>'
         ))
     
-    # История облигации 2
+    # История облигации 2 - пунктир, тёмный цвет
     if not daily_df2.empty and ytm_col in daily_df2.columns:
         fig.add_trace(go.Scatter(
             x=daily_df2.index,
             y=daily_df2[ytm_col],
-            name=f"{bond2_name} (история)",
-            line=dict(color=BOND2_COLORS["history"], width=2),
-            hovertemplate=f'{bond2_name}: %{{y:.2f}}%<extra></extra>'
+            name=f"{bond2_name} (дневн.)",
+            line=dict(color=BOND2_COLORS["history"], width=2, dash='dash'),
+            opacity=0.8,
+            hovertemplate=f'{bond2_name} (дневн.): %{{y:.2f}}%<extra></extra>'
         ))
     
-    # Intraday облигации 2
+    # Intraday облигации 2 - сплошная, яркий цвет
     if not intraday_df2.empty and ytm_intraday_col in intraday_df2.columns:
         fig.add_trace(go.Scatter(
             x=intraday_df2.index,
             y=intraday_df2[ytm_intraday_col],
             name=f"{bond2_name} (свечи)",
-            line=dict(color=BOND2_COLORS["intraday"], width=1.5),
-            hovertemplate=f'{bond2_name}: %{{y:.2f}}%<extra></extra>'
+            line=dict(color=BOND2_COLORS["intraday"], width=2),
+            hovertemplate=f'{bond2_name} (свечи): %{{y:.2f}}%<extra></extra>'
         ))
     
     # Диапазон с будущим
@@ -883,6 +913,20 @@ def create_combined_ytm_chart(
             xanchor="right",
             x=1
         )
+    )
+    
+    # Добавляем сетку
+    fig.update_xaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(200, 200, 200, 0.3)',
+        griddash='dot'
+    )
+    fig.update_yaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(200, 200, 200, 0.3)',
+        griddash='dot'
     )
     
     return fig
@@ -986,6 +1030,20 @@ def create_intraday_spread_chart(
         template="plotly_white",
         height=300,
         margin=dict(l=60, r=30, t=50, b=40)
+    )
+    
+    # Добавляем сетку
+    fig.update_xaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(200, 200, 200, 0.3)',
+        griddash='dot'
+    )
+    fig.update_yaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(200, 200, 200, 0.3)',
+        griddash='dot'
     )
     
     return fig
