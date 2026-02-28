@@ -103,7 +103,7 @@ def get_years_to_maturity(maturity_str: str) -> float:
     try:
         maturity = datetime.strptime(maturity_str, '%Y-%m-%d')
         return round((maturity - datetime.now()).days / 365.25, 1)
-    except:
+    except (ValueError, TypeError):
         return 0
 
 
@@ -338,17 +338,26 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
 
 def calculate_spread_stats(spread_series: pd.Series) -> Dict:
     """Вычисляет статистику спреда"""
+    if spread_series.empty:
+        return {}
+    
+    # Удаляем NaN для статистики
+    clean_series = spread_series.dropna()
+    
+    if clean_series.empty:
+        return {}
+    
     return {
-        'mean': spread_series.mean(),
-        'median': spread_series.median(),
-        'std': spread_series.std(),
-        'min': spread_series.min(),
-        'max': spread_series.max(),
-        'p10': spread_series.quantile(0.10),
-        'p25': spread_series.quantile(0.25),
-        'p75': spread_series.quantile(0.75),
-        'p90': spread_series.quantile(0.90),
-        'current': spread_series.iloc[-1] if len(spread_series) > 0 else 0
+        'mean': clean_series.mean(),
+        'median': clean_series.median(),
+        'std': clean_series.std(),
+        'min': clean_series.min(),
+        'max': clean_series.max(),
+        'p10': clean_series.quantile(0.10),
+        'p25': clean_series.quantile(0.25),
+        'p75': clean_series.quantile(0.75),
+        'p90': clean_series.quantile(0.90),
+        'current': clean_series.iloc[-1] if len(clean_series) > 0 else 0
     }
 
 
