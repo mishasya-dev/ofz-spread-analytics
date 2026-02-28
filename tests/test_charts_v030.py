@@ -21,6 +21,10 @@ import numpy as np
 # Добавляем родительскую директорию в путь
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Подменяем streamlit до импорта компонентов
+from tests.mock_streamlit import st_mock
+sys.modules['streamlit'] = st_mock
+
 
 class TestCalculateFutureRange(unittest.TestCase):
     """Тесты для расчёта диапазона оси X с запасом для будущего"""

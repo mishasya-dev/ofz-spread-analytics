@@ -6,12 +6,34 @@ Mock для streamlit при тестировании
 from unittest.mock import MagicMock, Mock
 import sys
 
+
+class SessionStateDict(dict):
+    """
+    Dict с поддержкой доступа через атрибуты.
+    st.session_state.period работает как st.session_state['period']
+    """
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'")
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+    def __delattr__(self, key):
+        try:
+            del self[key]
+        except KeyError:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'")
+
+
 # Создаём mock модуль для streamlit
 class StreamlitMock:
     """Mock для модуля streamlit"""
-    
+
     def __init__(self):
-        self.session_state = {}
+        self.session_state = SessionStateDict()
         self.cache_data = self._cache_decorator
         self.cache_resource = self._cache_decorator
         self.sidebar = MagicMock()
