@@ -466,6 +466,38 @@ period = st.slider(
 
 ---
 
+## v0.3.0-refactor1 — Обновление sidebar.py (28.02.2026)
+
+### Изменения
+
+Обновлён `components/sidebar.py` для соответствия v0.3.0 unified charts:
+
+| Функция | Изменение |
+|---------|-----------|
+| `render_period_selector()` | Один слайдер периода (30-730 дней) |
+| `render_candle_interval_selector()` | **Новая** — выбор интервала свечей |
+| `render_db_panel()` | **Новая** — панель управления БД |
+| `render_cache_clear()` | **Новая** — кнопка очистки кэша |
+| `render_sidebar()` | **Новая** — главная точка входа |
+| `render_intraday_options()` | **Удалена** — больше не нужна |
+
+### Обновлённые файлы
+
+- `components/sidebar.py` — полный рефакторинг
+- `components/__init__.py` — обновлены экспорты
+
+### Тесты
+
+```
+97 passed
+```
+
+### Git
+
+- Коммит: `29c71d9`
+
+---
+
 ## v0.3.0 — Unified Charts (27.02.2026)
 
 ### Выполненная работа
