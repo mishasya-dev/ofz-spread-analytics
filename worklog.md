@@ -589,6 +589,51 @@ period = st.slider(
 
 ---
 
+## v0.3.0-tests2 — Новые тесты (28.02.2026)
+
+### Выполненная работа
+
+#### 1. Новые тестовые файлы
+
+| Файл | Тестов | Что тестирует |
+|------|--------|---------------|
+| `test_candle_service.py` | 36 | CandleService |
+| `test_db_repositories.py` | 23 | BondsRepository, YTMRepository, SpreadsRepository |
+| `test_app_v030.py` | 20 | Интеграционные тесты (spread, signals, labels) |
+
+#### 2. Исправления графиков
+
+**Проблема:** На скриншоте видно, что история и свечи неразличимы - одинаковый цвет.
+
+**Решение:**
+- История: тёмный цвет + пунктир (`dash='dash'`) + метка "(дневн.)"
+- Свечи: яркий цвет + сплошная линия + метка "(свечи)"
+- Добавлена сетка на все 4 графика
+
+```python
+# Было:
+line=dict(color=BOND1_COLORS["history"], width=2)
+
+# Стало:
+line=dict(color=BOND1_COLORS["history"], width=2, dash='dash'),
+opacity=0.8
+```
+
+#### 3. Итоги тестирования
+
+```
+До:    198 тестов
+После: 277 тестов (+79)
+```
+
+### Git
+
+- Ветка: `feature/v0.3.0-unified-charts`
+- Коммит: `0cc19af`
+- Push: https://github.com/mishasya-dev/ofz-spread-analytics
+
+---
+
 ## Рекомендации по стабильности (TODO)
 
 ### 1. Файл зависимостей
