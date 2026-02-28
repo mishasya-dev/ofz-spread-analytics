@@ -1,11 +1,11 @@
 """
-Компонент боковой панели
+Компонент боковой панели v0.3.0
 
-Содержит все элементы управления в sidebar.
+Содержит все элементы управления в sidebar для unified 4-chart layout.
 """
 import streamlit as st
-from typing import List, Dict, Any, Tuple
-from datetime import date, timedelta
+from typing import List, Dict, Any, Tuple, Callable, Optional
+from datetime import datetime
 
 
 def get_bonds_list() -> List:
@@ -27,14 +27,13 @@ def get_bonds_list() -> List:
             self.face_value = data.get('face_value', 1000)
             self.coupon_frequency = data.get('coupon_frequency', 2)
             self.issue_date = data.get('issue_date', '')
-            self.day_count_convention = data.get('day_count_convention', 'ACT/ACT')
+            self.day_count_convention = data.get('day_count_convention') or data.get('day_count', 'ACT/ACT')
     
     return [BondItem(bond_data) for bond_data in bonds_dict.values()]
 
 
 def get_years_to_maturity(maturity_str: str) -> float:
     """Вычисляет годы до погашения"""
-    from datetime import datetime
     try:
         maturity = datetime.strptime(maturity_str, '%Y-%m-%d')
         return round((maturity - datetime.now()).days / 365.25, 1)
@@ -99,106 +98,203 @@ def render_bond_selection(
     return bond1_idx, bond2_idx
 
 
-def render_period_selector(data_mode: str, candle_interval: str = "60") -> int:
+def render_period_selector() -> int:
     """
-    Рендерит селектор периода
-    
-    Args:
-        data_mode: 'daily' или 'intraday'
-        candle_interval: Интервал свечей
+    Рендерит слайдер выбора периода (единственный для всех графиков)
     
     Returns:
         Выбранный период в днях
     """
-    if data_mode == "daily":
-        period = st.radio(
-            "Период анализа",
-            [365, 730],
-            format_func=lambda x: f"{x // 365} год(а)",
-            index=0 if st.session_state.period == 365 else 1
-        )
-        st.session_state.period = period
-    else:
-        # Для внутридневного режима
-        interval_limits = {
-            "1": {"max": 3, "default": 1},
-            "10": {"max": 30, "default": 7},
-            "60": {"max": 365, "default": 30},
-        }
-        
-        limits = interval_limits.get(candle_interval, {"max": 30, "default": 7})
-        
-        period = st.slider(
-            f"Дней истории (макс {limits['max']} для {candle_interval} мин)",
-            min_value=1,
-            max_value=limits['max'],
-            value=min(st.session_state.get('intraday_period', limits['default']), limits['max']),
-            step=1
-        )
-        st.session_state.intraday_period = period
+    st.subheader("📅 Период")
+    
+    period = st.slider(
+        "Период анализа (дней)",
+        min_value=30,
+        max_value=730,
+        value=st.session_state.period,
+        step=30,
+        format="%d дней"
+    )
+    st.session_state.period = period
     
     return period
 
 
-def render_auto_refresh(data_mode: str):
-    """Рендерит настройки автообновления"""
+def render_candle_interval_selector() -> str:
+    """
+    Рендерит селектор интервала свечей для графиков 3+4
+    
+    Returns:
+        Выбранный интервал ('1', '10', '60')
+    """
+    st.subheader("⏱️ Интервал свечей")
+    
+    candle_interval = st.select_slider(
+        "Интервал для графиков 3+4",
+        options=["1", "10", "60"],
+        format_func=lambda x: {"1": "1 минута", "10": "10 минут", "60": "1 час"}[x],
+        value=st.session_state.candle_interval
+    )
+    st.session_state.candle_interval = candle_interval
+    
+    # Информация о максимальном периоде
+    max_candle_days = {"1": 3, "10": 30, "60": 365}
+    st.caption(f"Макс. период для {candle_interval} мин: {max_candle_days[candle_interval]} дней")
+    
+    return candle_interval
+
+
+def render_auto_refresh() -> bool:
+    """
+    Рендерит настройки автообновления
+    
+    Returns:
+        Включено ли автообновление
+    """
     st.subheader("🔄 Автообновление")
     
     auto_refresh = st.toggle(
-        "Включить автообновление",
+        "Включить",
         value=st.session_state.auto_refresh
     )
     st.session_state.auto_refresh = auto_refresh
     
     if auto_refresh:
-        if data_mode == "intraday":
-            refresh_interval = st.slider(
-                "Интервал обновления (секунды)",
-                min_value=10,
-                max_value=120,
-                value=st.session_state.intraday_refresh_interval,
-                step=10,
-                help="Для intraday режима рекомендуется 10-30 секунд"
-            )
-            st.session_state.intraday_refresh_interval = refresh_interval
-        else:
-            refresh_interval = st.slider(
-                "Интервал обновления (секунды)",
-                min_value=60,
-                max_value=300,
-                value=st.session_state.refresh_interval,
-                step=30
-            )
-            st.session_state.refresh_interval = refresh_interval
+        refresh_interval = st.slider(
+            "Интервал (сек)",
+            min_value=30,
+            max_value=300,
+            value=st.session_state.refresh_interval,
+            step=30
+        )
+        st.session_state.refresh_interval = refresh_interval
         
         if st.session_state.last_update:
-            from datetime import datetime
-            st.caption(f"Последнее обновление: {st.session_state.last_update.strftime('%H:%M:%S')}")
+            st.caption(f"Последнее: {st.session_state.last_update.strftime('%H:%M:%S')}")
+    
+    return auto_refresh
 
 
-def render_intraday_options():
-    """Рендерит опции для intraday режима"""
-    st.divider()
-    st.subheader("💾 Сохранение данных")
+def render_db_panel(
+    db_stats: Dict[str, int],
+    on_update_db: Optional[Callable] = None
+):
+    """
+    Рендерит панель управления базой данных
     
-    from core.database import get_saved_data_info, cleanup_old_data
+    Args:
+        db_stats: Статистика БД (bonds_count, daily_ytm_count, intraday_ytm_count)
+        on_update_db: Callback функция для обновления БД
+    """
+    st.subheader("🗄️ База данных")
     
-    save_data = st.toggle(
-        "Сохранять снимки данных",
-        value=st.session_state.save_data,
-        help="Сохраняет текущие YTM и спред каждые N секунд"
-    )
-    st.session_state.save_data = save_data
+    with st.expander("📊 Статистика БД", expanded=False):
+        st.write(f"**Облигаций:** {db_stats.get('bonds_count', 0)}")
+        st.write(f"**Дневных YTM:** {db_stats.get('daily_ytm_count', 0)}")
+        st.write(f"**Intraday YTM:** {db_stats.get('intraday_ytm_count', 0)}")
     
-    if st.session_state.saved_count > 0:
-        st.caption(f"Сохранено снимков: {st.session_state.saved_count}")
+    if st.button("🔄 Обновить БД", use_container_width=True):
+        st.session_state.updating_db = True
     
-    with st.expander("📁 Сохранённые данные"):
-        info = get_saved_data_info()
-        st.write(f"Всего файлов: {info['total_files']}")
-        if info['newest']:
-            st.write(f"Последние данные: {info['newest']}")
+    if st.session_state.get('updating_db', False):
+        st.info("Обновление БД...")
+        progress_bar = st.progress(0)
+        status_text = st.empty()
         
-        if st.button("🗑️ Очистить старые данные", key="cleanup_data"):
-            cleanup_old_data(days_to_keep=7)
-            st.success("Старые данные удалены!")
+        if on_update_db:
+            def update_progress(progress, message):
+                progress_bar.progress(progress)
+                status_text.text(message)
+            
+            try:
+                result = on_update_db(progress_callback=update_progress)
+                progress_bar.progress(1.0)
+                status_text.text("Готово!")
+                st.success(f"✅ Дневных: {result.get('daily_ytm_saved', 0)}, Intraday: {result.get('intraday_ytm_saved', 0)}")
+                st.session_state.updating_db = False
+                st.cache_data.clear()
+            except Exception as e:
+                st.error(f"Ошибка: {e}")
+                st.session_state.updating_db = False
+
+
+def render_cache_clear():
+    """Рендерит кнопку очистки кэша"""
+    if st.button("🗑️ Очистить кэш", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
+
+def render_sidebar(
+    bonds: List,
+    bond_trading_data: Dict[str, Dict],
+    fetch_trading_data_func: Callable,
+    db_stats: Dict[str, int],
+    on_update_db: Optional[Callable] = None
+) -> Tuple[int, int, int, str, bool]:
+    """
+    Рендерит полную боковую панель
+    
+    Args:
+        bonds: Список облигаций
+        bond_trading_data: Данные торгов по ISIN (заполняется внутри)
+        fetch_trading_data_func: Функция для получения торговых данных
+        db_stats: Статистика БД
+        on_update_db: Callback для обновления БД
+    
+    Returns:
+        Кортеж (bond1_idx, bond2_idx, period, candle_interval, auto_refresh)
+    """
+    st.header("⚙️ Настройки")
+    
+    # Кнопка управления облигациями
+    from components.bond_manager import render_bond_manager_button
+    render_bond_manager_button()
+    
+    st.divider()
+    
+    # Проверяем есть ли облигации
+    if not bonds:
+        st.warning("Нет избранных облигаций. Нажмите 'Управление облигациями' для выбора.")
+        st.stop()
+    
+    # Получаем данные для dropdown
+    bond_labels = []
+    
+    for b in bonds:
+        data = fetch_trading_data_func(b.isin)
+        bond_trading_data[b.isin] = data
+        if data.get('has_data') and data.get('yield'):
+            bond_labels.append(format_bond_label(b, data['yield'], data.get('duration_years')))
+        else:
+            bond_labels.append(format_bond_label(b))
+    
+    # Выбор облигаций
+    bond1_idx, bond2_idx = render_bond_selection(bonds, bond_trading_data)
+    
+    st.divider()
+    
+    # Период
+    period = render_period_selector()
+    
+    st.divider()
+    
+    # Интервал свечей
+    candle_interval = render_candle_interval_selector()
+    
+    st.divider()
+    
+    # Автообновление
+    auto_refresh = render_auto_refresh()
+    
+    st.divider()
+    
+    # Панель БД
+    render_db_panel(db_stats, on_update_db)
+    
+    st.divider()
+    
+    # Очистка кэша
+    render_cache_clear()
+    
+    return bond1_idx, bond2_idx, period, candle_interval, auto_refresh
