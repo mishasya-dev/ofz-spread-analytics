@@ -21,8 +21,6 @@ from api.moex_history import HistoryFetcher
 from api.moex_candles import CandleFetcher, CandleInterval
 from core.database import get_db
 from components.charts import (
-    create_daily_ytm_chart,
-    create_daily_spread_chart,
     create_combined_ytm_chart,
     create_intraday_spread_chart,
     create_spread_analytics_chart,
@@ -196,7 +194,7 @@ def init_session_state():
     if 'period' not in st.session_state:
         st.session_state.period = 365
     
-    # Интервал свечей для графиков 3+4
+    # Интервал свечей для intraday графиков
     if 'candle_interval' not in st.session_state:
         st.session_state.candle_interval = "60"
     
@@ -204,10 +202,7 @@ def init_session_state():
     if 'candle_days' not in st.session_state:
         st.session_state.candle_days = 30  # дефолт для 1 час
     
-    # Zoom ranges для связанных графиков
-    if 'daily_zoom_range' not in st.session_state:
-        st.session_state.daily_zoom_range = None
-    
+    # Zoom range для intraday графиков
     if 'intraday_zoom_range' not in st.session_state:
         st.session_state.intraday_zoom_range = None
     
@@ -631,11 +626,11 @@ def main():
         
         st.divider()
         
-        # Интервал свечей (для графиков 3+4) - radio
+        # Интервал свечей (intraday) - radio
         st.subheader("⏱️ Интервал свечей")
         interval_options = {"1": "1 мин", "10": "10 мин", "60": "1 час"}
         candle_interval = st.radio(
-            "Интервал для графиков 3+4",
+            "Интервал для intraday графиков",
             options=["1", "10", "60"],
             format_func=lambda x: interval_options[x],
             index=["1", "10", "60"].index(st.session_state.candle_interval),
@@ -780,11 +775,11 @@ def main():
     bond2 = bonds[bond2_idx]
     
     with st.spinner("Загрузка данных с MOEX..."):
-        # Дневные данные (для графиков 1+2 и статистики)
+        # Дневные данные (для Spread Analytics и статистики)
         daily_df1 = fetch_historical_data_cached(bond1.isin, period)
         daily_df2 = fetch_historical_data_cached(bond2.isin, period)
         
-        # Intraday данные (для графиков 3+4)
+        # Intraday данные
         # candle_days уже установлен в sidebar
         intraday_df1 = fetch_candle_data_cached(bond1.isin, bond_config_to_dict(bond1), candle_interval, candle_days)
         intraday_df2 = fetch_candle_data_cached(bond2.isin, bond_config_to_dict(bond2), candle_interval, candle_days)
@@ -845,38 +840,6 @@ def main():
     # ==========================================
     st.divider()
     
-    # График 1: YTM дневные
-    fig1 = create_daily_ytm_chart(
-        daily_df1, daily_df2,
-        bond1.name, bond2.name,
-        x_range=st.session_state.daily_zoom_range
-    )
-    
-    # Отлавливаем zoom на графике 1
-    daily_ytm_chart = st.plotly_chart(fig1, on_select="rerun", use_container_width=True)
-    
-    # Обрабатываем zoom
-    if daily_ytm_chart and daily_ytm_chart.selection:
-        x_range = daily_ytm_chart.selection.get('x_range')
-        if x_range:
-            st.session_state.daily_zoom_range = tuple(x_range)
-    
-    # График 2: Спред дневной (синхронизирован с 1)
-    fig2 = create_daily_spread_chart(
-        daily_spread_df,
-        stats=daily_stats,
-        x_range=st.session_state.daily_zoom_range
-    )
-    st.plotly_chart(fig2, use_container_width=True)
-    
-    # Кнопка сброса zoom
-    if st.session_state.daily_zoom_range:
-        if st.button("🔄 Сбросить масштаб графиков 1-2"):
-            st.session_state.daily_zoom_range = None
-            st.rerun()
-    
-    st.divider()
-    
     # ==========================================
     # ГРАФИК: SPREAD ANALYTICS (Z-SCORE)
     # ==========================================
@@ -901,8 +864,8 @@ def main():
     
     st.divider()
     
-    # График 3: YTM склеенный (история + свечи)
-    fig3 = create_combined_ytm_chart(
+    # График 2: YTM склеенный (история + свечи)
+    fig2 = create_combined_ytm_chart(
         daily_df1, daily_df2,
         intraday_df1, intraday_df2,
         bond1.name, bond2.name,
@@ -910,7 +873,7 @@ def main():
         x_range=st.session_state.intraday_zoom_range
     )
     
-    intraday_ytm_chart = st.plotly_chart(fig3, on_select="rerun", use_container_width=True)
+    intraday_ytm_chart = st.plotly_chart(fig2, on_select="rerun", use_container_width=True)
     
     # Обрабатываем zoom
     if intraday_ytm_chart and intraday_ytm_chart.selection:
@@ -918,17 +881,17 @@ def main():
         if x_range:
             st.session_state.intraday_zoom_range = tuple(x_range)
     
-    # График 4: Спред intraday (с перцентилями от дневных данных)
-    fig4 = create_intraday_spread_chart(
+    # График 3: Спред intraday (с перцентилями от дневных данных)
+    fig3 = create_intraday_spread_chart(
         intraday_spread_df,
         daily_stats=daily_stats,  # Перцентили от дневных!
         x_range=st.session_state.intraday_zoom_range
     )
-    st.plotly_chart(fig4, use_container_width=True)
+    st.plotly_chart(fig3, use_container_width=True)
     
     # Кнопка сброса zoom
     if st.session_state.intraday_zoom_range:
-        if st.button("🔄 Сбросить масштаб графиков 3-4"):
+        if st.button("🔄 Сбросить масштаб графиков 2-3"):
             st.session_state.intraday_zoom_range = None
             st.rerun()
     
