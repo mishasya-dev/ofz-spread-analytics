@@ -202,9 +202,7 @@ def init_session_state():
     if 'candle_days' not in st.session_state:
         st.session_state.candle_days = 30  # дефолт для 1 час
     
-    # Zoom range для intraday графиков
-    if 'intraday_zoom_range' not in st.session_state:
-        st.session_state.intraday_zoom_range = None
+
     
     if 'auto_refresh' not in st.session_state:
         st.session_state.auto_refresh = False
@@ -869,31 +867,16 @@ def main():
         daily_df1, daily_df2,
         intraday_df1, intraday_df2,
         bond1.name, bond2.name,
-        candle_days=candle_days,
-        x_range=st.session_state.intraday_zoom_range
+        candle_days=candle_days
     )
-    
-    intraday_ytm_chart = st.plotly_chart(fig2, on_select="rerun", use_container_width=True)
-    
-    # Обрабатываем zoom
-    if intraday_ytm_chart and intraday_ytm_chart.selection:
-        x_range = intraday_ytm_chart.selection.get('x_range')
-        if x_range:
-            st.session_state.intraday_zoom_range = tuple(x_range)
+    st.plotly_chart(fig2, use_container_width=True)
     
     # График 3: Спред intraday (с перцентилями от дневных данных)
     fig3 = create_intraday_spread_chart(
         intraday_spread_df,
-        daily_stats=daily_stats,  # Перцентили от дневных!
-        x_range=st.session_state.intraday_zoom_range
+        daily_stats=daily_stats  # Перцентили от дневных!
     )
     st.plotly_chart(fig3, use_container_width=True)
-    
-    # Кнопка сброса zoom
-    if st.session_state.intraday_zoom_range:
-        if st.button("🔄 Сбросить масштаб графиков 2-3"):
-            st.session_state.intraday_zoom_range = None
-            st.rerun()
     
     # ==========================================
     # АВТООБНОВЛЕНИЕ

@@ -827,6 +827,8 @@ def create_combined_ytm_chart(
     """
     Создать склеенный график YTM (история + свечи)
     
+    Использует категориальную ось X (без неторговых дней).
+    
     Логика склейки:
     - Граница = сегодня - candle_days
     - До границы: дневные YTM (YIELDCLOSE)
@@ -840,8 +842,8 @@ def create_combined_ytm_chart(
         bond1_name: Название облигации 1
         bond2_name: Название облигации 2
         candle_days: Период свечей в днях (определяет границу склейки)
-        x_range: Диапазон оси X (для синхронизации)
-        future_percent: Процент места для будущего
+        x_range: Диапазон оси X (для синхронизации) - игнорируется для категориальной оси
+        future_percent: Процент места для будущего - не используется
         
     Returns:
         Plotly Figure
@@ -850,7 +852,6 @@ def create_combined_ytm_chart(
     
     fig = go.Figure()
     
-    # Облигация 1: история (тёмно-синий, пунктир) + свечи (ярко-синий, сплошная)
     ytm_col = 'ytm'
     ytm_intraday_col = 'ytm_close'
     
@@ -859,66 +860,118 @@ def create_combined_ytm_chart(
     boundary_date = today - timedelta(days=candle_days)
     boundary_dt = pd.Timestamp(boundary_date)
     
-    # История облигации 1 - только до границы (пунктир, тёмный цвет)
-    if not daily_df1.empty and ytm_col in daily_df1.columns:
-        # Фильтруем: только данные до границы
-        daily_before_boundary = daily_df1[daily_df1.index < boundary_dt]
-        
-        if not daily_before_boundary.empty:
-            fig.add_trace(go.Scatter(
-                x=daily_before_boundary.index,
-                y=daily_before_boundary[ytm_col],
-                name=f"{bond1_name} (дневн.)",
-                line=dict(color=BOND1_COLORS["history"], width=2, dash='dash'),
-                opacity=0.8,
-                hovertemplate=f'{bond1_name} (дневн.): %{{y:.2f}}%<extra></extra>'
-            ))
+    # === КАТЕГОРИАЛЬНАЯ ОСЬ ===
+    # Собираем все точки в один список
+    all_points = []  # [(idx, date_label, ytm1, ytm2, is_intraday), ...]
     
-    # Intraday облигации 1 - сплошная, яркий цвет (все данные)
+    # История (дневные) - до границы
+    if not daily_df1.empty and ytm_col in daily_df1.columns:
+        daily_before_boundary = daily_df1[daily_df1.index < boundary_dt]
+        for i, (idx, row) in enumerate(daily_before_boundary.iterrows()):
+            ytm2_val = None
+            if not daily_df2.empty and ytm_col in daily_df2.columns:
+                daily2_before = daily_df2[daily_df2.index < boundary_dt]
+                if idx in daily2_before.index:
+                    ytm2_val = daily2_before.loc[idx, ytm_col]
+            
+            date_label = idx.strftime('%d.%m.%y') if hasattr(idx, 'strftime') else str(idx)[:10]
+            all_points.append({
+                'idx': len(all_points),
+                'date': idx,
+                'label': date_label,
+                'ytm1': row[ytm_col],
+                'ytm2': ytm2_val,
+                'is_intraday': False
+            })
+    
+    # Intraday (свечи) - все данные
     if not intraday_df1.empty and ytm_intraday_col in intraday_df1.columns:
+        for idx, row in intraday_df1.iterrows():
+            ytm2_val = None
+            if not intraday_df2.empty and ytm_intraday_col in intraday_df2.columns:
+                if idx in intraday_df2.index:
+                    ytm2_val = intraday_df2.loc[idx, ytm_intraday_col]
+            
+            # Для intraday показываем дату и время
+            if hasattr(idx, 'strftime'):
+                date_label = idx.strftime('%d.%m %H:%M')
+            else:
+                date_label = str(idx)[:16]
+            
+            all_points.append({
+                'idx': len(all_points),
+                'date': idx,
+                'label': date_label,
+                'ytm1': row[ytm_intraday_col],
+                'ytm2': ytm2_val,
+                'is_intraday': True
+            })
+    
+    if not all_points:
+        return fig
+    
+    # Разделяем на историю и intraday для разных стилей линий
+    history_points = [p for p in all_points if not p['is_intraday']]
+    intraday_points = [p for p in all_points if p['is_intraday']]
+    
+    x_indices = [p['idx'] for p in all_points]
+    date_labels = [p['label'] for p in all_points]
+    
+    # Тики оси X
+    n_points = len(all_points)
+    tick_step = max(1, n_points // 12)
+    tickvals = x_indices[::tick_step]
+    ticktext = [date_labels[i] for i in tickvals]
+    
+    # Облигация 1 - история (пунктир)
+    if history_points:
         fig.add_trace(go.Scatter(
-            x=intraday_df1.index,
-            y=intraday_df1[ytm_intraday_col],
-            name=f"{bond1_name} (свечи)",
-            line=dict(color=BOND1_COLORS["intraday"], width=2),
-            hovertemplate=f'{bond1_name} (свечи): %{{y:.2f}}%<extra></extra>'
+            x=[p['idx'] for p in history_points],
+            y=[p['ytm1'] for p in history_points],
+            name=f"{bond1_name} (дневн.)",
+            line=dict(color=BOND1_COLORS["history"], width=2, dash='dash'),
+            opacity=0.8,
+            hovertemplate=f'{bond1_name}: %{{y:.2f}}%<br>%{{text}}<extra></extra>',
+            text=[p['label'] for p in history_points]
         ))
     
-    # История облигации 2 - только до границы (пунктир, тёмный цвет)
-    if not daily_df2.empty and ytm_col in daily_df2.columns:
-        # Фильтруем: только данные до границы
-        daily_before_boundary = daily_df2[daily_df2.index < boundary_dt]
-        
-        if not daily_before_boundary.empty:
+    # Облигация 1 - intraday (сплошная)
+    if intraday_points:
+        fig.add_trace(go.Scatter(
+            x=[p['idx'] for p in intraday_points],
+            y=[p['ytm1'] for p in intraday_points],
+            name=f"{bond1_name} (свечи)",
+            line=dict(color=BOND1_COLORS["intraday"], width=2),
+            hovertemplate=f'{bond1_name}: %{{y:.2f}}%<br>%{{text}}<extra></extra>',
+            text=[p['label'] for p in intraday_points]
+        ))
+    
+    # Облигация 2 - история (пунктир)
+    if history_points:
+        ytm2_history = [p['ytm2'] for p in history_points]
+        if any(v is not None for v in ytm2_history):
             fig.add_trace(go.Scatter(
-                x=daily_before_boundary.index,
-                y=daily_before_boundary[ytm_col],
+                x=[p['idx'] for p in history_points],
+                y=ytm2_history,
                 name=f"{bond2_name} (дневн.)",
                 line=dict(color=BOND2_COLORS["history"], width=2, dash='dash'),
                 opacity=0.8,
-                hovertemplate=f'{bond2_name} (дневн.): %{{y:.2f}}%<extra></extra>'
+                hovertemplate=f'{bond2_name}: %{{y:.2f}}%<br>%{{text}}<extra></extra>',
+                text=[p['label'] for p in history_points]
             ))
     
-    # Intraday облигации 2 - сплошная, яркий цвет (все данные)
-    if not intraday_df2.empty and ytm_intraday_col in intraday_df2.columns:
-        fig.add_trace(go.Scatter(
-            x=intraday_df2.index,
-            y=intraday_df2[ytm_intraday_col],
-            name=f"{bond2_name} (свечи)",
-            line=dict(color=BOND2_COLORS["intraday"], width=2),
-            hovertemplate=f'{bond2_name} (свечи): %{{y:.2f}}%<extra></extra>'
-        ))
-    
-    # Диапазон с будущим (используем все данные для определения границ)
-    all_indices = []
-    for df in [daily_df1, daily_df2, intraday_df1, intraday_df2]:
-        if df is not None and len(df) > 0:
-            all_indices.extend(df.index)
-    
-    if all_indices:
-        x_min, x_max = calculate_future_range(pd.DatetimeIndex(all_indices), future_percent)
-        if x_min and x_max:
-            fig.update_xaxes(range=[x_min, x_max])
+    # Облигация 2 - intraday (сплошная)
+    if intraday_points:
+        ytm2_intraday = [p['ytm2'] for p in intraday_points]
+        if any(v is not None for v in ytm2_intraday):
+            fig.add_trace(go.Scatter(
+                x=[p['idx'] for p in intraday_points],
+                y=ytm2_intraday,
+                name=f"{bond2_name} (свечи)",
+                line=dict(color=BOND2_COLORS["intraday"], width=2),
+                hovertemplate=f'{bond2_name}: %{{y:.2f}}%<br>%{{text}}<extra></extra>',
+                text=[p['label'] for p in intraday_points]
+            ))
     
     # Подпись о границе склейки
     boundary_str = boundary_date.strftime('%Y-%m-%d')
@@ -940,12 +993,15 @@ def create_combined_ytm_chart(
         )
     )
     
-    # Добавляем сетку
+    # Категориальная ось X
     fig.update_xaxes(
         showgrid=True,
         gridwidth=1,
         gridcolor='rgba(200, 200, 200, 0.3)',
-        griddash='dot'
+        griddash='dot',
+        tickmode='array',
+        tickvals=tickvals,
+        ticktext=ticktext
     )
     fig.update_yaxes(
         showgrid=True,
@@ -966,27 +1022,45 @@ def create_intraday_spread_chart(
     """
     Создать график intraday спреда с перцентилями от дневных данных
     
+    Использует категориальную ось X (без неторговых дней).
+    
     Args:
         spread_df: DataFrame со спредом
         daily_stats: Статистика от ДНЕВНЫХ данных (mean, p10, p25, p75, p90)
-        x_range: Диапазон оси X (для синхронизации)
-        future_percent: Процент места для будущего
+        x_range: Диапазон оси X - игнорируется для категориальной оси
+        future_percent: Процент места для будущего - не используется
         
     Returns:
         Plotly Figure
     """
     fig = go.Figure()
     
-    # Спред
+    # === КАТЕГОРИАЛЬНАЯ ОСЬ ===
     if not spread_df.empty and 'spread' in spread_df.columns:
+        n_points = len(spread_df)
+        x_indices = list(range(n_points))
+        
+        # Подписи оси X
         x_vals = spread_df['datetime'] if 'datetime' in spread_df.columns else spread_df.index
+        date_labels = [d.strftime('%d.%m %H:%M') if hasattr(d, 'strftime') else str(d)[:16] for d in x_vals]
+        
+        # Тики
+        tick_step = max(1, n_points // 12)
+        tickvals = x_indices[::tick_step]
+        ticktext = [date_labels[i] for i in tickvals]
+        
+        # Спред
         fig.add_trace(go.Scatter(
-            x=x_vals,
+            x=x_indices,
             y=spread_df['spread'],
             name='Спред',
             line=dict(color=SPREAD_COLOR, width=2),
-            hovertemplate='Спред: %{y:.1f} б.п.<extra></extra>'
+            hovertemplate='Спред: %{y:.1f} б.п.<br>%{text}<extra></extra>',
+            text=date_labels
         ))
+    else:
+        tickvals = []
+        ticktext = []
     
     # Перцентили от ДНЕВНЫХ данных (референс)
     if daily_stats:
@@ -1040,13 +1114,6 @@ def create_intraday_spread_chart(
                 annotation_position="left"
             )
     
-    # Диапазон с будущим
-    if spread_df is not None and len(spread_df) > 0:
-        x_vals = spread_df['datetime'] if 'datetime' in spread_df.columns else spread_df.index
-        x_min, x_max = calculate_future_range(pd.DatetimeIndex(x_vals), future_percent)
-        if x_min and x_max:
-            fig.update_xaxes(range=[x_min, x_max])
-    
     fig.update_layout(
         title="📉 Спред (intraday) + перцентили от дневных данных",
         xaxis_title="Время",
@@ -1057,12 +1124,15 @@ def create_intraday_spread_chart(
         margin=dict(l=60, r=30, t=50, b=40)
     )
     
-    # Добавляем сетку
+    # Категориальная ось X
     fig.update_xaxes(
         showgrid=True,
         gridwidth=1,
         gridcolor='rgba(200, 200, 200, 0.3)',
-        griddash='dot'
+        griddash='dot',
+        tickmode='array',
+        tickvals=tickvals if tickvals else [],
+        ticktext=ticktext if ticktext else []
     )
     fig.update_yaxes(
         showgrid=True,
@@ -1092,6 +1162,8 @@ def create_spread_analytics_chart(
     Две панели:
     1. Доходности YTM обеих облигаций
     2. Спред + Rolling Mean + ±Z Sigma границы
+    
+    Использует категориальную ось X (без неторговых дней).
     
     Args:
         df1: DataFrame с YTM облигации 1 (длинная)
@@ -1143,27 +1215,41 @@ def create_spread_analytics_chart(
             combined['upper_band'] = combined['rolling_mean'] + z_threshold * combined['rolling_std']
             combined['lower_band'] = combined['rolling_mean'] - z_threshold * combined['rolling_std']
             
+            # === КАТЕГОРИАЛЬНАЯ ОСЬ ===
+            # x = порядковый номер торговой сессии
+            n_points = len(combined)
+            x_indices = list(range(n_points))
+            
+            # Подписи оси X (даты)
             dates = combined.index
+            date_labels = [d.strftime('%d.%m.%y') if hasattr(d, 'strftime') else str(d)[:10] for d in dates]
+            
+            # Выбираем тики (каждый N-й, но не больше ~15 тиков)
+            tick_step = max(1, n_points // 15)
+            tickvals = x_indices[::tick_step]
+            ticktext = [date_labels[i] for i in tickvals]
             
             # --- ПАНЕЛЬ 1: Доходности ---
             fig.add_trace(
                 go.Scatter(
-                    x=dates,
+                    x=x_indices,
                     y=combined['ytm_long'],
                     name=bond1_name,
                     line=dict(color=BOND1_COLORS["history"], width=2),
-                    hovertemplate=f'{bond1_name}: %{{y:.2f}}%<extra></extra>'
+                    hovertemplate=f'{bond1_name}: %{{y:.2f}}%<br>%{{text}}<extra></extra>',
+                    text=date_labels
                 ),
                 row=1, col=1
             )
             
             fig.add_trace(
                 go.Scatter(
-                    x=dates,
+                    x=x_indices,
                     y=combined['ytm_short'],
                     name=bond2_name,
                     line=dict(color=BOND2_COLORS["history"], width=2),
-                    hovertemplate=f'{bond2_name}: %{{y:.2f}}%<extra></extra>'
+                    hovertemplate=f'{bond2_name}: %{{y:.2f}}%<br>%{{text}}<extra></extra>',
+                    text=date_labels
                 ),
                 row=1, col=1
             )
@@ -1172,11 +1258,13 @@ def create_spread_analytics_chart(
             # Верхняя граница
             fig.add_trace(
                 go.Scatter(
-                    x=dates,
+                    x=x_indices,
                     y=combined['upper_band'],
                     name=f"+{z_threshold}σ",
                     line=dict(color='rgba(255, 0, 0, 0.4)', dash='dot', width=1),
-                    showlegend=True
+                    showlegend=True,
+                    hovertemplate='%{y:.1f} б.п.<br>%{text}<extra></extra>',
+                    text=date_labels
                 ),
                 row=2, col=1
             )
@@ -1184,13 +1272,15 @@ def create_spread_analytics_chart(
             # Нижняя граница с заливкой
             fig.add_trace(
                 go.Scatter(
-                    x=dates,
+                    x=x_indices,
                     y=combined['lower_band'],
                     name=f"-{z_threshold}σ",
                     line=dict(color='rgba(0, 180, 0, 0.4)', dash='dot', width=1),
                     fill='tonexty',
                     fillcolor='rgba(128, 128, 128, 0.08)',
-                    showlegend=True
+                    showlegend=True,
+                    hovertemplate='%{y:.1f} б.п.<br>%{text}<extra></extra>',
+                    text=date_labels
                 ),
                 row=2, col=1
             )
@@ -1198,11 +1288,12 @@ def create_spread_analytics_chart(
             # Rolling Mean
             fig.add_trace(
                 go.Scatter(
-                    x=dates,
+                    x=x_indices,
                     y=combined['rolling_mean'],
                     name=f"MA({window})",
                     line=dict(color='gray', dash='dash', width=1),
-                    hovertemplate='MA: %{y:.1f} б.п.<extra></extra>'
+                    hovertemplate='MA: %{y:.1f} б.п.<br>%{text}<extra></extra>',
+                    text=date_labels
                 ),
                 row=2, col=1
             )
@@ -1210,11 +1301,12 @@ def create_spread_analytics_chart(
             # Спред
             fig.add_trace(
                 go.Scatter(
-                    x=dates,
+                    x=x_indices,
                     y=combined['spread'],
                     name="Спред",
                     line=dict(color=SPREAD_COLOR, width=2),
-                    hovertemplate='Спред: %{y:.1f} б.п.<extra></extra>'
+                    hovertemplate='Спред: %{y:.1f} б.п.<br>%{text}<extra></extra>',
+                    text=date_labels
                 ),
                 row=2, col=1
             )
@@ -1222,7 +1314,8 @@ def create_spread_analytics_chart(
             # Текущая точка с сигналом
             last_spread = combined['spread'].iloc[-1]
             last_zscore = combined['z_score'].iloc[-1]
-            last_date = dates[-1]
+            last_idx = x_indices[-1]
+            last_date_label = date_labels[-1]
             
             # Цвет по Z-Score
             if last_zscore > z_threshold:
@@ -1237,7 +1330,7 @@ def create_spread_analytics_chart(
             
             fig.add_trace(
                 go.Scatter(
-                    x=[last_date],
+                    x=[last_idx],
                     y=[last_spread],
                     mode='markers+text',
                     marker=dict(size=12, color=marker_color, symbol='diamond'),
@@ -1245,7 +1338,7 @@ def create_spread_analytics_chart(
                     textposition="top center",
                     textfont=dict(size=10, color=marker_color),
                     name=f"Текущий: {last_spread:.1f} б.п.",
-                    hovertemplate=f'{signal}<br>Спред: {last_spread:.1f} б.п.<br>Z: {last_zscore:.2f}<extra></extra>'
+                    hovertemplate=f'{signal}<br>Спред: {last_spread:.1f} б.п.<br>Z: {last_zscore:.2f}<br>{last_date_label}<extra></extra>'
                 ),
                 row=2, col=1
             )
@@ -1266,12 +1359,15 @@ def create_spread_analytics_chart(
         )
     )
 
-    # Сетка (пунктир, как на графиках 1-2)
+    # Сетка (пунктир) и категориальная ось X
     fig.update_xaxes(
         showgrid=True,
         gridwidth=1,
         gridcolor='rgba(200, 200, 200, 0.3)',
         griddash='dot',
+        tickmode='array',
+        tickvals=tickvals if 'tickvals' in dir() else [],
+        ticktext=ticktext if 'ticktext' in dir() else [],
         row=1, col=1
     )
     fig.update_xaxes(
@@ -1279,6 +1375,9 @@ def create_spread_analytics_chart(
         gridwidth=1,
         gridcolor='rgba(200, 200, 200, 0.3)',
         griddash='dot',
+        tickmode='array',
+        tickvals=tickvals if 'tickvals' in dir() else [],
+        ticktext=ticktext if 'ticktext' in dir() else [],
         title_text="Дата",
         row=2, col=1
     )
