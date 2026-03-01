@@ -1370,3 +1370,115 @@ streamlit-app/
 ---
 
 *Сессия завершена: 28.02.2026 14:45 UTC*
+
+---
+
+## v0.3.1 — Spread Analytics с Z-Score (01.03.2026)
+
+### Новая функция: create_spread_analytics_chart()
+
+**Описание**: Профессиональная панель анализа спреда с Z-Score
+
+**Структура графика**:
+- Панель 1: YTM обеих облигаций (дневные данные)
+- Панель 2: Спред + Rolling Mean + ±Zσ границы
+
+**Функционал**:
+| Параметр | Диапазон | По умолчанию |
+|----------|----------|--------------|
+| Rolling Window | 5-90 дней | 30 |
+| Z-Score Threshold | 1.0-3.0σ | 2.0 |
+
+**Сигналы**:
+- 🟢 BUY: Z < -threshold (спред аномально низкий)
+- 🔴 SELL: Z > +threshold (спред аномально высокий)
+- ⚪ Neutral: Z в пределах threshold
+
+### Рефакторинг UI
+
+**Удалено**:
+- График 1: Daily YTM (дублировал Панель 1)
+- График 2: Daily Spread (дублировал Панель 2)
+- `daily_zoom_range` session state
+
+**Новая структура**:
+```
+📊 Метрики (YTM, Spread, Signal)
+─────────────────────────────────
+📊 График 1: Spread Analytics (Z-Score)
+─────────────────────────────────
+📊 График 2: Combined YTM (intraday)
+📊 График 3: Intraday Spread
+```
+
+### Исправления
+
+| # | Проблема | Решение |
+|---|----------|---------|
+| 1 | Slider crash: `min_value == max_value` (30 == 30) | `if max_days <= min_days: min_days = max(1, max_days - 1)` |
+| 2 | `cannot reindex on an axis with duplicate labels` | Использован `join()` вместо dict-based DataFrame |
+| 3 | Сетка сплошная | Добавлен `griddash='dot'` |
+
+### Новые тесты (+11)
+
+**Класс**: `TestSpreadAnalyticsChart`
+
+| Тест | Описание |
+|------|----------|
+| test_empty_dataframes | Пустые данные |
+| test_missing_ytm_column | Нет колонки ytm |
+| test_basic_chart_structure | Структура графика |
+| test_spread_calculation | Точность расчёта |
+| test_z_score_signal_colors | Цвета сигналов |
+| test_custom_window_and_threshold | Кастомные параметры |
+| test_duplicate_indices_handling | Дубли индексов |
+| test_different_date_ranges | Разные диапазоны дат |
+| test_grid_style | Стиль сетки |
+| test_layout_title_and_labels | Заголовок и подписи |
+
+### Результаты тестирования
+
+```
+python tests/test_charts_v030.py
+================================
+Ran 38 tests in 2.359s
+OK
+```
+
+### Git
+
+- Ветка: `feature/v0.3.0-unified-charts`
+- Коммиты:
+  - `6697b09` - feat: add professional spread analytics chart with Z-Score
+  - `0bb1cda` - feat: integrate Spread Analytics chart into UI
+  - `990f5ef` - fix: slider error when min_value equals max_value
+  - `ff5624e` - refactor: remove show_gaps from spread analytics chart
+  - `db70db0` - fix: handle duplicate indices in create_spread_analytics_chart
+  - `4e14b12` - fix: change grid to dotted style on Spread Analytics chart
+  - `34c2d1b` - refactor: remove redundant charts 1-2
+  - `648ead8` - test: add 11 tests for create_spread_analytics_chart
+  - `9881f43` - docs: update SESSION_CONTEXT and CHANGELOG for v0.3.1
+
+### Изменённые файлы
+
+```
+streamlit-app/
+├── components/
+│   ├── charts.py          # НОВАЯ ФУНКЦИЯ: create_spread_analytics_chart()
+│   └── sidebar.py         # ИСПРАВЛЕНО: slider min_value bug
+├── app.py                 # РЕФАКТОРИНГ: удалены графики 1-2
+├── tests/
+│   └── test_charts_v030.py # +11 тестов
+├── SESSION_CONTEXT.md     # ОБНОВЛЁН
+└── CHANGELOG.md           # ОБНОВЛЁН
+```
+
+### Следующие шаги
+
+1. Тестирование пользователем в ветке `feature/v0.3.0-unified-charts`
+2. При одобрении — merge в `stable` и обновление тега `v0.3.0-stable`
+3. Рассмотреть добавление alerts на основе Z-Score
+
+---
+
+*Сессия завершена: 01.03.2026 13:55 UTC*
