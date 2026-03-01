@@ -320,8 +320,20 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
         end_date=date.today()
     )
     
-    # Если в БД нет данных, загружаем историю
-    if db_ytm_df.empty and days > 1:
+    # Проверяем нужно ли обновить историю
+    # Условия: 1) БД пуста ИЛИ 2) данных меньше чем нужно (по датам)
+    need_history = False
+    if days > 1:
+        if db_ytm_df.empty:
+            need_history = True
+        else:
+            # Проверяем покрытие периода
+            db_min_date = db_ytm_df.index.min().date() if hasattr(db_ytm_df.index.min(), 'date') else db_ytm_df.index.min()
+            if db_min_date > start_date:
+                need_history = True
+                logger.info(f"Данные в БД начинаются с {db_min_date}, нужно с {start_date} - перезагружаем")
+    
+    if need_history:
         history_df = fetcher.fetch_candles(
             isin,
             bond_config=bond_config,
@@ -331,6 +343,8 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
         )
         
         if not history_df.empty and 'ytm_close' in history_df.columns:
+            # Удаляем старые данные и сохраняем новые
+            db.clear_intraday_ytm(isin, interval)
             db.save_intraday_ytm(isin, interval, history_df)
             logger.info(f"Сохранены intraday YTM в БД для {isin}: {len(history_df)} записей")
         

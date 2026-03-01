@@ -495,6 +495,38 @@ class DatabaseManager:
         
         return df
     
+    def clear_intraday_ytm(
+        self,
+        isin: str,
+        interval: str
+    ) -> int:
+        """
+        Удалить intraday YTM данные для облигации
+        
+        Args:
+            isin: ISIN облигации
+            interval: Интервал свечей
+            
+        Returns:
+            Количество удалённых записей
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            DELETE FROM intraday_ytm
+            WHERE isin = ? AND interval = ?
+        ''', (isin, interval))
+        
+        deleted = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        if deleted > 0:
+            logger.info(f"Удалено {deleted} intraday YTM для {isin} (interval={interval})")
+        
+        return deleted
+    
     def get_last_intraday_ytm_datetime(
         self,
         isin: str,
