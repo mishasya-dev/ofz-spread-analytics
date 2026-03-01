@@ -1118,13 +1118,17 @@ def create_spread_analytics_chart(
     )
     
     ytm_col = 'ytm'
-    
+
     # --- Подготовка данных ---
     if not df1.empty and ytm_col in df1.columns and not df2.empty and ytm_col in df2.columns:
-        combined = pd.DataFrame({
-            'ytm_long': df1[ytm_col],
-            'ytm_short': df2[ytm_col]
-        }).dropna()
+        # Удаляем дубликаты в индексах перед объединением
+        df1_clean = df1[~df1.index.duplicated(keep='last')][[ytm_col]].copy()
+        df2_clean = df2[~df2.index.duplicated(keep='last')][[ytm_col]].copy()
+
+        # Объединяем по индексу с помощью join
+        combined = df1_clean.join(df2_clean, lsuffix='_long', rsuffix='_short', how='inner')
+        combined.columns = ['ytm_long', 'ytm_short']
+        combined = combined.dropna()
         
         if len(combined) > 0:
             # Расчёт спреда
