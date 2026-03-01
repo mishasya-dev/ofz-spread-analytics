@@ -25,6 +25,7 @@ from components.charts import (
     create_daily_spread_chart,
     create_combined_ytm_chart,
     create_intraday_spread_chart,
+    create_spread_analytics_chart,
     apply_zoom_range
 )
 from version import format_version_badge
@@ -221,6 +222,13 @@ def init_session_state():
     
     if 'updating_db' not in st.session_state:
         st.session_state.updating_db = False
+    
+    # Параметры для Spread Analytics
+    if 'spread_window' not in st.session_state:
+        st.session_state.spread_window = 30
+    
+    if 'z_threshold' not in st.session_state:
+        st.session_state.z_threshold = 2.0
 
 
 def get_bonds_list() -> List:
@@ -668,6 +676,29 @@ def main():
         
         st.divider()
         
+        # Настройки Spread Analytics
+        st.subheader("📈 Spread Analytics")
+        spread_window = st.slider(
+            "Окно rolling (дней)",
+            min_value=5,
+            max_value=90,
+            value=st.session_state.spread_window,
+            step=5
+        )
+        st.session_state.spread_window = spread_window
+        
+        z_threshold = st.slider(
+            "Z-Score порог (σ)",
+            min_value=1.0,
+            max_value=3.0,
+            value=st.session_state.z_threshold,
+            step=0.1,
+            format="%.1fσ"
+        )
+        st.session_state.z_threshold = z_threshold
+        
+        st.divider()
+        
         # Автообновление
         st.subheader("🔄 Автообновление")
         auto_refresh = st.toggle(
@@ -843,6 +874,30 @@ def main():
         if st.button("🔄 Сбросить масштаб графиков 1-2"):
             st.session_state.daily_zoom_range = None
             st.rerun()
+    
+    st.divider()
+    
+    # ==========================================
+    # ГРАФИК: SPREAD ANALYTICS (Z-SCORE)
+    # ==========================================
+    st.subheader("📊 Spread Analytics с Z-Score")
+    
+    fig_analytics = create_spread_analytics_chart(
+        daily_df1, daily_df2,
+        bond1.name, bond2.name,
+        window=st.session_state.spread_window,
+        z_threshold=st.session_state.z_threshold
+    )
+    st.plotly_chart(fig_analytics, use_container_width=True)
+    
+    # Легенда сигналов
+    st.markdown("""
+    **Сигналы:** 🟢 BUY (спред < -{threshold}σ) | 🔴 SELL (спред > +{threshold}σ) | ⚪ Neutral
+    
+    **Интерпретация:**
+    - BUY: спред аномально низкий → ожидается расширение (покупаем длинную, продаём короткую)
+    - SELL: спред аномально высокий → ожидается сужение (продаём длинную, покупаем короткую)
+    """.format(threshold=st.session_state.z_threshold))
     
     st.divider()
     
