@@ -1266,25 +1266,35 @@ def create_spread_analytics_chart(
         )
     )
 
-    # Сетка
+    # Сетка (пунктир, как на графиках 1-2)
     fig.update_xaxes(
         showgrid=True,
         gridwidth=1,
-        gridcolor='rgba(200, 200, 200, 0.4)',
+        gridcolor='rgba(200, 200, 200, 0.3)',
+        griddash='dot',
+        row=1, col=1
+    )
+    fig.update_xaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(200, 200, 200, 0.3)',
+        griddash='dot',
         title_text="Дата",
         row=2, col=1
     )
     fig.update_yaxes(
         showgrid=True,
         gridwidth=1,
-        gridcolor='rgba(200, 200, 200, 0.4)',
+        gridcolor='rgba(200, 200, 200, 0.3)',
+        griddash='dot',
         title_text="YTM (%)",
         row=1, col=1
     )
     fig.update_yaxes(
         showgrid=True,
         gridwidth=1,
-        gridcolor='rgba(200, 200, 200, 0.4)',
+        gridcolor='rgba(200, 200, 200, 0.3)',
+        griddash='dot',
         title_text="Спред (б.п.)",
         row=2, col=1
     )
