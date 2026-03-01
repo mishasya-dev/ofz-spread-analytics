@@ -820,11 +820,17 @@ def create_combined_ytm_chart(
     intraday_df2: pd.DataFrame,
     bond1_name: str,
     bond2_name: str,
+    candle_days: int = 30,
     x_range: Optional[Tuple] = None,
     future_percent: float = 0.15
 ) -> go.Figure:
     """
     Создать склеенный график YTM (история + свечи)
+    
+    Логика склейки:
+    - Граница = сегодня - candle_days
+    - До границы: дневные YTM (YIELDCLOSE)
+    - После границы: свечи YTM
     
     Args:
         daily_df1: DataFrame с дневными YTM облигации 1
@@ -833,30 +839,42 @@ def create_combined_ytm_chart(
         intraday_df2: DataFrame с intraday YTM облигации 2
         bond1_name: Название облигации 1
         bond2_name: Название облигации 2
+        candle_days: Период свечей в днях (определяет границу склейки)
         x_range: Диапазон оси X (для синхронизации)
         future_percent: Процент места для будущего
         
     Returns:
         Plotly Figure
     """
+    from datetime import datetime, timedelta
+    
     fig = go.Figure()
     
     # Облигация 1: история (тёмно-синий, пунктир) + свечи (ярко-синий, сплошная)
     ytm_col = 'ytm'
     ytm_intraday_col = 'ytm_close'
     
-    # История облигации 1 - пунктир, тёмный цвет
-    if not daily_df1.empty and ytm_col in daily_df1.columns:
-        fig.add_trace(go.Scatter(
-            x=daily_df1.index,
-            y=daily_df1[ytm_col],
-            name=f"{bond1_name} (дневн.)",
-            line=dict(color=BOND1_COLORS["history"], width=2, dash='dash'),
-            opacity=0.8,
-            hovertemplate=f'{bond1_name} (дневн.): %{{y:.2f}}%<extra></extra>'
-        ))
+    # Рассчитываем границу склейки
+    today = datetime.now().date()
+    boundary_date = today - timedelta(days=candle_days)
+    boundary_dt = pd.Timestamp(boundary_date)
     
-    # Intraday облигации 1 - сплошная, яркий цвет
+    # История облигации 1 - только до границы (пунктир, тёмный цвет)
+    if not daily_df1.empty and ytm_col in daily_df1.columns:
+        # Фильтруем: только данные до границы
+        daily_before_boundary = daily_df1[daily_df1.index < boundary_dt]
+        
+        if not daily_before_boundary.empty:
+            fig.add_trace(go.Scatter(
+                x=daily_before_boundary.index,
+                y=daily_before_boundary[ytm_col],
+                name=f"{bond1_name} (дневн.)",
+                line=dict(color=BOND1_COLORS["history"], width=2, dash='dash'),
+                opacity=0.8,
+                hovertemplate=f'{bond1_name} (дневн.): %{{y:.2f}}%<extra></extra>'
+            ))
+    
+    # Intraday облигации 1 - сплошная, яркий цвет (все данные)
     if not intraday_df1.empty and ytm_intraday_col in intraday_df1.columns:
         fig.add_trace(go.Scatter(
             x=intraday_df1.index,
@@ -866,18 +884,22 @@ def create_combined_ytm_chart(
             hovertemplate=f'{bond1_name} (свечи): %{{y:.2f}}%<extra></extra>'
         ))
     
-    # История облигации 2 - пунктир, тёмный цвет
+    # История облигации 2 - только до границы (пунктир, тёмный цвет)
     if not daily_df2.empty and ytm_col in daily_df2.columns:
-        fig.add_trace(go.Scatter(
-            x=daily_df2.index,
-            y=daily_df2[ytm_col],
-            name=f"{bond2_name} (дневн.)",
-            line=dict(color=BOND2_COLORS["history"], width=2, dash='dash'),
-            opacity=0.8,
-            hovertemplate=f'{bond2_name} (дневн.): %{{y:.2f}}%<extra></extra>'
-        ))
+        # Фильтруем: только данные до границы
+        daily_before_boundary = daily_df2[daily_df2.index < boundary_dt]
+        
+        if not daily_before_boundary.empty:
+            fig.add_trace(go.Scatter(
+                x=daily_before_boundary.index,
+                y=daily_before_boundary[ytm_col],
+                name=f"{bond2_name} (дневн.)",
+                line=dict(color=BOND2_COLORS["history"], width=2, dash='dash'),
+                opacity=0.8,
+                hovertemplate=f'{bond2_name} (дневн.): %{{y:.2f}}%<extra></extra>'
+            ))
     
-    # Intraday облигации 2 - сплошная, яркий цвет
+    # Intraday облигации 2 - сплошная, яркий цвет (все данные)
     if not intraday_df2.empty and ytm_intraday_col in intraday_df2.columns:
         fig.add_trace(go.Scatter(
             x=intraday_df2.index,
@@ -887,7 +909,7 @@ def create_combined_ytm_chart(
             hovertemplate=f'{bond2_name} (свечи): %{{y:.2f}}%<extra></extra>'
         ))
     
-    # Диапазон с будущим
+    # Диапазон с будущим (используем все данные для определения границ)
     all_indices = []
     for df in [daily_df1, daily_df2, intraday_df1, intraday_df2]:
         if df is not None and len(df) > 0:
@@ -898,8 +920,11 @@ def create_combined_ytm_chart(
         if x_min and x_max:
             fig.update_xaxes(range=[x_min, x_max])
     
+    # Подпись о границе склейки
+    boundary_str = boundary_date.strftime('%Y-%m-%d')
+    
     fig.update_layout(
-        title="📈 YTM (история + свечи)",
+        title=f"📈 YTM (история + свечи, граница: {boundary_str})",
         xaxis_title="Дата/Время",
         yaxis_title="YTM (%)",
         hovermode='x unified',

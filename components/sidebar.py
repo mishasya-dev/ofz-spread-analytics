@@ -7,6 +7,8 @@ import streamlit as st
 from typing import List, Dict, Any, Tuple, Callable, Optional
 from datetime import datetime
 
+from config import CANDLE_INTERVAL_CONFIG
+
 
 def get_bonds_list() -> List:
     """
@@ -122,26 +124,91 @@ def render_period_selector() -> int:
 
 def render_candle_interval_selector() -> str:
     """
-    Рендерит селектор интервала свечей для графиков 3+4
+    Рендерит radio-селектор интервала свечей для графиков 3+4
     
     Returns:
         Выбранный интервал ('1', '10', '60')
     """
     st.subheader("⏱️ Интервал свечей")
     
-    candle_interval = st.select_slider(
+    interval_options = {
+        "1": "1 мин",
+        "10": "10 мин", 
+        "60": "1 час"
+    }
+    
+    candle_interval = st.radio(
         "Интервал для графиков 3+4",
         options=["1", "10", "60"],
-        format_func=lambda x: {"1": "1 минута", "10": "10 минут", "60": "1 час"}[x],
-        value=st.session_state.candle_interval
+        format_func=lambda x: interval_options[x],
+        index=["1", "10", "60"].index(st.session_state.candle_interval),
+        horizontal=True,
+        label_visibility="collapsed"
     )
     st.session_state.candle_interval = candle_interval
     
-    # Информация о максимальном периоде
-    max_candle_days = {"1": 3, "10": 30, "60": 365}
-    st.caption(f"Макс. период для {candle_interval} мин: {max_candle_days[candle_interval]} дней")
-    
     return candle_interval
+
+
+def render_candle_period_selector(
+    candle_interval: str,
+    analysis_period: int
+) -> int:
+    """
+    Рендерит слайдер периода свечей с динамическими ограничениями
+    
+    Args:
+        candle_interval: Выбранный интервал свечей ('1', '10', '60')
+        analysis_period: Период анализа (ограничивает максимум)
+    
+    Returns:
+        Выбранный период свечей в днях
+    """
+    st.subheader("📊 Период свечей")
+    
+    config = CANDLE_INTERVAL_CONFIG[candle_interval]
+    
+    # Динамический максимум: минимум из настройки и периода анализа
+    max_days = min(config["max_days"], analysis_period)
+    min_days = config["min_days"]
+    
+    # Если максимум меньше минимума, корректируем
+    if max_days < min_days:
+        max_days = min_days
+    
+    # Значение по умолчанию - минимум
+    default_days = min_days
+    current_value = st.session_state.get('candle_days', default_days)
+    
+    # Корректируем текущее значение если оно вне диапазона
+    if current_value < min_days or current_value > max_days:
+        current_value = min_days
+    
+    # Форматирование для отображения
+    def format_days(x):
+        if x == 1:
+            return "1 день"
+        elif 2 <= x <= 4:
+            return f"{x} дня"
+        elif x >= 5:
+            return f"{x} дней"
+        return f"{x}"
+    
+    candle_days = st.slider(
+        "Период свечей (дней)",
+        min_value=min_days,
+        max_value=max_days,
+        value=current_value,
+        step=config["step_days"],
+        format=format_days
+    )
+    
+    st.session_state.candle_days = candle_days
+    
+    # Пояснение
+    st.caption(f"Макс. {config['max_days']} дн. для {config['name']} (ограничен периодом анализа: {analysis_period} дн.)")
+    
+    return candle_days
 
 
 def render_auto_refresh() -> bool:
@@ -231,7 +298,7 @@ def render_sidebar(
     fetch_trading_data_func: Callable,
     db_stats: Dict[str, int],
     on_update_db: Optional[Callable] = None
-) -> Tuple[int, int, int, str, bool]:
+) -> Tuple[int, int, int, str, int, bool]:
     """
     Рендерит полную боковую панель
     
@@ -243,7 +310,7 @@ def render_sidebar(
         on_update_db: Callback для обновления БД
     
     Returns:
-        Кортеж (bond1_idx, bond2_idx, period, candle_interval, auto_refresh)
+        Кортеж (bond1_idx, bond2_idx, period, candle_interval, candle_days, auto_refresh)
     """
     st.header("⚙️ Настройки")
     
@@ -274,13 +341,16 @@ def render_sidebar(
     
     st.divider()
     
-    # Период
+    # Период анализа
     period = render_period_selector()
     
     st.divider()
     
-    # Интервал свечей
+    # Интервал свечей (radio)
     candle_interval = render_candle_interval_selector()
+    
+    # Период свечей (слайдер с динамическими ограничениями)
+    candle_days = render_candle_period_selector(candle_interval, period)
     
     st.divider()
     
@@ -297,4 +367,4 @@ def render_sidebar(
     # Очистка кэша
     render_cache_clear()
     
-    return bond1_idx, bond2_idx, period, candle_interval, auto_refresh
+    return bond1_idx, bond2_idx, period, candle_interval, candle_days, auto_refresh

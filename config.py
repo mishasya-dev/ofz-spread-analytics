@@ -26,11 +26,32 @@ MOEX_BASE_URL = "https://iss.moex.com/iss"
 # КОНСТАНТЫ ИНТЕРВАЛОВ
 # ==========================================
 
-# Параметры интервалов свечей
-INTRADAY_INTERVALS = {
-    "1": {"max_days": 3, "default": 1, "name": "1 минута"},
-    "10": {"max_days": 60, "default": 7, "name": "10 минут"},
-    "60": {"max_days": 365, "default": 30, "name": "1 час"},
+# Параметры интервалов свечей для слайдера периода свечей
+CANDLE_INTERVAL_CONFIG = {
+    "1": {
+        "name": "1 минута",
+        "min_days": 1,
+        "max_days": 7,
+        "default_days": 1,
+        "step_days": 1,
+        "api_max_days": 3,  # MOEX API ограничение
+    },
+    "10": {
+        "name": "10 минут",
+        "min_days": 10,
+        "max_days": 90,
+        "default_days": 10,
+        "step_days": 1,
+        "api_max_days": 90,
+    },
+    "60": {
+        "name": "1 час",
+        "min_days": 30,
+        "max_days": 360,
+        "default_days": 30,
+        "step_days": 10,
+        "api_max_days": 365,
+    },
 }
 
 # Интервалы для обновления БД

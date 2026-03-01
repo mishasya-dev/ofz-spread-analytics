@@ -15,7 +15,7 @@ import os
 # Добавляем путь к модулям
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import AppConfig, BondConfig
+from config import AppConfig, BondConfig, CANDLE_INTERVAL_CONFIG
 from api.moex_history import HistoryFetcher
 from api.moex_candles import CandleFetcher, CandleInterval
 from core.database import get_db
@@ -197,6 +197,10 @@ def init_session_state():
     # Интервал свечей для графиков 3+4
     if 'candle_interval' not in st.session_state:
         st.session_state.candle_interval = "60"
+    
+    # Период свечей (динамический, зависит от интервала)
+    if 'candle_days' not in st.session_state:
+        st.session_state.candle_days = 30  # дефолт для 1 час
     
     # Zoom ranges для связанных графиков
     if 'daily_zoom_range' not in st.session_state:
@@ -618,19 +622,56 @@ def main():
         
         st.divider()
         
-        # Интервал свечей (для графиков 3+4)
+        # Интервал свечей (для графиков 3+4) - radio
         st.subheader("⏱️ Интервал свечей")
-        candle_interval = st.select_slider(
+        interval_options = {"1": "1 мин", "10": "10 мин", "60": "1 час"}
+        candle_interval = st.radio(
             "Интервал для графиков 3+4",
             options=["1", "10", "60"],
-            format_func=lambda x: {"1": "1 минута", "10": "10 минут", "60": "1 час"}[x],
-            value=st.session_state.candle_interval
+            format_func=lambda x: interval_options[x],
+            index=["1", "10", "60"].index(st.session_state.candle_interval),
+            horizontal=True,
+            label_visibility="collapsed"
         )
         st.session_state.candle_interval = candle_interval
         
-        # Информация о периоде для свечей
-        max_candle_days = {"1": 3, "10": 60, "60": 365}
-        st.caption(f"Макс. период для {candle_interval} мин: {max_candle_days[candle_interval]} дней")
+        # Период свечей (динамический слайдер)
+        st.subheader("📊 Период свечей")
+        candle_config = CANDLE_INTERVAL_CONFIG[candle_interval]
+        
+        # Динамический максимум: минимум из настройки и периода анализа
+        max_candle_days = min(candle_config["max_days"], period)
+        min_candle_days = candle_config["min_days"]
+        
+        # Корректируем если максимум меньше минимума
+        if max_candle_days < min_candle_days:
+            max_candle_days = min_candle_days
+        
+        # Текущее значение
+        current_candle_days = st.session_state.get('candle_days', min_candle_days)
+        if current_candle_days < min_candle_days or current_candle_days > max_candle_days:
+            current_candle_days = min_candle_days
+        
+        def format_days(x):
+            if x == 1:
+                return "1 день"
+            elif 2 <= x <= 4:
+                return f"{x} дня"
+            else:
+                return f"{x} дней"
+        
+        candle_days = st.slider(
+            "Период свечей (дней)",
+            min_value=min_candle_days,
+            max_value=max_candle_days,
+            value=current_candle_days,
+            step=candle_config["step_days"],
+            format_func=format_days
+        )
+        st.session_state.candle_days = candle_days
+        
+        # Пояснение
+        st.caption(f"Макс. {candle_config['max_days']} дн. для {candle_config['name']} (ограничен периодом анализа: {period} дн.)")
         
         st.divider()
         
@@ -720,7 +761,7 @@ def main():
         daily_df2 = fetch_historical_data_cached(bond2.isin, period)
         
         # Intraday данные (для графиков 3+4)
-        candle_days = min(period, {"1": 3, "10": 60, "60": 365}[candle_interval])
+        # candle_days уже установлен в sidebar
         intraday_df1 = fetch_candle_data_cached(bond1.isin, bond_config_to_dict(bond1), candle_interval, candle_days)
         intraday_df2 = fetch_candle_data_cached(bond2.isin, bond_config_to_dict(bond2), candle_interval, candle_days)
     
@@ -817,6 +858,7 @@ def main():
         daily_df1, daily_df2,
         intraday_df1, intraday_df2,
         bond1.name, bond2.name,
+        candle_days=candle_days,
         x_range=st.session_state.intraday_zoom_range
     )
     

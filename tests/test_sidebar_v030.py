@@ -118,7 +118,7 @@ class TestRenderCandleIntervalSelector(unittest.TestCase):
         """Возвращает валидный интервал (1, 10 или 60)"""
         from components.sidebar import render_candle_interval_selector
 
-        st_mock.select_slider = Mock(return_value='10')
+        st_mock.radio = Mock(return_value='10')
 
         result = render_candle_interval_selector()
 
@@ -130,7 +130,7 @@ class TestRenderCandleIntervalSelector(unittest.TestCase):
 
         from components.sidebar import render_candle_interval_selector
 
-        st_mock.select_slider = Mock(return_value='60')
+        st_mock.radio = Mock(return_value='60')
 
         result = render_candle_interval_selector()
 
@@ -142,37 +142,37 @@ class TestRenderCandleIntervalSelector(unittest.TestCase):
 
         from components.sidebar import render_candle_interval_selector
 
-        st_mock.select_slider = Mock(return_value='60')
+        st_mock.radio = Mock(return_value='60')
 
         render_candle_interval_selector()
 
         self.assertEqual(st_mock.session_state['candle_interval'], '60')
 
     def test_options_are_correct(self):
-        """Опции слайдера: 1, 10, 60"""
+        """Опции radio: 1, 10, 60"""
         from components.sidebar import render_candle_interval_selector
 
-        st_mock.select_slider = Mock(return_value='10')
+        st_mock.radio = Mock(return_value='10')
 
         render_candle_interval_selector()
 
-        call_args = st_mock.select_slider.call_args
+        call_args = st_mock.radio.call_args
         self.assertEqual(call_args[1]['options'], ['1', '10', '60'])
 
     def test_format_func_exists(self):
         """format_func преобразует в читаемый вид"""
         from components.sidebar import render_candle_interval_selector
 
-        st_mock.select_slider = Mock(return_value='10')
+        st_mock.radio = Mock(return_value='10')
 
         render_candle_interval_selector()
 
-        call_args = st_mock.select_slider.call_args
+        call_args = st_mock.radio.call_args
         format_func = call_args[1]['format_func']
 
         # Проверяем преобразование
-        self.assertEqual(format_func('1'), '1 минута')
-        self.assertEqual(format_func('10'), '10 минут')
+        self.assertEqual(format_func('1'), '1 мин')
+        self.assertEqual(format_func('10'), '10 мин')
         self.assertEqual(format_func('60'), '1 час')
 
 
