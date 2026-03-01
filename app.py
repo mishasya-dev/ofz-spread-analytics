@@ -629,11 +629,12 @@ def main():
         st.session_state.auto_refresh = auto_refresh
         
         if auto_refresh:
+            current_interval = st.session_state.refresh_interval or 60
             refresh_interval = st.slider(
                 "Интервал (сек)",
                 min_value=30,
                 max_value=300,
-                value=st.session_state.refresh_interval,
+                value=current_interval,
                 step=30
             )
             st.session_state.refresh_interval = refresh_interval
@@ -831,7 +832,8 @@ def main():
     # АВТООБНОВЛЕНИЕ
     # ==========================================
     if st.session_state.auto_refresh:
-        time.sleep(st.session_state.refresh_interval)
+        interval = st.session_state.refresh_interval or 60
+        time.sleep(interval)
         st.session_state.last_update = datetime.now()
         st.rerun()
 
