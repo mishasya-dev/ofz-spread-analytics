@@ -11,6 +11,7 @@ from typing import Dict, List, Any, Optional, Tuple
 import logging
 import sys
 import os
+import time
 
 # Добавляем путь к модулям
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -652,21 +653,13 @@ def main():
         if current_candle_days < min_candle_days or current_candle_days > max_candle_days:
             current_candle_days = min_candle_days
         
-        def format_days(x):
-            if x == 1:
-                return "1 день"
-            elif 2 <= x <= 4:
-                return f"{x} дня"
-            else:
-                return f"{x} дней"
-        
         candle_days = st.slider(
             "Период свечей (дней)",
             min_value=min_candle_days,
             max_value=max_candle_days,
             value=current_candle_days,
             step=candle_config["step_days"],
-            format_func=format_days
+            format="%d дн."
         )
         st.session_state.candle_days = candle_days
         
