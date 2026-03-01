@@ -1084,8 +1084,7 @@ def create_spread_analytics_chart(
     bond1_name: str,
     bond2_name: str,
     window: int = 30,
-    z_threshold: float = 2.0,
-    show_gaps: bool = True
+    z_threshold: float = 2.0
 ) -> go.Figure:
     """
     Создать профессиональную панель анализа спреда с Z-Score.
@@ -1101,12 +1100,10 @@ def create_spread_analytics_chart(
         bond2_name: Название облигации 2
         window: Окно для rolling расчётов (дней)
         z_threshold: Порог Z-Score для границ (обычно 2.0)
-        show_gaps: Показывать ли неторговые периоды
         
     Returns:
         Plotly Figure с двумя панелями
     """
-    from datetime import timedelta
     
     # Создаём subplot с двумя панелями
     fig = make_subplots(
@@ -1248,12 +1245,6 @@ def create_spread_analytics_chart(
                 ),
                 row=2, col=1
             )
-            
-            # Неторговые периоды
-            if show_gaps:
-                gaps = find_trading_gaps(pd.DatetimeIndex(dates), min_gap_days=2)
-                if gaps:
-                    fig = add_gap_rectangles(fig, gaps)
     
     # Оформление
     fig.update_layout(
