@@ -7,6 +7,7 @@
 - create_daily_spread_chart() — график спреда
 - create_combined_ytm_chart() — склеенный график
 - create_intraday_spread_chart() — intraday спред с референсом
+- create_spread_analytics_chart() — профессиональный анализ спреда с Z-Score
 
 Запуск:
     python3 tests/test_charts_v030.py
@@ -441,6 +442,179 @@ class TestApplyZoomRange(unittest.TestCase):
         self.assertEqual(result, fig)
 
 
+class TestSpreadAnalyticsChart(unittest.TestCase):
+    """Тесты для нового графика Spread Analytics с Z-Score"""
+
+    def setUp(self):
+        """Импортируем функцию"""
+        from components.charts import create_spread_analytics_chart
+        self.create_chart = create_spread_analytics_chart
+
+    def _create_sample_df(self, start_date, days, base_ytm=7.0, trend=0.01):
+        """Создать тестовый DataFrame с YTM"""
+        dates = pd.date_range(start=start_date, periods=days, freq='D')
+        # Линейный тренд + небольшой шум
+        ytm = base_ytm + trend * np.arange(days) + np.random.normal(0, 0.05, days)
+        return pd.DataFrame({'ytm': ytm}, index=dates)
+
+    def test_empty_dataframes(self):
+        """Пустые DataFrame возвращают Figure без данных"""
+        df1 = pd.DataFrame()
+        df2 = pd.DataFrame()
+        
+        fig = self.create_chart(df1, df2, "Bond1", "Bond2")
+        
+        # Figure создана, но без трасс
+        self.assertEqual(len(fig.data), 0)
+
+    def test_missing_ytm_column(self):
+        """DataFrame без колонки ytm возвращает пустой Figure"""
+        df1 = pd.DataFrame({'other': [1, 2, 3]}, index=pd.date_range('2024-01-01', periods=3))
+        df2 = pd.DataFrame({'other': [1, 2, 3]}, index=pd.date_range('2024-01-01', periods=3))
+        
+        fig = self.create_chart(df1, df2, "Bond1", "Bond2")
+        
+        self.assertEqual(len(fig.data), 0)
+
+    def test_basic_chart_structure(self):
+        """Базовая структура графика: 2 панели, трассы"""
+        np.random.seed(42)
+        df1 = self._create_sample_df('2024-01-01', 60, base_ytm=7.5)
+        df2 = self._create_sample_df('2024-01-01', 60, base_ytm=7.0)
+        
+        fig = self.create_chart(df1, df2, "ОФЗ 26221", "ОФЗ 26225", window=30)
+        
+        # Проверяем наличие трасс
+        self.assertGreater(len(fig.data), 0)
+        
+        # Проверяем наличие трасс YTM (2 облигации)
+        ytm_traces = [t for t in fig.data if 'ОФЗ' in t.name]
+        self.assertGreaterEqual(len(ytm_traces), 2)
+        
+        # Проверяем наличие MA трассы
+        ma_traces = [t for t in fig.data if 'MA' in t.name]
+        self.assertEqual(len(ma_traces), 1)
+        
+        # Проверяем наличие границ ±Zσ
+        sigma_traces = [t for t in fig.data if 'σ' in t.name]
+        self.assertEqual(len(sigma_traces), 2)  # +2σ и -2σ
+
+    def test_spread_calculation(self):
+        """Корректность расчёта спреда"""
+        np.random.seed(42)
+        df1 = self._create_sample_df('2024-01-01', 30, base_ytm=8.0, trend=0)
+        df2 = self._create_sample_df('2024-01-01', 30, base_ytm=7.0, trend=0)
+        
+        fig = self.create_chart(df1, df2, "Bond1", "Bond2", window=10)
+        
+        # Находим трассу спреда
+        spread_trace = [t for t in fig.data if t.name == "Спред"]
+        self.assertEqual(len(spread_trace), 1)
+        
+        # Спред должен быть около 100 б.п. (8% - 7% = 1% = 100 б.п.)
+        last_spread = spread_trace[0].y[-1]
+        self.assertAlmostEqual(last_spread, 100, delta=10)
+
+    def test_z_score_signal_colors(self):
+        """Цвета сигналов по Z-Score"""
+        np.random.seed(42)
+        
+        # Создаём данные с аномальным спредом
+        dates = pd.date_range('2024-01-01', periods=60, freq='D')
+        ytm1 = 7.0 + np.random.normal(0, 0.02, 60)
+        ytm2 = 7.0 + np.random.normal(0, 0.02, 60)
+        
+        # Добавляем аномалию в конце (большой спред)
+        ytm1[-5:] = ytm1[-5:] + 0.5  # +50 б.п. аномалия
+        
+        df1 = pd.DataFrame({'ytm': ytm1}, index=dates)
+        df2 = pd.DataFrame({'ytm': ytm2}, index=dates)
+        
+        fig = self.create_chart(df1, df2, "Bond1", "Bond2", window=30, z_threshold=2.0)
+        
+        # Проверяем что текущая точка добавлена
+        marker_trace = [t for t in fig.data if 'Текущий' in t.name]
+        self.assertEqual(len(marker_trace), 1)
+        
+        # Цвет должен быть красным (SELL) при высоком Z-score
+        marker_color = marker_trace[0].marker['color']
+        self.assertEqual(marker_color, 'red')
+
+    def test_custom_window_and_threshold(self):
+        """Кастомные параметры window и z_threshold"""
+        np.random.seed(42)
+        df1 = self._create_sample_df('2024-01-01', 90, base_ytm=7.5)
+        df2 = self._create_sample_df('2024-01-01', 90, base_ytm=7.0)
+        
+        fig = self.create_chart(df1, df2, "Bond1", "Bond2", window=60, z_threshold=1.5)
+        
+        # Проверяем что границы соответствуют порогу
+        sigma_traces = [t for t in fig.data if 'σ' in t.name]
+        for t in sigma_traces:
+            self.assertIn('1.5', t.name)
+
+    def test_duplicate_indices_handling(self):
+        """Обработка дублирующихся индексов"""
+        np.random.seed(42)
+        
+        # DataFrame с дубликатами в индексе
+        dates_with_dupes = list(pd.date_range('2024-01-01', periods=30, freq='D')) + \
+                          [pd.Timestamp('2024-01-15')]  # Дубликат
+        
+        df1 = pd.DataFrame({'ytm': np.random.normal(7.5, 0.1, 31)}, index=dates_with_dupes)
+        df2 = pd.DataFrame({'ytm': np.random.normal(7.0, 0.1, 31)}, index=dates_with_dupes)
+        
+        # Не должно быть ошибки
+        fig = self.create_chart(df1, df2, "Bond1", "Bond2")
+        
+        self.assertGreater(len(fig.data), 0)
+
+    def test_different_date_ranges(self):
+        """Разные диапазоны дат в DataFrame"""
+        np.random.seed(42)
+        
+        # df1: 60 дней
+        df1 = self._create_sample_df('2024-01-01', 60, base_ytm=7.5)
+        # df2: 30 дней (позже начат)
+        df2 = self._create_sample_df('2024-01-15', 30, base_ytm=7.0)
+        
+        fig = self.create_chart(df1, df2, "Bond1", "Bond2", window=10)
+        
+        # График создан по пересечению дат
+        self.assertGreater(len(fig.data), 0)
+
+    def test_grid_style(self):
+        """Сетка пунктиром на обеих панелях"""
+        np.random.seed(42)
+        df1 = self._create_sample_df('2024-01-01', 30, base_ytm=7.5)
+        df2 = self._create_sample_df('2024-01-01', 30, base_ytm=7.0)
+        
+        fig = self.create_chart(df1, df2, "Bond1", "Bond2")
+        
+        # Проверяем настройки осей
+        # Сетка должна быть включена
+        self.assertTrue(fig.layout.xaxis.showgrid)
+        self.assertTrue(fig.layout.yaxis.showgrid)
+        
+        # Пунктир
+        self.assertEqual(fig.layout.xaxis.griddash, 'dot')
+        self.assertEqual(fig.layout.yaxis.griddash, 'dot')
+
+    def test_layout_title_and_labels(self):
+        """Заголовок и подписи осей"""
+        np.random.seed(42)
+        df1 = self._create_sample_df('2024-01-01', 30, base_ytm=7.5)
+        df2 = self._create_sample_df('2024-01-01', 30, base_ytm=7.0)
+        
+        fig = self.create_chart(df1, df2, "Bond1", "Bond2")
+        
+        # Заголовок
+        self.assertIn('анализ', fig.layout.title.text.lower())
+        
+        # Высота графика
+        self.assertEqual(fig.layout.height, 700)
+
+
 def run_tests():
     """Запуск всех тестов"""
     loader = unittest.TestLoader()
@@ -452,6 +626,7 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestCombinedYtmChart))
     suite.addTests(loader.loadTestsFromTestCase(TestIntradaySpreadChart))
     suite.addTests(loader.loadTestsFromTestCase(TestApplyZoomRange))
+    suite.addTests(loader.loadTestsFromTestCase(TestSpreadAnalyticsChart))
 
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
