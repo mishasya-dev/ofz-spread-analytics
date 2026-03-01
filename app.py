@@ -629,7 +629,7 @@ def main():
         st.session_state.candle_interval = candle_interval
         
         # Информация о периоде для свечей
-        max_candle_days = {"1": 3, "10": 30, "60": 365}
+        max_candle_days = {"1": 3, "10": 60, "60": 365}
         st.caption(f"Макс. период для {candle_interval} мин: {max_candle_days[candle_interval]} дней")
         
         st.divider()
@@ -720,7 +720,7 @@ def main():
         daily_df2 = fetch_historical_data_cached(bond2.isin, period)
         
         # Intraday данные (для графиков 3+4)
-        candle_days = min(period, {"1": 3, "10": 30, "60": 365}[candle_interval])
+        candle_days = min(period, {"1": 3, "10": 60, "60": 365}[candle_interval])
         intraday_df1 = fetch_candle_data_cached(bond1.isin, bond_config_to_dict(bond1), candle_interval, candle_days)
         intraday_df2 = fetch_candle_data_cached(bond2.isin, bond_config_to_dict(bond2), candle_interval, candle_days)
     

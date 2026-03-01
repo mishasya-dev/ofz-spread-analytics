@@ -29,7 +29,7 @@ MOEX_BASE_URL = "https://iss.moex.com/iss"
 # Параметры интервалов свечей
 INTRADAY_INTERVALS = {
     "1": {"max_days": 3, "default": 1, "name": "1 минута"},
-    "10": {"max_days": 30, "default": 7, "name": "10 минут"},
+    "10": {"max_days": 60, "default": 7, "name": "10 минут"},
     "60": {"max_days": 365, "default": 30, "name": "1 час"},
 }
 
