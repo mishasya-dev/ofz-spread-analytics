@@ -1265,10 +1265,29 @@ def create_spread_analytics_chart(
             x=1
         )
     )
-    
-    fig.update_yaxes(title_text="YTM (%)", row=1, col=1)
-    fig.update_yaxes(title_text="Спред (б.п.)", row=2, col=1)
-    fig.update_xaxes(title_text="Дата", row=2, col=1)
+
+    # Сетка
+    fig.update_xaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(200, 200, 200, 0.4)',
+        title_text="Дата",
+        row=2, col=1
+    )
+    fig.update_yaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(200, 200, 200, 0.4)',
+        title_text="YTM (%)",
+        row=1, col=1
+    )
+    fig.update_yaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(200, 200, 200, 0.4)',
+        title_text="Спред (б.п.)",
+        row=2, col=1
+    )
     
     return fig
 
