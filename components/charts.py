@@ -1074,6 +1074,210 @@ def create_intraday_spread_chart(
     return fig
 
 
+# ============================================
+# ПРОФЕССИОНАЛЬНЫЙ АНАЛИЗ СПРЕДА (Z-Score)
+# ============================================
+
+def create_spread_analytics_chart(
+    df1: pd.DataFrame,
+    df2: pd.DataFrame,
+    bond1_name: str,
+    bond2_name: str,
+    window: int = 30,
+    z_threshold: float = 2.0,
+    show_gaps: bool = True
+) -> go.Figure:
+    """
+    Создать профессиональную панель анализа спреда с Z-Score.
+    
+    Две панели:
+    1. Доходности YTM обеих облигаций
+    2. Спред + Rolling Mean + ±Z Sigma границы
+    
+    Args:
+        df1: DataFrame с YTM облигации 1 (длинная)
+        df2: DataFrame с YTM облигации 2 (короткая)
+        bond1_name: Название облигации 1
+        bond2_name: Название облигации 2
+        window: Окно для rolling расчётов (дней)
+        z_threshold: Порог Z-Score для границ (обычно 2.0)
+        show_gaps: Показывать ли неторговые периоды
+        
+    Returns:
+        Plotly Figure с двумя панелями
+    """
+    from datetime import timedelta
+    
+    # Создаём subplot с двумя панелями
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        row_heights=[0.5, 0.5],
+        subplot_titles=(
+            "Доходности YTM",
+            f"Анализ спреда (Rolling {window} дн., Z-Score ±{z_threshold})"
+        )
+    )
+    
+    ytm_col = 'ytm'
+    
+    # --- Подготовка данных ---
+    if not df1.empty and ytm_col in df1.columns and not df2.empty and ytm_col in df2.columns:
+        combined = pd.DataFrame({
+            'ytm_long': df1[ytm_col],
+            'ytm_short': df2[ytm_col]
+        }).dropna()
+        
+        if len(combined) > 0:
+            # Расчёт спреда
+            combined['spread'] = (combined['ytm_long'] - combined['ytm_short']) * 100  # б.п.
+            
+            # Rolling статистика
+            combined['rolling_mean'] = combined['spread'].rolling(window=window).mean()
+            combined['rolling_std'] = combined['spread'].rolling(window=window).std()
+            combined['z_score'] = (combined['spread'] - combined['rolling_mean']) / combined['rolling_std']
+            
+            # Границы ±Z sigma
+            combined['upper_band'] = combined['rolling_mean'] + z_threshold * combined['rolling_std']
+            combined['lower_band'] = combined['rolling_mean'] - z_threshold * combined['rolling_std']
+            
+            dates = combined.index
+            
+            # --- ПАНЕЛЬ 1: Доходности ---
+            fig.add_trace(
+                go.Scatter(
+                    x=dates,
+                    y=combined['ytm_long'],
+                    name=bond1_name,
+                    line=dict(color=BOND1_COLORS["history"], width=2),
+                    hovertemplate=f'{bond1_name}: %{{y:.2f}}%<extra></extra>'
+                ),
+                row=1, col=1
+            )
+            
+            fig.add_trace(
+                go.Scatter(
+                    x=dates,
+                    y=combined['ytm_short'],
+                    name=bond2_name,
+                    line=dict(color=BOND2_COLORS["history"], width=2),
+                    hovertemplate=f'{bond2_name}: %{{y:.2f}}%<extra></extra>'
+                ),
+                row=1, col=1
+            )
+            
+            # --- ПАНЕЛЬ 2: Спред и анализ ---
+            # Верхняя граница
+            fig.add_trace(
+                go.Scatter(
+                    x=dates,
+                    y=combined['upper_band'],
+                    name=f"+{z_threshold}σ",
+                    line=dict(color='rgba(255, 0, 0, 0.4)', dash='dot', width=1),
+                    showlegend=True
+                ),
+                row=2, col=1
+            )
+            
+            # Нижняя граница с заливкой
+            fig.add_trace(
+                go.Scatter(
+                    x=dates,
+                    y=combined['lower_band'],
+                    name=f"-{z_threshold}σ",
+                    line=dict(color='rgba(0, 180, 0, 0.4)', dash='dot', width=1),
+                    fill='tonexty',
+                    fillcolor='rgba(128, 128, 128, 0.08)',
+                    showlegend=True
+                ),
+                row=2, col=1
+            )
+            
+            # Rolling Mean
+            fig.add_trace(
+                go.Scatter(
+                    x=dates,
+                    y=combined['rolling_mean'],
+                    name=f"MA({window})",
+                    line=dict(color='gray', dash='dash', width=1),
+                    hovertemplate='MA: %{y:.1f} б.п.<extra></extra>'
+                ),
+                row=2, col=1
+            )
+            
+            # Спред
+            fig.add_trace(
+                go.Scatter(
+                    x=dates,
+                    y=combined['spread'],
+                    name="Спред",
+                    line=dict(color=SPREAD_COLOR, width=2),
+                    hovertemplate='Спред: %{y:.1f} б.п.<extra></extra>'
+                ),
+                row=2, col=1
+            )
+            
+            # Текущая точка с сигналом
+            last_spread = combined['spread'].iloc[-1]
+            last_zscore = combined['z_score'].iloc[-1]
+            last_date = dates[-1]
+            
+            # Цвет по Z-Score
+            if last_zscore > z_threshold:
+                marker_color = 'red'
+                signal = "ПРОДАВАТЬ"
+            elif last_zscore < -z_threshold:
+                marker_color = 'green'
+                signal = "ПОКУПАТЬ"
+            else:
+                marker_color = 'gray'
+                signal = "Нейтрально"
+            
+            fig.add_trace(
+                go.Scatter(
+                    x=[last_date],
+                    y=[last_spread],
+                    mode='markers+text',
+                    marker=dict(size=12, color=marker_color, symbol='diamond'),
+                    text=[f"Z={last_zscore:.1f}"],
+                    textposition="top center",
+                    textfont=dict(size=10, color=marker_color),
+                    name=f"Текущий: {last_spread:.1f} б.п.",
+                    hovertemplate=f'{signal}<br>Спред: {last_spread:.1f} б.п.<br>Z: {last_zscore:.2f}<extra></extra>'
+                ),
+                row=2, col=1
+            )
+            
+            # Неторговые периоды
+            if show_gaps:
+                gaps = find_trading_gaps(pd.DatetimeIndex(dates), min_gap_days=2)
+                if gaps:
+                    fig = add_gap_rectangles(fig, gaps)
+    
+    # Оформление
+    fig.update_layout(
+        title="📊 Профессиональный анализ спреда",
+        template="plotly_white",
+        height=700,
+        hovermode='x unified',
+        margin=dict(l=60, r=30, t=60, b=40),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
+    )
+    
+    fig.update_yaxes(title_text="YTM (%)", row=1, col=1)
+    fig.update_yaxes(title_text="Спред (б.п.)", row=2, col=1)
+    fig.update_xaxes(title_text="Дата", row=2, col=1)
+    
+    return fig
+
+
 def apply_zoom_range(fig: go.Figure, x_range: Optional[Tuple]) -> go.Figure:
     """
     Применить диапазон zoom к графику
