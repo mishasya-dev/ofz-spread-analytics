@@ -172,9 +172,10 @@ def render_candle_period_selector(
     max_days = min(config["max_days"], analysis_period)
     min_days = config["min_days"]
     
-    # Если максимум меньше минимума, корректируем
-    if max_days < min_days:
-        max_days = min_days
+    # Если максимум меньше или равен минимуму, корректируем
+    # (слайдер требует min < max)
+    if max_days <= min_days:
+        min_days = max(1, max_days - 1)
     
     # Значение по умолчанию - минимум
     default_days = min_days
