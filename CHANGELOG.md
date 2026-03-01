@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.3.1] - 2026-03-01
+
+### Added
+- **Spread Analytics Chart**: Professional two-panel chart with Z-Score analysis
+  - Panel 1: YTM of both bonds (daily data)
+  - Panel 2: Spread with Rolling Mean and ±Zσ boundaries
+  - Configurable rolling window (5-90 days, default 30)
+  - Configurable Z-Score threshold (1.0-3.0σ, default 2.0)
+  - Color-coded signals: GREEN (BUY), RED (SELL), GRAY (Neutral)
+  - Current point marker with Z-Score label
+- **+11 New Tests**: Comprehensive tests for `create_spread_analytics_chart()`
+
+### Changed
+- **UI Simplified**: Removed redundant charts 1-2 (daily YTM and spread)
+- **Chart Renumbering**: Intraday charts now numbered 2-3
+- **Grid Style**: Changed to dotted grid on Spread Analytics chart
+
+### Fixed
+- **Slider Error**: Fixed `min_value == max_value` (30 == 30) crash
+- **Duplicate Indices**: Fixed `cannot reindex on an axis with duplicate labels` error
+
 ## [v0.3.0] - 2026-02-28
 
 ### Added

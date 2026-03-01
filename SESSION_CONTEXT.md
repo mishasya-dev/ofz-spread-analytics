@@ -1,122 +1,136 @@
-# Session Context - 28.02.2026
+# Session Context - 01.03.2026
 
 ## Project State
 
 ### Git Information
 - **Repository**: https://github.com/mishasya-dev/ofz-spread-analytics
 - **Branch**: `feature/v0.3.0-unified-charts`
-- **Last Commit**: `70c2bd2` - fix: НКД теперь рассчитывается на дату каждой свечи
-- **Previous Commit**: `38977b8` - v0.3.0-tests: +77 новых тестов
+- **Last Commit**: `648ead8` - test: add 11 tests for create_spread_analytics_chart
+- **Previous Commit**: `34c2d1b` - refactor: remove redundant charts 1-2
 
 ### Test Results
 ```
-Total: 287 tests
-Passed: 275
-Errors: 12 (Playwright UI - require browser setup)
+Total: 38 tests in test_charts_v030.py
+Passed: 38
+Failed: 0
 ```
 
 ### Database Status
 - **Location**: `streamlit-app/data/ofz_data.db`
 - **Tables**: bonds, daily_ytm, intraday_ytm, spreads
 - **Bonds Tracked**: 16
-- **Daily YTM Records**: ~821
 
 ## Work Completed This Session
 
-### 1. Bug Fix: NKD Calculation
+### 1. New Feature: Spread Analytics Chart with Z-Score
 
-**Problem**: YTM calculated from candle prices diverged from MOEX historical data.
+**Created**: `create_spread_analytics_chart()` in `components/charts.py`
 
-**Root Cause**: NKD (accrued interest) was fetched once from MOEX and used for all historical candles.
+Two-panel chart:
+- Panel 1: YTM of both bonds (daily)
+- Panel 2: Spread + Rolling Mean + ±Zσ boundaries
 
-**Fix**:
-- Added `calculate_accrued_interest_for_date()` method
-- Added `_find_last_coupon_date()` helper
-- NKD now calculated for each candle's date
+Features:
+- Rolling window (configurable, default 30 days)
+- Z-Score threshold (configurable, default ±2.0)
+- Signal colors: GREEN (BUY), RED (SELL), GRAY (Neutral)
+- Current point marker with Z-Score label
+- Dotted grid on both panels
 
-**Files Modified**:
-- `api/moex_candles.py`
-- `core/ytm_calculator.py`
+### 2. UI Refactoring
 
-### 2. New Tests (+77)
+**Removed redundant charts**:
+- Deleted `create_daily_ytm_chart` and `create_daily_spread_chart` from UI
+- Removed `daily_zoom_range` session state
+- Renamed remaining charts (3→2, 4→3)
 
-Created 3 new test files:
+**New UI Structure**:
+```
+📊 Metrics (YTM, Spread, Signal)
+─────────────────────────────────
+📊 Chart 1: Spread Analytics (Z-Score)
+─────────────────────────────────
+📊 Chart 2: Combined YTM (history + intraday)
+📊 Chart 3: Intraday Spread
+```
 
-| File | Tests | Coverage |
-|------|-------|----------|
-| `test_app_integration.py` | 30 | calculate_spread_stats, generate_signal, prepare_spread_dataframe |
-| `test_edge_cases.py` | 25 | Empty data, NaN handling, single data point |
-| `test_linked_zoom.py` | 22 | Zoom synchronization, independence |
+### 3. Bug Fixes
 
-### 3. Documentation
+1. **Slider Error**: Fixed `min_value == max_value` (30 == 30) error
+2. **Duplicate Indices**: Fixed `cannot reindex on an axis with duplicate labels` in spread analytics chart
+3. **Grid Style**: Changed from solid to dotted grid (matching charts 1-2)
 
-Created:
-- `README.md` - Project documentation
-- `CHANGELOG.md` - Version history
+### 4. New Tests (+11)
+
+Added `TestSpreadAnalyticsChart` class with tests:
+- Empty and missing data handling
+- Basic chart structure
+- Spread calculation accuracy
+- Z-Score signal colors
+- Custom parameters
+- Duplicate indices
+- Grid style
+- Layout verification
 
 ## Key Files Reference
 
 ### Modified Files
 ```
-api/moex_candles.py     - NKD calculation per candle date
-core/ytm_calculator.py  - New methods: calculate_accrued_interest_for_date(), _find_last_coupon_date()
+components/charts.py  - New function: create_spread_analytics_chart()
+app.py                - Removed charts 1-2, updated UI structure
+components/sidebar.py - Fixed slider min_value <= max_days bug
 ```
 
-### New Test Files
+### Test Files
 ```
-tests/test_app_integration.py
-tests/test_edge_cases.py
-tests/test_linked_zoom.py
-```
-
-### Documentation Files
-```
-README.md
-CHANGELOG.md
-worklog.md (updated)
-SESSION_CONTEXT.md (this file)
+tests/test_charts_v030.py  - Added TestSpreadAnalyticsChart class
 ```
 
 ## Technical Details
 
-### NKD Calculation Formula
+### Z-Score Calculation
 ```
-NKD = (Face Value × Coupon Rate / Frequency) × Days Since Last Coupon / Days Between Coupons
+Z-Score = (spread - rolling_mean) / rolling_std
+
+Signals:
+- Z > +threshold → SELL (spread too high, expect narrowing)
+- Z < -threshold → BUY (spread too low, expect widening)
+- Otherwise → NEUTRAL
 ```
 
-### Example NKD Values (OFZ 26207, coupon 8.15%)
-| Date | NKD (rubles) |
-|------|--------------|
-| 2025-04-04 | 13.43 |
-| 2025-08-01 | 40.08 |
-| 2025-08-05 | 0.45 (after coupon payment) |
+### Chart Configuration (Sidebar)
+| Parameter | Range | Default |
+|-----------|-------|---------|
+| Rolling Window | 5-90 days | 30 |
+| Z-Score Threshold | 1.0-3.0σ | 2.0 |
 
 ### Chart Color Scheme
-| Element | History | Intraday |
-|---------|---------|----------|
-| Bond 1 | #1a5276 (dark blue) | #3498DB (bright blue) |
-| Bond 2 | #922B21 (dark red) | #E74C3C (bright red) |
-| Spread | #9B59B6 (purple) | - |
+| Element | Color |
+|---------|-------|
+| +Zσ boundary | rgba(255, 0, 0, 0.4) red dotted |
+| -Zσ boundary | rgba(0, 180, 0, 0.4) green dotted |
+| Rolling Mean | gray dashed |
+| Spread line | #9B59B6 (purple) |
+| BUY signal | green marker |
+| SELL signal | red marker |
+| Neutral | gray marker |
 
-## Next Steps
+## Branch Status
 
-### Recommended
-1. Merge `feature/v0.3.0-unified-charts` into main
-2. Add more bonds to tracking (currently 16)
-3. Set up Playwright for UI tests
+### feature/v0.3.0-unified-charts (current)
+- All changes committed and pushed
+- Ready for testing/review
 
-### Future Features (documented in FUTURE_FEATURES.md)
-- Price alerts
-- Export to Excel
-- Backtesting module
-- Telegram notifications
+### stable
+- Updated with slider fix
+- Tag: v0.3.0-stable
 
 ## Notes for Next Session
 
 - Working directory: `/home/z/my-project/streamlit-app/`
-- Run tests: `python -m pytest tests/ -v`
+- Run tests: `python tests/test_charts_v030.py`
 - Start app: `streamlit run app.py`
 - Database: `data/ofz_data.db`
 
 ---
-*Session saved: 2026-02-28 14:40 UTC*
+*Session saved: 2026-03-01 13:50 UTC*
