@@ -596,6 +596,11 @@ def main():
             else:
                 bond_labels.append(format_bond_label(b))
         
+        # Проверка и корректировка индексов (гарантируем валидный диапазон)
+        max_idx = len(bonds) - 1
+        st.session_state.selected_bond1 = max(0, min(st.session_state.selected_bond1, max_idx))
+        st.session_state.selected_bond2 = max(0, min(st.session_state.selected_bond2, max_idx))
+        
         # Выбор облигаций
         bond1_idx = st.selectbox(
             "Облигация 1",
