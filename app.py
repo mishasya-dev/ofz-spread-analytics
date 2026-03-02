@@ -766,6 +766,15 @@ def main():
         # Валидация YTM
         st.subheader("🔍 Валидация YTM")
         
+        # Количество дней для проверки
+        validation_days = st.slider(
+            "Дней для проверки",
+            min_value=1,
+            max_value=30,
+            value=5,
+            step=1
+        )
+        
         # Получаем текущие облигации для валидации
         bond1_for_val = bonds[bond1_idx] if bonds else None
         bond2_for_val = bonds[bond2_idx] if len(bonds) > 1 else None
@@ -788,13 +797,13 @@ def main():
             all_valid = True
             
             if bond1_for_val:
-                v1 = ytm_repo.validate_ytm_accuracy(bond1_for_val.isin, candle_interval)
+                v1 = ytm_repo.validate_ytm_accuracy(bond1_for_val.isin, candle_interval, validation_days)
                 results.append((bond1_for_val.name, v1))
                 if not v1['valid']:
                     all_valid = False
             
             if bond2_for_val:
-                v2 = ytm_repo.validate_ytm_accuracy(bond2_for_val.isin, candle_interval)
+                v2 = ytm_repo.validate_ytm_accuracy(bond2_for_val.isin, candle_interval, validation_days)
                 results.append((bond2_for_val.name, v2))
                 if not v2['valid']:
                     all_valid = False
@@ -810,13 +819,20 @@ def main():
                 for bond_name, v in validation_state['results']:
                     if v.get('reason'):
                         st.info(f"**{bond_name}**: {v['reason']}")
-                    elif v.get('calculated') is not None:
+                    elif v.get('days_checked', 0) > 0:
                         status = "✅" if v['valid'] else "⚠️"
                         st.write(f"**{bond_name}**: {status}")
-                        st.write(f"  • Официальный: {v['official']:.4f}%")
-                        st.write(f"  • Расчётный: {v['calculated']:.4f}%")
-                        st.write(f"  • Расхождение: {v['diff_bp']:.2f} б.п.")
-                        st.write(f"  • Дата: {v['date']}")
+                        st.write(f"  • Проверено дней: {v['days_checked']}")
+                        st.write(f"  • Валидных дней: {v['valid_days']}/{v['days_checked']}")
+                        st.write(f"  • Среднее расхождение: {v['avg_diff_bp']:.2f} б.п.")
+                        st.write(f"  • Max расхождение: {v['max_diff_bp']:.2f} б.п. ({v['max_diff_date']})")
+                        
+                        # Таблица по дням
+                        if v.get('details'):
+                            st.write("  **По дням:**")
+                            for d in v['details']:
+                                day_status = "✅" if d['valid'] else "⚠️"
+                                st.write(f"    {day_status} {d['date']}: {d['diff_bp']:.2f} б.п. (расч={d['calculated']:.4f}, офиц={d['official']:.4f})")
     
     # ==========================================
     # ЗАГОЛОВОК

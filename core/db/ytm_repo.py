@@ -375,72 +375,127 @@ class YTMRepository:
 
         return row['ytm'] if row else None
 
-    def validate_ytm_accuracy(self, isin: str, interval: str = "60") -> Dict:
+    def validate_ytm_accuracy(self, isin: str, interval: str = "60", days: int = 5) -> Dict:
         """
-        Сравнить YTM последней свечи дня с официальным YIELDCLOSE
+        Сравнить YTM последних свечей с официальным YIELDCLOSE за несколько дней
 
         Args:
             isin: ISIN облигации
             interval: Интервал свечей
+            days: Количество дней для проверки
 
         Returns:
             {
                 'valid': bool,
-                'diff_bp': float,
-                'calculated': float,
-                'official': float,
-                'date': date,
-                'reason': str  # если нет данных
+                'days_checked': int,
+                'avg_diff_bp': float,
+                'max_diff_bp': float,
+                'max_diff_date': date,
+                'details': [
+                    {
+                        'date': date,
+                        'calculated': float,
+                        'official': float,
+                        'diff_bp': float,
+                        'valid': bool
+                    }, ...
+                ]
             }
         """
-        # Последняя полная торговая сессия (вчера)
-        yesterday = date.today() - timedelta(days=1)
+        conn = get_connection()
+        cursor = conn.cursor()
 
-        # 1. Официальный YIELDCLOSE
-        official_ytm = self.get_daily_ytm_for_date(isin, yesterday)
+        # Получаем последние N дней с YIELDCLOSE
+        cursor.execute('''
+            SELECT date, ytm FROM daily_ytm
+            WHERE isin = ?
+            ORDER BY date DESC
+            LIMIT ?
+        ''', (isin, days))
 
-        # 2. YTM последней свечи за вчера
-        calculated_ytm = self.get_last_candle_ytm(isin, interval, yesterday)
+        daily_rows = cursor.fetchall()
 
-        # Проверка наличия данных
-        if official_ytm is None and calculated_ytm is None:
+        if not daily_rows:
+            conn.close()
             return {
                 'valid': True,
-                'diff_bp': 0,
-                'calculated': None,
-                'official': None,
-                'date': yesterday,
-                'reason': 'no_data'
+                'days_checked': 0,
+                'avg_diff_bp': 0,
+                'max_diff_bp': 0,
+                'max_diff_date': None,
+                'details': [],
+                'reason': 'no_daily_data'
             }
 
-        if official_ytm is None:
+        details = []
+        total_diff = 0
+        max_diff = 0
+        max_diff_date = None
+        valid_days = 0
+        days_checked = 0
+
+        for row in daily_rows:
+            day_date = datetime.strptime(row['date'], '%Y-%m-%d').date()
+            official_ytm = row['ytm']
+
+            # Пропускаем сегодня (неполный торговый день)
+            if day_date >= date.today():
+                continue
+
+            # Получаем YTM последней свечи за этот день
+            cursor.execute('''
+                SELECT ytm FROM intraday_ytm
+                WHERE isin = ? AND interval = ? AND date(datetime) = ?
+                ORDER BY datetime DESC
+                LIMIT 1
+            ''', (isin, interval, row['date']))
+
+            candle_row = cursor.fetchone()
+
+            if candle_row and official_ytm is not None:
+                calculated_ytm = candle_row['ytm']
+                diff_bp = abs(calculated_ytm - official_ytm) * 100
+                is_valid = diff_bp <= 5.0
+
+                details.append({
+                    'date': day_date,
+                    'calculated': round(calculated_ytm, 4),
+                    'official': round(official_ytm, 4),
+                    'diff_bp': round(diff_bp, 2),
+                    'valid': is_valid
+                })
+
+                total_diff += diff_bp
+                days_checked += 1
+
+                if diff_bp > max_diff:
+                    max_diff = diff_bp
+                    max_diff_date = day_date
+
+                if is_valid:
+                    valid_days += 1
+
+        conn.close()
+
+        if days_checked == 0:
             return {
                 'valid': True,
-                'diff_bp': 0,
-                'calculated': calculated_ytm,
-                'official': None,
-                'date': yesterday,
-                'reason': 'no_official_ytm'
+                'days_checked': 0,
+                'avg_diff_bp': 0,
+                'max_diff_bp': 0,
+                'max_diff_date': None,
+                'details': [],
+                'reason': 'no_matching_data'
             }
 
-        if calculated_ytm is None:
-            return {
-                'valid': True,
-                'diff_bp': 0,
-                'calculated': None,
-                'official': official_ytm,
-                'date': yesterday,
-                'reason': 'no_candle_ytm'
-            }
-
-        # Расчёт расхождения
-        diff_bp = abs(calculated_ytm - official_ytm) * 100
+        avg_diff = total_diff / days_checked
 
         return {
-            'valid': diff_bp <= 5.0,
-            'diff_bp': round(diff_bp, 2),
-            'calculated': round(calculated_ytm, 4),
-            'official': round(official_ytm, 4),
-            'date': yesterday,
-            'reason': None
+            'valid': valid_days == days_checked,  # Все дни должны быть валидны
+            'days_checked': days_checked,
+            'valid_days': valid_days,
+            'avg_diff_bp': round(avg_diff, 2),
+            'max_diff_bp': round(max_diff, 2),
+            'max_diff_date': max_diff_date,
+            'details': details
         }
