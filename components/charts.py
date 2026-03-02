@@ -931,7 +931,7 @@ def create_combined_ytm_chart(
             name=f"{bond1_name} (дневн.)",
             line=dict(color=BOND1_COLORS["history"], width=2, dash='dash'),
             opacity=0.8,
-            hovertemplate=f'{bond1_name}: %{{y:.2f}}%<br>%{{text}}<extra></extra>',
+            hovertemplate=f'<b>%{{text}}</b><br>{bond1_name}: %{{y:.2f}}%<extra></extra>',
             text=[p['label'] for p in history_points]
         ))
     
@@ -942,7 +942,7 @@ def create_combined_ytm_chart(
             y=[p['ytm1'] for p in intraday_points],
             name=f"{bond1_name} (свечи)",
             line=dict(color=BOND1_COLORS["intraday"], width=2),
-            hovertemplate=f'{bond1_name}: %{{y:.2f}}%<br>%{{text}}<extra></extra>',
+            hovertemplate=f'<b>%{{text}}</b><br>{bond1_name}: %{{y:.2f}}%<extra></extra>',
             text=[p['label'] for p in intraday_points]
         ))
     
@@ -956,7 +956,7 @@ def create_combined_ytm_chart(
                 name=f"{bond2_name} (дневн.)",
                 line=dict(color=BOND2_COLORS["history"], width=2, dash='dash'),
                 opacity=0.8,
-                hovertemplate=f'{bond2_name}: %{{y:.2f}}%<br>%{{text}}<extra></extra>',
+                hovertemplate=f'<b>%{{text}}</b><br>{bond2_name}: %{{y:.2f}}%<extra></extra>',
                 text=[p['label'] for p in history_points]
             ))
     
@@ -969,7 +969,7 @@ def create_combined_ytm_chart(
                 y=ytm2_intraday,
                 name=f"{bond2_name} (свечи)",
                 line=dict(color=BOND2_COLORS["intraday"], width=2),
-                hovertemplate=f'{bond2_name}: %{{y:.2f}}%<br>%{{text}}<extra></extra>',
+                hovertemplate=f'<b>%{{text}}</b><br>{bond2_name}: %{{y:.2f}}%<extra></extra>',
                 text=[p['label'] for p in intraday_points]
             ))
     
@@ -1055,7 +1055,7 @@ def create_intraday_spread_chart(
             y=spread_df['spread'],
             name='Спред',
             line=dict(color=SPREAD_COLOR, width=2),
-            hovertemplate='Спред: %{y:.1f} б.п.<br>%{text}<extra></extra>',
+            hovertemplate=f'<b>%{{text}}</b><br>Спред: %{{y:.1f}} б.п.<extra></extra>',
             text=date_labels
         ))
     else:
@@ -1236,7 +1236,7 @@ def create_spread_analytics_chart(
                     y=combined['ytm_long'],
                     name=bond1_name,
                     line=dict(color=BOND1_COLORS["history"], width=2),
-                    hovertemplate=f'{bond1_name}: %{{y:.2f}}%<br>%{{text}}<extra></extra>',
+                    hovertemplate=f'<b>%{{text}}</b><br>{bond1_name}: %{{y:.2f}}%<extra></extra>',
                     text=date_labels
                 ),
                 row=1, col=1
@@ -1248,7 +1248,7 @@ def create_spread_analytics_chart(
                     y=combined['ytm_short'],
                     name=bond2_name,
                     line=dict(color=BOND2_COLORS["history"], width=2),
-                    hovertemplate=f'{bond2_name}: %{{y:.2f}}%<br>%{{text}}<extra></extra>',
+                    hovertemplate=f'<b>%{{text}}</b><br>{bond2_name}: %{{y:.2f}}%<extra></extra>',
                     text=date_labels
                 ),
                 row=1, col=1
@@ -1263,7 +1263,7 @@ def create_spread_analytics_chart(
                     name=f"+{z_threshold}σ",
                     line=dict(color='rgba(255, 0, 0, 0.4)', dash='dot', width=1),
                     showlegend=True,
-                    hovertemplate='%{y:.1f} б.п.<br>%{text}<extra></extra>',
+                    hovertemplate=f'<b>%{{text}}</b><br>+{z_threshold}σ: %{{y:.1f}} б.п.<extra></extra>',
                     text=date_labels
                 ),
                 row=2, col=1
@@ -1279,7 +1279,7 @@ def create_spread_analytics_chart(
                     fill='tonexty',
                     fillcolor='rgba(128, 128, 128, 0.08)',
                     showlegend=True,
-                    hovertemplate='%{y:.1f} б.п.<br>%{text}<extra></extra>',
+                    hovertemplate=f'<b>%{{text}}</b><br>-{z_threshold}σ: %{{y:.1f}} б.п.<extra></extra>',
                     text=date_labels
                 ),
                 row=2, col=1
@@ -1292,7 +1292,7 @@ def create_spread_analytics_chart(
                     y=combined['rolling_mean'],
                     name=f"MA({window})",
                     line=dict(color='gray', dash='dash', width=1),
-                    hovertemplate='MA: %{y:.1f} б.п.<br>%{text}<extra></extra>',
+                    hovertemplate=f'<b>%{{text}}</b><br>MA({window}): %{{y:.1f}} б.п.<extra></extra>',
                     text=date_labels
                 ),
                 row=2, col=1
@@ -1305,7 +1305,7 @@ def create_spread_analytics_chart(
                     y=combined['spread'],
                     name="Спред",
                     line=dict(color=SPREAD_COLOR, width=2),
-                    hovertemplate='Спред: %{y:.1f} б.п.<br>%{text}<extra></extra>',
+                    hovertemplate=f'<b>%{{text}}</b><br>Спред: %{{y:.1f}} б.п.<extra></extra>',
                     text=date_labels
                 ),
                 row=2, col=1
@@ -1338,7 +1338,7 @@ def create_spread_analytics_chart(
                     textposition="top center",
                     textfont=dict(size=10, color=marker_color),
                     name=f"Текущий: {last_spread:.1f} б.п.",
-                    hovertemplate=f'{signal}<br>Спред: {last_spread:.1f} б.п.<br>Z: {last_zscore:.2f}<br>{last_date_label}<extra></extra>'
+                    hovertemplate=f'<b>{last_date_label}</b><br>{signal}<br>Спред: {last_spread:.1f} б.п.<br>Z: {last_zscore:.2f}<extra></extra>'
                 ),
                 row=2, col=1
             )
