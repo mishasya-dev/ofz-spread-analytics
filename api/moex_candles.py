@@ -19,6 +19,31 @@ from core.ytm_calculator import YTMCalculator, BondParams, calculate_ytm_from_pr
 logger = logging.getLogger(__name__)
 
 
+def get_t1_settlement_date(trade_date: date) -> date:
+    """
+    Получить дату расчётов (settlement date) для режима Т+1
+    
+    Торги ОФЗ проходят в режиме Т+1:
+    - Понедельник -> Вторник (+1)
+    - Вторник -> Среда (+1)
+    - Среда -> Четверг (+1)
+    - Четверг -> Пятница (+1)
+    - Пятница -> Понедельник (+3)
+    
+    Args:
+        trade_date: Дата сделки (дата свечи)
+        
+    Returns:
+        Дата расчётов (settlement date)
+    """
+    weekday = trade_date.weekday()  # 0=Пн, 4=Пт
+    
+    if weekday == 4:  # Пятница
+        return trade_date + timedelta(days=3)  # -> Понедельник
+    else:
+        return trade_date + timedelta(days=1)  # -> Следующий день
+
+
 class CandleInterval(Enum):
     """Интервалы свечей MOEX"""
     MIN_1 = "1"      # 1 минута
@@ -295,13 +320,16 @@ class CandleFetcher:
         ytm_close_list = []
         
         for idx, row in df.iterrows():
-            # Получаем дату из индекса (datetime -> date)
+            # Получаем дату сделки из индекса (datetime -> date)
             if hasattr(idx, 'date'):
-                settlement_date = idx.date()
+                trade_date = idx.date()
             else:
-                settlement_date = idx if isinstance(idx, date) else None
+                trade_date = idx if isinstance(idx, date) else None
             
-            # Рассчитываем НКД на дату свечи
+            # В режиме Т+1 settlement_date = следующий торговый день
+            settlement_date = get_t1_settlement_date(trade_date)
+            
+            # Рассчитываем НКД на settlement date (дату расчётов)
             accrued_interest = self._ytm_calculator.calculate_accrued_interest_for_date(
                 bond_params, settlement_date
             )

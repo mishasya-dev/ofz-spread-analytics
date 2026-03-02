@@ -880,7 +880,10 @@ def main():
                             for d in v['details']:
                                 day_status = "✅" if d['valid'] else "⚠️"
                                 candle_time = d.get('time', '—')
-                                st.write(f"    {day_status} {d['date']} {candle_time}: {d['diff_bp']:.2f} б.п. (расч={d['calculated']:.4f}, офиц={d['official']:.4f})")
+                                weekday = d.get('weekday', '')
+                                # Направление расхождения
+                                diff_dir = "↑" if d['calculated'] > d['official'] else "↓"
+                                st.write(f"    {day_status} {d['date']} ({weekday}) {candle_time}: {d['diff_bp']:.2f} б.п. {diff_dir} (расч={d['calculated']:.4f}, офиц={d['official']:.4f})")
     
     # ==========================================
     # ЗАГОЛОВОК

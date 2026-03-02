@@ -482,8 +482,14 @@ class YTMRepository:
                 diff_bp = abs(calculated_ytm - official_ytm) * 100
                 is_valid = diff_bp <= 5.0
 
+                # День недели (0=Пн, 4=Пт)
+                weekday = day_date.weekday()
+                weekday_names = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+                weekday_name = weekday_names[weekday]
+
                 details.append({
                     'date': day_date,
+                    'weekday': weekday_name,
                     'time': candle_time,
                     'calculated': round(calculated_ytm, 4),
                     'official': round(official_ytm, 4),
