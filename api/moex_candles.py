@@ -39,10 +39,8 @@ class Candle:
     low: float
     close: float
     volume: float
-    ytm: Optional[float] = None
-    ytm_open: Optional[float] = None
-    ytm_high: Optional[float] = None
-    ytm_low: Optional[float] = None
+    ytm: Optional[float] = None  # YTM закрытия (основной)
+    ytm_close: Optional[float] = None  # Дублирует ytm для совместимости
 
 
 class CandleFetcher:
@@ -292,10 +290,8 @@ class CandleFetcher:
             logger.warning(f"Не удалось создать параметры для {bond_config.isin}")
             return df
         
-        # Рассчитываем YTM для каждой свечи с её датой и НКД
-        ytm_open_list = []
-        ytm_high_list = []
-        ytm_low_list = []
+        # Рассчитываем только YTM закрытия (close)
+        # open/high/low не используются в текущей функциональности
         ytm_close_list = []
         
         for idx, row in df.iterrows():
@@ -305,27 +301,15 @@ class CandleFetcher:
             else:
                 settlement_date = idx if isinstance(idx, date) else None
             
-            # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Рассчитываем НКД на дату свечи!
+            # Рассчитываем НКД на дату свечи
             accrued_interest = self._ytm_calculator.calculate_accrued_interest_for_date(
                 bond_params, settlement_date
             )
             
-            ytm_open_list.append(
-                self._safe_calculate_ytm(row.get('open'), bond_params, accrued_interest, settlement_date)
-            )
-            ytm_high_list.append(
-                self._safe_calculate_ytm(row.get('high'), bond_params, accrued_interest, settlement_date)
-            )
-            ytm_low_list.append(
-                self._safe_calculate_ytm(row.get('low'), bond_params, accrued_interest, settlement_date)
-            )
             ytm_close_list.append(
                 self._safe_calculate_ytm(row.get('close'), bond_params, accrued_interest, settlement_date)
             )
         
-        df['ytm_open'] = ytm_open_list
-        df['ytm_high'] = ytm_high_list
-        df['ytm_low'] = ytm_low_list
         df['ytm_close'] = ytm_close_list
         
         # Основной YTM = YTM закрытия

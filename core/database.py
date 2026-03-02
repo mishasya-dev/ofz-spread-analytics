@@ -731,8 +731,7 @@ class DatabaseManager:
                     isin, interval, dt_str,
                     row.get('open'), row.get('high'), row.get('low'),
                     row.get('close'), row.get('volume'),
-                    row.get('ytm_open'), row.get('ytm_high'),
-                    row.get('ytm_low'), row.get('ytm_close')
+                    None, None, None, row.get('ytm_close')  # ytm_open/high/low не рассчитываем
                 ))
                 saved_count += 1
                 
@@ -757,7 +756,7 @@ class DatabaseManager:
         
         query = '''
             SELECT datetime, open, high, low, close, volume,
-                   ytm_open, ytm_high, ytm_low, ytm_close
+                   ytm_close
             FROM candles
             WHERE isin = ? AND interval = ?
         '''
@@ -781,6 +780,10 @@ class DatabaseManager:
         
         df['datetime'] = pd.to_datetime(df['datetime'])
         df = df.set_index('datetime')
+        
+        # Добавляем колонку ytm как алиас для ytm_close
+        if 'ytm_close' in df.columns:
+            df['ytm'] = df['ytm_close']
         
         return df
     

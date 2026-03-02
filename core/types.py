@@ -77,10 +77,8 @@ class CandleData(TypedDict, total=False):
     low: float
     close: float
     volume: float
-    ytm_open: Optional[float]
-    ytm_high: Optional[float]
-    ytm_low: Optional[float]
-    ytm_close: Optional[float]
+    ytm: Optional[float]  # YTM закрытия (основной)
+    ytm_close: Optional[float]  # Дублирует ytm для совместимости
 
 
 # ==========================================
