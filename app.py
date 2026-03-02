@@ -779,19 +779,60 @@ def main():
         bond1_for_val = bonds[bond1_idx] if bonds else None
         bond2_for_val = bonds[bond2_idx] if len(bonds) > 1 else None
         
-        # Определяем надпись кнопки
+        # Сброс валидации при смене инструментов
+        current_isins = frozenset([b.isin for b in [bond1_for_val, bond2_for_val] if b])
+        if st.session_state.get('validation_isins') != current_isins:
+            st.session_state.ytm_validation = None
+            st.session_state.validation_isins = current_isins
+        
+        # Определяем состояние кнопки
         validation_state = st.session_state.ytm_validation
+        
+        # Кнопка всегда с текстом проверки, но разный цвет
         if validation_state is None:
             button_label = "🔍 Проверить расчёт YTM"
-            button_type = "secondary"
+            button_color = "normal"
         elif validation_state.get('valid', True):
             button_label = "✅ Расчётный YTM OK!"
-            button_type = "primary"
+            button_color = "green"
         else:
             button_label = "❌ Расчётный YTM fail!"
-            button_type = "secondary"
+            button_color = "red"
         
-        if st.button(button_label, use_container_width=True, type=button_type):
+        # Рисуем кнопку с нужным цветом
+        if button_color == "green":
+            st.markdown("""
+            <style>
+                div.stButton > button[kind="primary"] {
+                    background-color: #28a745 !important;
+                    border-color: #28a745 !important;
+                }
+                div.stButton > button[kind="primary"]:hover {
+                    background-color: #218838 !important;
+                    border-color: #1e7e34 !important;
+                }
+            </style>
+            """, unsafe_allow_html=True)
+            button_pressed = st.button(button_label, use_container_width=True, type="primary")
+        elif button_color == "red":
+            st.markdown("""
+            <style>
+                div.stButton > button[kind="secondary"] {
+                    background-color: #dc3545 !important;
+                    border-color: #dc3545 !important;
+                    color: white !important;
+                }
+                div.stButton > button[kind="secondary"]:hover {
+                    background-color: #c82333 !important;
+                    border-color: #bd2130 !important;
+                }
+            </style>
+            """, unsafe_allow_html=True)
+            button_pressed = st.button(button_label, use_container_width=True, type="secondary")
+        else:
+            button_pressed = st.button(button_label, use_container_width=True, type="secondary")
+        
+        if button_pressed:
             ytm_repo = get_ytm_repo()
             results = []
             all_valid = True
@@ -812,6 +853,7 @@ def main():
                 'valid': all_valid,
                 'results': results
             }
+            st.rerun()
         
         # Показываем детали валидации
         if validation_state and validation_state.get('results'):
