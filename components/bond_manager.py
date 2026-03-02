@@ -103,16 +103,18 @@ def show_bond_manager_dialog():
             try:
                 count = cache.refresh_sync()
                 st.session_state.bond_manager_reload = False
+                # После обновления загружаем свежие данные
+                st.session_state.bond_manager_bonds = cache.load_cached()
                 st.toast(f"✅ Загружено {count} облигаций")
             except Exception as e:
                 st.error(f"Ошибка загрузки: {e}")
                 return
-
+        bonds = st.session_state.bond_manager_bonds
     # Загрузка из кэша (автообновление если устарел)
-    if 'bond_manager_bonds' not in st.session_state or cache_info['is_expired']:
+    elif 'bond_manager_bonds' not in st.session_state:
         with st.spinner("Загрузка..." if cache_info['count'] == 0 else None):
             try:
-                bonds = cache.get_ofz_list()  # Автообновление если нужно
+                bonds = cache.get_ofz_list()
                 st.session_state.bond_manager_bonds = bonds
             except Exception as e:
                 st.error(f"Ошибка загрузки: {e}")

@@ -144,6 +144,17 @@ class OFZCache:
 
         return [dict(row) for row in rows]
 
+    def load_cached(self) -> List[Dict[str, Any]]:
+        """
+        Загрузить список ОФЗ из БД без автообновления
+
+        Используется когда данные только что обновлены.
+
+        Returns:
+            Список словарей с данными облигаций
+        """
+        return self._load_from_db()
+
     def refresh_sync(self) -> int:
         """
         Синхронное обновление кэша с MOEX
