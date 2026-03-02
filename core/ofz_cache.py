@@ -57,6 +57,10 @@ class OFZCache:
         conn = get_connection()
         cursor = conn.cursor()
 
+        # Количество облигаций в кэше
+        cursor.execute('SELECT COUNT(*) as cnt FROM bonds')
+        count = cursor.fetchone()['cnt']
+
         cursor.execute('''
             SELECT updated_at, ttl_seconds
             FROM cache_metadata
@@ -64,18 +68,23 @@ class OFZCache:
         ''', (self.CACHE_TYPE,))
 
         row = cursor.fetchone()
-
-        # Количество облигаций в кэше
-        cursor.execute('SELECT COUNT(*) as cnt FROM bonds')
-        count = cursor.fetchone()['cnt']
-
         conn.close()
+
+        # Если есть облигации, но нет метаданных - считаем валидным
+        if not row and count > 0:
+            # Создаём запись в cache_metadata
+            self._update_cache_metadata()
+            return {
+                'updated_at': datetime.now(),
+                'is_expired': False,
+                'count': count
+            }
 
         if not row:
             return {
                 'updated_at': None,
                 'is_expired': True,
-                'count': count
+                'count': 0
             }
 
         updated_at = datetime.strptime(row['updated_at'], '%Y-%m-%d %H:%M:%S')

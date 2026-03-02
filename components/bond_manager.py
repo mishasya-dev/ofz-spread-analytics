@@ -378,6 +378,9 @@ def render_bond_manager_button():
         # Очищаем состояние data_editor
         if 'bonds_table_editor' in st.session_state:
             del st.session_state['bonds_table_editor']
+        # Очищаем список облигаций для перезагрузки из кэша
+        if 'bond_manager_bonds' in st.session_state:
+            del st.session_state['bond_manager_bonds']
         # Кэшируем количество избранных
         from core.database import get_db
         db = get_db()
