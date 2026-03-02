@@ -978,9 +978,6 @@ def create_combined_ytm_chart(
         xaxis_title="Дата/Время",
         yaxis_title="YTM (%)",
         hovermode='x unified',
-        hoverlabel=dict(
-            font=dict(color='rgba(0,0,0,0)')  # прозрачный заголовок unified hover
-        ),
         template="plotly_white",
         height=350,
         margin=dict(l=60, r=30, t=50, b=40),
@@ -1119,9 +1116,6 @@ def create_intraday_spread_chart(
         xaxis_title="Время",
         yaxis_title="Спред (б.п.)",
         hovermode='x unified',
-        hoverlabel=dict(
-            font=dict(color='rgba(0,0,0,0)')  # прозрачный заголовок unified hover
-        ),
         template="plotly_white",
         height=300,
         margin=dict(l=60, r=30, t=50, b=40)
@@ -1351,9 +1345,6 @@ def create_spread_analytics_chart(
         template="plotly_white",
         height=700,
         hovermode='x unified',
-        hoverlabel=dict(
-            font=dict(color='rgba(0,0,0,0)')  # прозрачный заголовок unified hover
-        ),
         margin=dict(l=60, r=30, t=60, b=40),
         legend=dict(
             orientation="h",
