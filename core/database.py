@@ -156,10 +156,18 @@ def init_database():
             price_close REAL,
             ytm REAL,
             accrued_interest REAL,
+            volume REAL,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(isin, interval, datetime)
         )
     ''')
+    
+    # Миграция: добавляем колонку volume если её нет
+    cursor.execute("PRAGMA table_info(intraday_ytm)")
+    existing_columns = {row[1] for row in cursor.fetchall()}
+    if 'volume' not in existing_columns:
+        cursor.execute('ALTER TABLE intraday_ytm ADD COLUMN volume REAL')
+        logger.info("Добавлена колонка volume в таблицу intraday_ytm")
     
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_intraday_ytm_isin_interval 
@@ -412,7 +420,7 @@ class DatabaseManager:
         Args:
             isin: ISIN облигации
             interval: Интервал ('1', '10', '60')
-            df: DataFrame с колонками: close (price), ytm_close, accrued_interest
+            df: DataFrame с колонками: close (price), ytm_close, accrued_interest, volume
             
         Returns:
             Количество сохранённых записей
@@ -434,15 +442,16 @@ class DatabaseManager:
                 
                 cursor.execute('''
                     INSERT OR REPLACE INTO intraday_ytm 
-                    (isin, interval, datetime, price_close, ytm, accrued_interest)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    (isin, interval, datetime, price_close, ytm, accrued_interest, volume)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     isin,
                     interval,
                     dt_str,
                     row.get('close'),
                     row.get('ytm_close'),
-                    row.get('accrued_interest')
+                    row.get('accrued_interest'),
+                    row.get('volume')
                 ))
                 saved_count += 1
                 
@@ -477,7 +486,7 @@ class DatabaseManager:
         conn = get_connection()
         
         query = '''
-            SELECT datetime, price_close, ytm, accrued_interest
+            SELECT datetime, price_close, ytm, accrued_interest, volume
             FROM intraday_ytm
             WHERE isin = ? AND interval = ?
         '''

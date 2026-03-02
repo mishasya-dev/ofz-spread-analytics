@@ -898,12 +898,16 @@ def create_combined_ytm_chart(
             else:
                 date_label = str(idx)[:16]
             
+            # Объём торгов (только для облигации 1)
+            volume_val = row.get('volume') if 'volume' in row else None
+            
             all_points.append({
                 'idx': len(all_points),
                 'date': idx,
                 'label': date_label,
                 'ytm1': row[ytm_intraday_col],
                 'ytm2': ytm2_val,
+                'volume': volume_val,
                 'is_intraday': True
             })
     
@@ -970,8 +974,23 @@ def create_combined_ytm_chart(
                 hovertemplate=f'{bond2_name} (свечи): %{{y:.2f}}%<extra></extra>'
             ))
     
+    # Объём торгов (только для intraday) - на второй оси Y
+    volume_points = [p for p in intraday_points if p.get('volume') is not None and p.get('volume') > 0]
+    if volume_points:
+        fig.add_trace(go.Bar(
+            x=[p['idx'] for p in volume_points],
+            y=[p['volume'] for p in volume_points],
+            name='Объём',
+            marker_color='rgba(128, 128, 128, 0.4)',
+            yaxis='y2',
+            hovertemplate='Объём: %{y:,.0f} шт.<extra></extra>'
+        ))
+    
     # Подпись о границе склейки
     boundary_str = boundary_date.strftime('%Y-%m-%d')
+    
+    # Проверяем, есть ли данные об объёме
+    has_volume = any(p.get('volume') is not None and p.get('volume') > 0 for p in intraday_points)
     
     fig.update_layout(
         title=f"📈 YTM (история + свечи, граница: {boundary_str})",
@@ -980,14 +999,22 @@ def create_combined_ytm_chart(
         hovermode='x unified',
         template="plotly_white",
         height=350,
-        margin=dict(l=60, r=30, t=50, b=40),
+        margin=dict(l=60, r=60 if has_volume else 30, t=50, b=40),
         legend=dict(
             orientation="h",
             yanchor="bottom",
             y=1.02,
             xanchor="right",
             x=1
-        )
+        ),
+        # Вторая ось Y для объёма (если есть данные)
+        yaxis2=dict(
+            title="Объём (шт.)",
+            overlaying="y",
+            side="right",
+            showgrid=False,
+            visible=has_volume
+        ) if has_volume else {}
     )
     
     # Категориальная ось X

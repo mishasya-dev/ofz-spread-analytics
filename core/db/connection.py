@@ -146,10 +146,18 @@ def init_database():
             price_close REAL,
             ytm REAL,
             accrued_interest REAL,
+            volume REAL,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(isin, interval, datetime)
         )
     ''')
+    
+    # Миграция: добавляем колонку volume если её нет
+    cursor.execute("PRAGMA table_info(intraday_ytm)")
+    existing_columns = {row[1] for row in cursor.fetchall()}
+    if 'volume' not in existing_columns:
+        cursor.execute('ALTER TABLE intraday_ytm ADD COLUMN volume REAL')
+        logger.info("Добавлена колонка volume в таблицу intraday_ytm")
     
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_intraday_ytm_isin_interval 

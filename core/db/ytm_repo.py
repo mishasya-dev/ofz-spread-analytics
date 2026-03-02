@@ -147,7 +147,7 @@ class YTMRepository:
         Args:
             isin: ISIN облигации
             interval: Интервал ('1', '10', '60')
-            df: DataFrame с колонками: close (price), ytm_close, accrued_interest
+            df: DataFrame с колонками: close (price), ytm_close, accrued_interest, volume
 
         Returns:
             Количество сохранённых записей
@@ -169,15 +169,16 @@ class YTMRepository:
 
                 cursor.execute('''
                     INSERT OR REPLACE INTO intraday_ytm 
-                    (isin, interval, datetime, price_close, ytm, accrued_interest)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    (isin, interval, datetime, price_close, ytm, accrued_interest, volume)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     isin,
                     interval,
                     dt_str,
                     row.get('close'),
                     row.get('ytm_close'),
-                    row.get('accrued_interest')
+                    row.get('accrued_interest'),
+                    row.get('volume')
                 ))
                 saved_count += 1
 
@@ -212,7 +213,7 @@ class YTMRepository:
         conn = get_connection()
 
         query = '''
-            SELECT datetime, price_close, ytm, accrued_interest
+            SELECT datetime, price_close, ytm, accrued_interest, volume
             FROM intraday_ytm
             WHERE isin = ? AND interval = ?
         '''
