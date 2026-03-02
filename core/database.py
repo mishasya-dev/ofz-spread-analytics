@@ -248,6 +248,19 @@ def init_database():
         )
     ''')
     
+    # ==========================================
+    # ТАБЛИЦА КЭША МЕТАДАННЫХ
+    # ==========================================
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS cache_metadata (
+            cache_type TEXT PRIMARY KEY,
+            updated_at TEXT,
+            ttl_seconds INTEGER DEFAULT 86400,
+            data_json TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована")
