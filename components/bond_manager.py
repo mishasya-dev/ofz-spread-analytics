@@ -1,10 +1,12 @@
 """
 Компонент выбора инструментов для анализа
 
-Модальное окно для выбора облигаций (версия 0.2.2)
+Модальное окно для выбора облигаций (версия 0.3.0)
 
 Логика:
-- Загружаем список с MOEX API (не из БД)
+- Список ОФЗ кэшируется в БД (таблица bonds, метаданные в cache_metadata)
+- TTL кэша: 24 часа
+- Автообновление по расписанию или по кнопке
 - Галочки = избранное (хранится в session_state до нажатия "Готово")
 - "Готово" = INSERT новых + DELETE убранных в БД
 - "Отменить" = закрыть без сохранения
@@ -29,13 +31,13 @@ def get_bond_manager():
     return get_db()
 
 
-def get_moex_fetcher():
-    """Получить fetcher для MOEX"""
+def get_ofz_cache():
+    """Получить кэш ОФЗ"""
     import sys
     import os
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from api.moex_bonds import MOEXBondsFetcher
-    return MOEXBondsFetcher()
+    from core.ofz_cache import OFZCache
+    return OFZCache()
 
 
 @st.dialog("Выбор инструментов для анализа", width="large")
@@ -44,12 +46,15 @@ def show_bond_manager_dialog():
     Модальное окно для выбора облигаций
 
     Логика:
-    - Загружаем список с MOEX API (не из БД)
+    - Загружаем список из кэша БД (не напрямую с MOEX)
+    - Если кэш устарел - фоновое обновление
+    - Кнопка "Обновить" - принудительное обновление с MOEX
     - Галочки = избранное (хранится в session_state)
     - "Готово" = INSERT новых + DELETE убранных в БД
     - "Отменить" = закрыть без сохранения
     """
     db = get_bond_manager()
+    cache = get_ofz_cache()
 
     # ========================================
     # ЗАГОЛОВОК + КНОПКА "ОБНОВИТЬ"
@@ -79,27 +84,41 @@ def show_bond_manager_dialog():
     """)
 
     # ========================================
-    # ЗАГРУЗКА ДАННЫХ С MOEX
+    # ЗАГРУЗКА ДАННЫХ (ИЗ КЭША ИЛИ MOEX)
     # ========================================
-    if 'bond_manager_bonds' not in st.session_state or st.session_state.get('bond_manager_reload', False):
-        with st.spinner("Загрузка с MOEX API..."):
-            fetcher = get_moex_fetcher()
+    # Информация о кэше
+    cache_info = cache.get_cache_info()
+    
+    # Показываем статус кэша
+    if cache_info['updated_at']:
+        cache_status = "⚠️ (устарел)" if cache_info['is_expired'] else "✅"
+        cache_time = cache_info['updated_at'].strftime('%d.%m %H:%M')
+        st.caption(f"📦 Кэш: {cache_time} ({cache_info['count']} облигаций) {cache_status}")
+    else:
+        st.caption("📦 Кэш: пустой")
+
+    # Принудительное обновление по кнопке
+    if st.session_state.get('bond_manager_reload', False):
+        with st.spinner("Обновление с MOEX API..."):
             try:
-                all_bonds = fetcher.fetch_ofz_with_market_data(include_details=False)
-                from api.moex_bonds import filter_ofz_for_trading
-                # require_trades=False - показываем облигации даже если сегодня нет торгов
-                filtered_bonds = filter_ofz_for_trading(all_bonds, require_trades=False)
-                
-                st.session_state.bond_manager_bonds = filtered_bonds
+                count = cache.refresh_sync()
                 st.session_state.bond_manager_reload = False
-                st.session_state.bond_manager_bonds_time = datetime.now().strftime('%H:%M:%S')
+                st.toast(f"✅ Загружено {count} облигаций")
             except Exception as e:
                 st.error(f"Ошибка загрузки: {e}")
                 return
-            finally:
-                fetcher.close()
-    
-    bonds = st.session_state.bond_manager_bonds
+
+    # Загрузка из кэша (автообновление если устарел)
+    if 'bond_manager_bonds' not in st.session_state or cache_info['is_expired']:
+        with st.spinner("Загрузка..." if cache_info['count'] == 0 else None):
+            try:
+                bonds = cache.get_ofz_list()  # Автообновление если нужно
+                st.session_state.bond_manager_bonds = bonds
+            except Exception as e:
+                st.error(f"Ошибка загрузки: {e}")
+                return
+    else:
+        bonds = st.session_state.bond_manager_bonds
     
     if not bonds:
         st.warning("Нет облигаций. Проверьте соединение с MOEX.")
