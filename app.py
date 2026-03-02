@@ -20,6 +20,7 @@ from config import AppConfig, BondConfig, CANDLE_INTERVAL_CONFIG
 from api.moex_history import HistoryFetcher
 from api.moex_candles import CandleFetcher, CandleInterval
 from core.database import get_db
+from core.db import get_ytm_repo
 from components.charts import (
     create_combined_ytm_chart,
     create_intraday_spread_chart,
@@ -222,6 +223,10 @@ def init_session_state():
     
     if 'z_threshold' not in st.session_state:
         st.session_state.z_threshold = 2.0
+
+    # Результат валидации YTM
+    if 'ytm_validation' not in st.session_state:
+        st.session_state.ytm_validation = None
 
 
 def get_bonds_list() -> List:
@@ -755,6 +760,63 @@ def main():
         if st.button("🗑️ Очистить кэш", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
+        
+        st.divider()
+        
+        # Валидация YTM
+        st.subheader("🔍 Валидация YTM")
+        
+        # Получаем текущие облигации для валидации
+        bond1_for_val = bonds[bond1_idx] if bonds else None
+        bond2_for_val = bonds[bond2_idx] if len(bonds) > 1 else None
+        
+        # Определяем надпись кнопки
+        validation_state = st.session_state.ytm_validation
+        if validation_state is None:
+            button_label = "🔍 Проверить расчёт YTM"
+            button_type = "secondary"
+        elif validation_state.get('valid', True):
+            button_label = "✅ Расчётный YTM OK!"
+            button_type = "primary"
+        else:
+            button_label = "❌ Расчётный YTM fail!"
+            button_type = "secondary"
+        
+        if st.button(button_label, use_container_width=True, type=button_type):
+            ytm_repo = get_ytm_repo()
+            results = []
+            all_valid = True
+            
+            if bond1_for_val:
+                v1 = ytm_repo.validate_ytm_accuracy(bond1_for_val.isin, candle_interval)
+                results.append((bond1_for_val.name, v1))
+                if not v1['valid']:
+                    all_valid = False
+            
+            if bond2_for_val:
+                v2 = ytm_repo.validate_ytm_accuracy(bond2_for_val.isin, candle_interval)
+                results.append((bond2_for_val.name, v2))
+                if not v2['valid']:
+                    all_valid = False
+            
+            st.session_state.ytm_validation = {
+                'valid': all_valid,
+                'results': results
+            }
+        
+        # Показываем детали валидации
+        if validation_state and validation_state.get('results'):
+            with st.expander("📋 Детали валидации", expanded=True):
+                for bond_name, v in validation_state['results']:
+                    if v.get('reason'):
+                        st.info(f"**{bond_name}**: {v['reason']}")
+                    elif v.get('calculated') is not None:
+                        status = "✅" if v['valid'] else "⚠️"
+                        st.write(f"**{bond_name}**: {status}")
+                        st.write(f"  • Официальный: {v['official']:.4f}%")
+                        st.write(f"  • Расчётный: {v['calculated']:.4f}%")
+                        st.write(f"  • Расхождение: {v['diff_bp']:.2f} б.п.")
+                        st.write(f"  • Дата: {v['date']}")
     
     # ==========================================
     # ЗАГОЛОВОК

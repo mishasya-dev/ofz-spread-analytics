@@ -4,7 +4,7 @@
 Содержит операции для работы с дневными и внутридневными YTM.
 """
 from typing import Optional, Dict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import pandas as pd
 import logging
 
@@ -311,11 +311,136 @@ class YTMRepository:
         cursor = conn.cursor()
 
         cursor.execute('''
-            SELECT interval, COUNT(*) as cnt 
-            FROM intraday_ytm 
+            SELECT interval, COUNT(*) as cnt
+            FROM intraday_ytm
             GROUP BY interval
         ''')
         rows = cursor.fetchall()
         conn.close()
 
         return {row['interval']: row['cnt'] for row in rows}
+
+    # ==========================================
+    # ВАЛИДАЦИЯ YTM
+    # ==========================================
+
+    def get_daily_ytm_for_date(self, isin: str, target_date: date) -> Optional[float]:
+        """
+        Получить официальный YIELDCLOSE за конкретную дату
+
+        Args:
+            isin: ISIN облигации
+            target_date: Дата
+
+        Returns:
+            YTM или None
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT ytm FROM daily_ytm
+            WHERE isin = ? AND date = ?
+        ''', (isin, target_date.strftime('%Y-%m-%d')))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        return row['ytm'] if row else None
+
+    def get_last_candle_ytm(self, isin: str, interval: str, target_date: date) -> Optional[float]:
+        """
+        Получить YTM последней свечи за указанный день
+
+        Args:
+            isin: ISIN облигации
+            interval: Интервал свечей ("1", "10", "60")
+            target_date: Дата для поиска
+
+        Returns:
+            ytm последней свечи или None
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT ytm FROM intraday_ytm
+            WHERE isin = ? AND interval = ? AND date(datetime) = ?
+            ORDER BY datetime DESC
+            LIMIT 1
+        ''', (isin, interval, target_date.strftime('%Y-%m-%d')))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        return row['ytm'] if row else None
+
+    def validate_ytm_accuracy(self, isin: str, interval: str = "60") -> Dict:
+        """
+        Сравнить YTM последней свечи дня с официальным YIELDCLOSE
+
+        Args:
+            isin: ISIN облигации
+            interval: Интервал свечей
+
+        Returns:
+            {
+                'valid': bool,
+                'diff_bp': float,
+                'calculated': float,
+                'official': float,
+                'date': date,
+                'reason': str  # если нет данных
+            }
+        """
+        # Последняя полная торговая сессия (вчера)
+        yesterday = date.today() - timedelta(days=1)
+
+        # 1. Официальный YIELDCLOSE
+        official_ytm = self.get_daily_ytm_for_date(isin, yesterday)
+
+        # 2. YTM последней свечи за вчера
+        calculated_ytm = self.get_last_candle_ytm(isin, interval, yesterday)
+
+        # Проверка наличия данных
+        if official_ytm is None and calculated_ytm is None:
+            return {
+                'valid': True,
+                'diff_bp': 0,
+                'calculated': None,
+                'official': None,
+                'date': yesterday,
+                'reason': 'no_data'
+            }
+
+        if official_ytm is None:
+            return {
+                'valid': True,
+                'diff_bp': 0,
+                'calculated': calculated_ytm,
+                'official': None,
+                'date': yesterday,
+                'reason': 'no_official_ytm'
+            }
+
+        if calculated_ytm is None:
+            return {
+                'valid': True,
+                'diff_bp': 0,
+                'calculated': None,
+                'official': official_ytm,
+                'date': yesterday,
+                'reason': 'no_candle_ytm'
+            }
+
+        # Расчёт расхождения
+        diff_bp = abs(calculated_ytm - official_ytm) * 100
+
+        return {
+            'valid': diff_bp <= 5.0,
+            'diff_bp': round(diff_bp, 2),
+            'calculated': round(calculated_ytm, 4),
+            'official': round(official_ytm, 4),
+            'date': yesterday,
+            'reason': None
+        }
