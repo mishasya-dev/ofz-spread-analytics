@@ -360,11 +360,26 @@ class YTMRepository:
         Returns:
             ytm последней свечи или None
         """
+        result = self.get_last_candle_info(isin, interval, target_date)
+        return result.get('ytm') if result else None
+
+    def get_last_candle_info(self, isin: str, interval: str, target_date: date) -> Optional[Dict]:
+        """
+        Получить полную информацию о последней свече за указанный день
+
+        Args:
+            isin: ISIN облигации
+            interval: Интервал свечей ("1", "10", "60")
+            target_date: Дата для поиска
+
+        Returns:
+            {'ytm': float, 'datetime': datetime, 'price': float} или None
+        """
         conn = get_connection()
         cursor = conn.cursor()
 
         cursor.execute('''
-            SELECT ytm FROM intraday_ytm
+            SELECT ytm, datetime, price_close FROM intraday_ytm
             WHERE isin = ? AND interval = ? AND date(datetime) = ?
             ORDER BY datetime DESC
             LIMIT 1
@@ -373,7 +388,13 @@ class YTMRepository:
         row = cursor.fetchone()
         conn.close()
 
-        return row['ytm'] if row else None
+        if row:
+            return {
+                'ytm': row['ytm'],
+                'datetime': datetime.strptime(row['datetime'], '%Y-%m-%d %H:%M:%S'),
+                'price': row['price_close']
+            }
+        return None
 
     def validate_ytm_accuracy(self, isin: str, interval: str = "60", days: int = 5) -> Dict:
         """
@@ -394,6 +415,7 @@ class YTMRepository:
                 'details': [
                     {
                         'date': date,
+                        'time': str (HH:MM),
                         'calculated': float,
                         'official': float,
                         'diff_bp': float,
@@ -442,9 +464,9 @@ class YTMRepository:
             if day_date >= date.today():
                 continue
 
-            # Получаем YTM последней свечи за этот день
+            # Получаем полную информацию о последней свече за этот день
             cursor.execute('''
-                SELECT ytm FROM intraday_ytm
+                SELECT ytm, datetime FROM intraday_ytm
                 WHERE isin = ? AND interval = ? AND date(datetime) = ?
                 ORDER BY datetime DESC
                 LIMIT 1
@@ -454,11 +476,15 @@ class YTMRepository:
 
             if candle_row and official_ytm is not None:
                 calculated_ytm = candle_row['ytm']
+                candle_dt = datetime.strptime(candle_row['datetime'], '%Y-%m-%d %H:%M:%S')
+                candle_time = candle_dt.strftime('%H:%M')
+
                 diff_bp = abs(calculated_ytm - official_ytm) * 100
                 is_valid = diff_bp <= 5.0
 
                 details.append({
                     'date': day_date,
+                    'time': candle_time,
                     'calculated': round(calculated_ytm, 4),
                     'official': round(official_ytm, 4),
                     'diff_bp': round(diff_bp, 2),

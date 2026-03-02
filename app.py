@@ -879,7 +879,8 @@ def main():
                             st.write("  **По дням:**")
                             for d in v['details']:
                                 day_status = "✅" if d['valid'] else "⚠️"
-                                st.write(f"    {day_status} {d['date']}: {d['diff_bp']:.2f} б.п. (расч={d['calculated']:.4f}, офиц={d['official']:.4f})")
+                                candle_time = d.get('time', '—')
+                                st.write(f"    {day_status} {d['date']} {candle_time}: {d['diff_bp']:.2f} б.п. (расч={d['calculated']:.4f}, офиц={d['official']:.4f})")
     
     # ==========================================
     # ЗАГОЛОВОК
