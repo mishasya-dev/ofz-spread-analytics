@@ -624,6 +624,29 @@ def main():
         
         st.divider()
         
+        # Настройки Spread Analytics
+        st.subheader("📈 Spread Analytics")
+        spread_window = st.slider(
+            "Окно rolling (дней)",
+            min_value=5,
+            max_value=90,
+            value=st.session_state.spread_window,
+            step=5
+        )
+        st.session_state.spread_window = spread_window
+        
+        z_threshold = st.slider(
+            "Z-Score порог (σ)",
+            min_value=1.0,
+            max_value=3.0,
+            value=st.session_state.z_threshold,
+            step=0.1,
+            format="%.1fσ"
+        )
+        st.session_state.z_threshold = z_threshold
+        
+        st.divider()
+        
         # Интервал свечей (intraday) - radio
         st.subheader("⏱️ Интервал свечей")
         interval_options = {"1": "1 мин", "10": "10 мин", "60": "1 час"}
@@ -666,29 +689,6 @@ def main():
         
         # Пояснение
         st.caption(f"Макс. {candle_config['max_days']} дн. для {candle_config['name']} (ограничен периодом анализа: {period} дн.)")
-        
-        st.divider()
-        
-        # Настройки Spread Analytics
-        st.subheader("📈 Spread Analytics")
-        spread_window = st.slider(
-            "Окно rolling (дней)",
-            min_value=5,
-            max_value=90,
-            value=st.session_state.spread_window,
-            step=5
-        )
-        st.session_state.spread_window = spread_window
-        
-        z_threshold = st.slider(
-            "Z-Score порог (σ)",
-            min_value=1.0,
-            max_value=3.0,
-            value=st.session_state.z_threshold,
-            step=0.1,
-            format="%.1fσ"
-        )
-        st.session_state.z_threshold = z_threshold
         
         st.divider()
         
