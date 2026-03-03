@@ -159,6 +159,11 @@ def init_database():
         cursor.execute('ALTER TABLE intraday_ytm ADD COLUMN volume REAL')
         logger.info("Добавлена колонка volume в таблицу intraday_ytm")
     
+    # Миграция: добавляем колонку value (объём в рублях) если её нет
+    if 'value' not in existing_columns:
+        cursor.execute('ALTER TABLE intraday_ytm ADD COLUMN value REAL')
+        logger.info("Добавлена колонка value в таблицу intraday_ytm")
+    
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_intraday_ytm_isin_interval 
         ON intraday_ytm(isin, interval)

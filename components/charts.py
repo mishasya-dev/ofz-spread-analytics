@@ -888,9 +888,11 @@ def create_combined_ytm_chart(
     if not intraday_df1.empty and ytm_intraday_col in intraday_df1.columns:
         for idx, row in intraday_df1.iterrows():
             ytm2_val = None
+            value2_val = None
             if not intraday_df2.empty and ytm_intraday_col in intraday_df2.columns:
                 if idx in intraday_df2.index:
                     ytm2_val = intraday_df2.loc[idx, ytm_intraday_col]
+                    value2_val = intraday_df2.loc[idx, 'value'] if 'value' in intraday_df2.columns else None
             
             # Для intraday показываем дату и время
             if hasattr(idx, 'strftime'):
@@ -898,8 +900,8 @@ def create_combined_ytm_chart(
             else:
                 date_label = str(idx)[:16]
             
-            # Объём торгов (только для облигации 1)
-            volume_val = row.get('volume') if 'volume' in row else None
+            # Объём торгов в рублях (value) для обеих облигаций
+            value1_val = row.get('value') if 'value' in row else None
             
             all_points.append({
                 'idx': len(all_points),
@@ -907,7 +909,8 @@ def create_combined_ytm_chart(
                 'label': date_label,
                 'ytm1': row[ytm_intraday_col],
                 'ytm2': ytm2_val,
-                'volume': volume_val,
+                'value1': value1_val,
+                'value2': value2_val,
                 'is_intraday': True
             })
     
@@ -974,23 +977,53 @@ def create_combined_ytm_chart(
                 hovertemplate=f'{bond2_name} (свечи): %{{y:.2f}}%<extra></extra>'
             ))
     
-    # Объём торгов (только для intraday) - на второй оси Y
-    volume_points = [p for p in intraday_points if p.get('volume') is not None and p.get('volume') > 0]
-    if volume_points:
+    # Объём торгов в рублях (value) - два набора столбиков
+    # Светло-голубой для облигации 1, светло-розовый для облигации 2
+    
+    def format_value(val):
+        """Форматирование объёма в млн/тыс. руб."""
+        if val is None:
+            return ''
+        if val >= 1_000_000:
+            return f'{val/1_000_000:.1f} млн ₽'
+        elif val >= 1_000:
+            return f'{val/1_000:.0f} тыс. ₽'
+        else:
+            return f'{val:.0f} ₽'
+    
+    # Объём облигации 1 (светло-голубой)
+    value1_points = [p for p in intraday_points if p.get('value1') is not None and p.get('value1') > 0]
+    if value1_points:
         fig.add_trace(go.Bar(
-            x=[p['idx'] for p in volume_points],
-            y=[p['volume'] for p in volume_points],
-            name='Объём',
-            marker_color='rgba(128, 128, 128, 0.4)',
+            x=[p['idx'] for p in value1_points],
+            y=[p['value1'] for p in value1_points],
+            name=f'{bond1_name} объём',
+            marker_color='rgba(52, 152, 219, 0.3)',  # Светло-голубой
             yaxis='y2',
-            hovertemplate='Объём: %{y:,.0f} шт.<extra></extra>'
+            hovertemplate='%{customdata}<extra></extra>',
+            customdata=[format_value(p['value1']) for p in value1_points]
+        ))
+    
+    # Объём облигации 2 (светло-розовый)
+    value2_points = [p for p in intraday_points if p.get('value2') is not None and p.get('value2') > 0]
+    if value2_points:
+        fig.add_trace(go.Bar(
+            x=[p['idx'] for p in value2_points],
+            y=[p['value2'] for p in value2_points],
+            name=f'{bond2_name} объём',
+            marker_color='rgba(231, 76, 60, 0.3)',  # Светло-розовый
+            yaxis='y2',
+            hovertemplate='%{customdata}<extra></extra>',
+            customdata=[format_value(p['value2']) for p in value2_points]
         ))
     
     # Подпись о границе склейки
     boundary_str = boundary_date.strftime('%Y-%m-%d')
     
     # Проверяем, есть ли данные об объёме
-    has_volume = any(p.get('volume') is not None and p.get('volume') > 0 for p in intraday_points)
+    has_value1 = any(p.get('value1') is not None and p.get('value1') > 0 for p in intraday_points)
+    has_value2 = any(p.get('value2') is not None and p.get('value2') > 0 for p in intraday_points)
+    has_value = has_value1 or has_value2
     
     fig.update_layout(
         title=f"📈 YTM (история + свечи, граница: {boundary_str})",
@@ -999,7 +1032,7 @@ def create_combined_ytm_chart(
         hovermode='x unified',
         template="plotly_white",
         height=350,
-        margin=dict(l=60, r=60 if has_volume else 30, t=50, b=40),
+        margin=dict(l=60, r=60 if has_value else 30, t=50, b=40),
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -1009,12 +1042,12 @@ def create_combined_ytm_chart(
         ),
         # Вторая ось Y для объёма (если есть данные)
         yaxis2=dict(
-            title="Объём (шт.)",
+            title="Объём (₽)",
             overlaying="y",
             side="right",
             showgrid=False,
-            visible=has_volume
-        ) if has_volume else {}
+            visible=has_value
+        ) if has_value else {}
     )
     
     # Категориальная ось X
