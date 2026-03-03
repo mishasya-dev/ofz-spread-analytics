@@ -293,6 +293,7 @@ def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
             logger.info(f"Загружены дневные YTM из БД для {secid}: {len(db_df)} записей")
             return db_df
         else:
+            # Дозагружаем только новые данные
             new_start = last_db_date + timedelta(days=1)
             new_df = fetcher.fetch_ytm_history(secid, start_date=new_start)
             
@@ -300,7 +301,25 @@ def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
                 db.save_daily_ytm(secid, new_df)
                 db_df = pd.concat([db_df, new_df])
                 db_df = db_df[~db_df.index.duplicated(keep='last')]
+    elif need_reload:
+        # Данных недостаточно - дозагружаем недостающий период
+        # db_min_date уже вычислен выше
+        db_min_date = db_df.index.min().date() if hasattr(db_df.index.min(), 'date') else db_df.index.min()
+        
+        # Загружаем только недостающий период (от start_date до db_min_date - 1 день)
+        history_end = db_min_date - timedelta(days=1)
+        logger.info(f"Дозагружаем период с {start_date} по {history_end}")
+        
+        new_df = fetcher.fetch_ytm_history(secid, start_date=start_date, end_date=history_end)
+        
+        if not new_df.empty:
+            db.save_daily_ytm(secid, new_df)
+            # Объединяем: старые данные + новые
+            db_df = pd.concat([new_df, db_df])
+            db_df = db_df[~db_df.index.duplicated(keep='last')]
+            logger.info(f"Дозагружены дневные YTM для {secid}: +{len(new_df)} записей, всего {len(db_df)}")
     else:
+        # БД пуста - загружаем весь период
         db_df = fetcher.fetch_ytm_history(secid, start_date=start_date)
         
         if not db_df.empty:
