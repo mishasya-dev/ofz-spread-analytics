@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.5.4] - 2026-03-01
+
+### Fixed
+- **Period Slider Chart Update**: Fixed Spread Analytics chart not updating when increasing analysis period
+  - Added explicit filtering by requested period before returning data
+  - Added detailed logging for debugging data loading process
+  - Fixed typo: `secin` → `secid` in save_daily_ytm call
+- **Data Filtering**: Ensured returned DataFrame is always filtered by the requested `start_date`
+
+### Changed
+- Enhanced `fetch_historical_data_cached()` with comprehensive logging for troubleshooting
+
 ## [v0.5.3] - 2026-03-01
 
 ### Added
