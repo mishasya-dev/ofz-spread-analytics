@@ -1299,7 +1299,7 @@ def create_spread_analytics_chart(
             ))
             
             # --- НИЖНЯЯ ПАНЕЛЬ: Спред (yaxis='y2') ---
-            # Верхняя граница
+            # Верхняя граница - показывает дату для нижней панели
             fig.add_trace(go.Scatter(
                 x=x_indices,
                 y=combined['upper_band'],
@@ -1308,7 +1308,7 @@ def create_spread_analytics_chart(
                 line=dict(color='rgba(255, 0, 0, 0.4)', dash='dot', width=1),
                 showlegend=True,
                 customdata=date_labels,
-                hovertemplate=f'+{z_threshold}σ: %{{y:.1f}} б.п.<extra></extra>'
+                hovertemplate=f'<b>📅 %{{customdata}}</b><br><br>+{z_threshold}σ: %{{y:.1f}} б.п.<extra></extra>'
             ))
             
             # Нижняя граница с заливкой
@@ -1374,7 +1374,8 @@ def create_spread_analytics_chart(
                 text=[f"Z={last_zscore:.1f}"],
                 textposition="top center",
                 textfont=dict(size=10, color=marker_color),
-                hovertemplate=f'<b>{last_date_label}</b><br>{signal}<br>Спред: {last_spread:.1f} б.п.<br>Z: {last_zscore:.2f}<extra></extra>'
+                customdata=[last_date_label],
+                hovertemplate=f'{signal}<br>Спред: {last_spread:.1f} б.п.<br>Z: {last_zscore:.2f}<extra></extra>'
             ))
     
     # --- Оформление с двумя Y-осями ---
