@@ -28,6 +28,7 @@ from components.charts import (
     apply_zoom_range
 )
 from version import format_version_badge
+from core.cointegration import CointegrationAnalyzer, format_cointegration_report
 
 # Настройка логирования
 logging.basicConfig(
@@ -1062,6 +1063,39 @@ def main():
     - BUY: спред аномально низкий → ожидается расширение (покупаем длинную, продаём короткую)
     - SELL: спред аномально высокий → ожидается сужение (продаём длинную, покупаем короткую)
     """.format(threshold=st.session_state.z_threshold))
+    
+    # ==========================================
+    # АНАЛИЗ КОИНТЕГРАЦИИ
+    # ==========================================
+    with st.expander("📊 Анализ коинтеграции (ADF + Engle-Granger)"):
+        st.markdown("""
+        **Что проверяем:**
+        1. Являются ли YTM обоих облигаций нестационарными (должны быть!)
+        2. Существует ли долгосрочная равновесная связь (коинтеграция)
+        3. Как быстро спред возвращается к среднему (half-life)
+        """)
+        
+        if st.button("Запустить анализ коинтеграции", key="run_cointegration"):
+            with st.spinner("Выполняю анализ..."):
+                try:
+                    analyzer = CointegrationAnalyzer()
+                    
+                    # Подготовка данных
+                    ytm1_series = daily_df1['ytm'].dropna()
+                    ytm2_series = daily_df2['ytm'].dropna()
+                    
+                    if len(ytm1_series) >= 30 and len(ytm2_series) >= 30:
+                        result = analyzer.analyze_pair(ytm1_series, ytm2_series)
+                        st.markdown(format_cointegration_report(result))
+                    else:
+                        st.warning(f"⚠️ Недостаточно данных для анализа (нужно ≥30, есть: {len(ytm1_series)}, {len(ytm2_series)})")
+                        
+                except ImportError:
+                    st.error("❌ **statsmodels не установлен.**")
+                    st.code("pip install statsmodels", language="bash")
+                except Exception as e:
+                    st.error(f"❌ Ошибка анализа: {e}")
+                    logger.error(f"Cointegration analysis error: {e}", exc_info=True))
     
     st.divider()
     

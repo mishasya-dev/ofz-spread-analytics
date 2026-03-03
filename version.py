@@ -8,8 +8,8 @@ from datetime import datetime
 from pathlib import Path
 
 # Основные данные версии
-VERSION = "0.6.7"
-RELEASE_NAME = "Docs: Date in Hover Label"
+VERSION = "0.7.0"
+RELEASE_NAME = "Cointegration Analysis"
 
 def get_git_info():
     """Получить информацию из git"""
