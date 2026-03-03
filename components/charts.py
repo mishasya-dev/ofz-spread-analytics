@@ -1400,7 +1400,7 @@ def create_spread_analytics_chart(
         title="Анализ спреда",
         template="plotly_white",
         height=700,
-        hovermode='x unified',
+        hovermode='x',  # 'x' для синхронизации spike между панелями
         margin=dict(l=60, r=30, t=60, b=60),  # Увеличил bottom margin для заголовка
         legend=dict(
             orientation="h",
@@ -1421,6 +1421,16 @@ def create_spread_analytics_chart(
                 font=dict(size=14)
             )
         ]
+    )
+
+    # Spike lines - синхронизированы между панелями благодаря shared_xaxes
+    fig.update_xaxes(
+        showspikes=True,
+        spikemode='across',
+        spikesnap='cursor',
+        spikethickness=1,
+        spikedash='solid',
+        spikecolor='rgba(100, 100, 100, 0.5)'
     )
 
     # Сетка (пунктир) и категориальная ось X
