@@ -1021,7 +1021,7 @@ def create_combined_ytm_chart(
     # Проверяем, есть ли данные об объёме
     has_value1 = any(p.get('value1') is not None and p.get('value1') > 0 for p in intraday_points)
     has_value2 = any(p.get('value2') is not None and p.get('value2') > 0 for p in intraday_points)
-    has_value = has_value1 or has_value2
+    has_value = bool(has_value1 or has_value2)  # Convert to Python bool for Plotly
     
     fig.update_layout(
         title=f"📈 YTM (история + свечи, граница: {boundary_str})",

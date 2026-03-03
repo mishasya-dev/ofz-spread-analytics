@@ -8,8 +8,8 @@ from datetime import datetime
 from pathlib import Path
 
 # Основные данные версии
-VERSION = "0.5.6"
-RELEASE_NAME = "Data Period Info"
+VERSION = "0.5.7"
+RELEASE_NAME = "Numpy Bool Fix"
 
 def get_git_info():
     """Получить информацию из git"""
