@@ -311,7 +311,7 @@ class TestFormatCointegrationReport:
         assert 'Ошибка' in report
 
     def test_success_report(self):
-        """Тест: успешный отчёт"""
+        """Тест: успешный отчёт с коинтеграцией"""
         from core.cointegration import format_cointegration_report
         
         result = {
@@ -324,6 +324,7 @@ class TestFormatCointegrationReport:
                 'ytm2_adf_pvalue': 0.4,
                 'interpretation': '✅ Коинтеграция есть'
             },
+            'is_cointegrated': True,
             'half_life': 15.5,
             'hedge_ratio': 1.05,
             'recommendation': {
@@ -338,6 +339,7 @@ class TestFormatCointegrationReport:
         assert '📊' in report
         assert 'Engle-Granger' in report
         assert 'Half-life' in report
+        assert 'Hedge Ratio' in report
 
     def test_report_with_bond_names(self):
         """Тест: отчёт с названиями облигаций"""
@@ -353,6 +355,7 @@ class TestFormatCointegrationReport:
                 'ytm2_adf_pvalue': 0.4,
                 'interpretation': '✅ Коинтеграция есть'
             },
+            'is_cointegrated': True,
             'half_life': 15.5,
             'hedge_ratio': 1.05,
             'recommendation': {
@@ -385,6 +388,7 @@ class TestFormatCointegrationReport:
                 'ytm2_adf_pvalue': 0.4,
                 'interpretation': '✅ Коинтеграция есть'
             },
+            'is_cointegrated': True,
             'hedge_ratio': 1.25,
             'recommendation': {
                 'strategy': 'Pair Trading',
@@ -398,6 +402,38 @@ class TestFormatCointegrationReport:
         # Проверяем текстовое объяснение
         assert '1.25 единицы ОФЗ 26243' in report
         assert '1 единицу ОФЗ 26238' in report
+
+    def test_no_halflife_when_not_cointegrated(self):
+        """Тест: Half-life и Hedge Ratio НЕ показываются если нет коинтеграции"""
+        from core.cointegration import format_cointegration_report
+        
+        result = {
+            'engle_granger': {
+                'coint_statistic': -2.8,
+                'pvalue': 0.1594,
+                'ytm1_stationary': False,
+                'ytm2_stationary': False,
+                'ytm1_adf_pvalue': 0.29,
+                'ytm2_adf_pvalue': 0.52,
+                'interpretation': '❌ Коинтеграции нет'
+            },
+            'is_cointegrated': False,
+            'half_life': 15.6,  # Не имеет смысла без коинтеграции
+            'hedge_ratio': 0.86,  # Не имеет смысла без коинтеграции
+            'recommendation': {
+                'strategy': 'Не рекомендуется',
+                'reason': 'Пара не коинтегрирована',
+                'risk': 'high'
+            }
+        }
+        
+        report = format_cointegration_report(result, "ОФЗ 26230", "ОФЗ 26238")
+        
+        # Half-life и Hedge Ratio НЕ должны быть в отчёте
+        assert 'Half-life' not in report
+        assert 'Hedge Ratio' not in report
+        # Но рекомендация должна быть
+        assert 'Не рекомендуется' in report
 
 
 class TestIntegrationWithYTM:

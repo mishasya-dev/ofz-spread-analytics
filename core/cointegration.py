@@ -449,6 +449,7 @@ def format_cointegration_report(result: Dict, bond1_name: str = "BOND1", bond2_n
     lines.append("### 📊 Анализ коинтеграции\n")
     
     eg = result.get('engle_granger', {})
+    is_cointegrated = result.get('is_cointegrated', False)
     
     if 'error' not in eg:
         # Проверка стационарности
@@ -468,18 +469,20 @@ def format_cointegration_report(result: Dict, bond1_name: str = "BOND1", bond2_n
         lines.append(f"- **{eg['interpretation']}**")
         lines.append("")
     
-    # Half-life
-    half_life = result.get('half_life')
-    if half_life is not None and half_life != float('inf'):
-        lines.append(f"**Half-life:** `{half_life:.1f}` дней")
-        lines.append("")
-    
-    # Hedge ratio с текстовым объяснением
-    hedge_ratio = result.get('hedge_ratio')
-    if hedge_ratio is not None:
-        lines.append(f"**Hedge Ratio:** `{hedge_ratio:.4f}`")
-        lines.append(f"> На каждые **{abs(hedge_ratio):.2f} единицы {bond2_name}** нужно взять **1 единицу {bond1_name}**")
-        lines.append("")
+    # Показываем Half-life и Hedge Ratio ТОЛЬКО если есть коинтеграция
+    if is_cointegrated:
+        # Half-life
+        half_life = result.get('half_life')
+        if half_life is not None and half_life != float('inf'):
+            lines.append(f"**Half-life:** `{half_life:.1f}` дней")
+            lines.append("")
+        
+        # Hedge ratio с текстовым объяснением
+        hedge_ratio = result.get('hedge_ratio')
+        if hedge_ratio is not None:
+            lines.append(f"**Hedge Ratio:** `{hedge_ratio:.4f}`")
+            lines.append(f"> На каждые **{abs(hedge_ratio):.2f} единицы {bond2_name}** нужно взять **1 единицу {bond1_name}**")
+            lines.append("")
     
     # Рекомендация
     rec = result.get('recommendation', {})
