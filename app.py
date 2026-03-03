@@ -634,11 +634,10 @@ def main():
             "Период анализа (дней)",
             min_value=30,
             max_value=730,
-            value=st.session_state.period,
+            key="period",  # Автоматическая синхронизация с session_state
             step=30,
             format="%d дней"
         )
-        st.session_state.period = period
         
         st.divider()
         
@@ -648,20 +647,18 @@ def main():
             "Окно rolling (дней)",
             min_value=5,
             max_value=90,
-            value=st.session_state.spread_window,
+            key="spread_window",  # Автоматическая синхронизация с session_state
             step=5
         )
-        st.session_state.spread_window = spread_window
         
         z_threshold = st.slider(
             "Z-Score порог (σ)",
             min_value=1.0,
             max_value=3.0,
-            value=st.session_state.z_threshold,
+            key="z_threshold",  # Автоматическая синхронизация с session_state
             step=0.1,
             format="%.1fσ"
         )
-        st.session_state.z_threshold = z_threshold
         
         st.divider()
         
@@ -719,15 +716,13 @@ def main():
         st.session_state.auto_refresh = auto_refresh
         
         if auto_refresh:
-            current_interval = st.session_state.refresh_interval or 60
             refresh_interval = st.slider(
                 "Интервал (сек)",
                 min_value=30,
                 max_value=300,
-                value=current_interval,
+                key="refresh_interval",  # Автоматическая синхронизация с session_state
                 step=30
             )
-            st.session_state.refresh_interval = refresh_interval
             
             if st.session_state.last_update:
                 st.caption(f"Последнее: {st.session_state.last_update.strftime('%H:%M:%S')}")
