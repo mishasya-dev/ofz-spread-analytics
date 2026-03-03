@@ -433,8 +433,14 @@ class CointegrationAnalyzer:
         }
 
 
-def format_cointegration_report(result: Dict) -> str:
-    """Форматирование отчёта для Streamlit"""
+def format_cointegration_report(result: Dict, bond1_name: str = "BOND1", bond2_name: str = "BOND2") -> str:
+    """Форматирование отчёта для Streamlit
+    
+    Args:
+        result: Результат анализа от analyze_pair()
+        bond1_name: Название первой облигации (например, "ОФЗ 26238")
+        bond2_name: Название второй облигации (например, "ОФЗ 26243")
+    """
     
     if 'error' in result:
         return f"❌ **Ошибка:** {result['error']}"
@@ -446,13 +452,13 @@ def format_cointegration_report(result: Dict) -> str:
     
     if 'error' not in eg:
         # Проверка стационарности
-        lines.append("**Проверка YTM (должны быть нестационарны):**")
-        ytm1_stat = "❌ стационарен" if eg.get('ytm1_stationary') else "✅ нестационарен"
-        ytm2_stat = "❌ стационарен" if eg.get('ytm2_stationary') else "✅ нестационарен"
+        lines.append("**Проверка BOND (должны быть нестационарны):**")
+        bond1_stat = "❌ стационарен" if eg.get('ytm1_stationary') else "✅ нестационарен"
+        bond2_stat = "❌ стационарен" if eg.get('ytm2_stationary') else "✅ нестационарен"
         pval1 = eg.get('ytm1_adf_pvalue')
         pval2 = eg.get('ytm2_adf_pvalue')
-        lines.append(f"- YTM₁: {ytm1_stat}" + (f" (p={pval1:.4f})" if pval1 else ""))
-        lines.append(f"- YTM₂: {ytm2_stat}" + (f" (p={pval2:.4f})" if pval2 else ""))
+        lines.append(f"- {bond1_name}: {bond1_stat}" + (f" (p={pval1:.4f})" if pval1 else ""))
+        lines.append(f"- {bond2_name}: {bond2_stat}" + (f" (p={pval2:.4f})" if pval2 else ""))
         lines.append("")
         
         # Engle-Granger
@@ -468,10 +474,11 @@ def format_cointegration_report(result: Dict) -> str:
         lines.append(f"**Half-life:** `{half_life:.1f}` дней")
         lines.append("")
     
-    # Hedge ratio
+    # Hedge ratio с текстовым объяснением
     hedge_ratio = result.get('hedge_ratio')
     if hedge_ratio is not None:
         lines.append(f"**Hedge Ratio:** `{hedge_ratio:.4f}`")
+        lines.append(f"> На каждые **{abs(hedge_ratio):.2f} единицы {bond2_name}** нужно взять **1 единицу {bond1_name}**")
         lines.append("")
     
     # Рекомендация

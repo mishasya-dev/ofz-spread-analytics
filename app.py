@@ -1086,7 +1086,7 @@ def main():
                     
                     if len(ytm1_series) >= 30 and len(ytm2_series) >= 30:
                         result = analyzer.analyze_pair(ytm1_series, ytm2_series)
-                        st.markdown(format_cointegration_report(result))
+                        st.markdown(format_cointegration_report(result, bond1.name, bond2.name))
                     else:
                         st.warning(f"⚠️ Недостаточно данных для анализа (нужно ≥30, есть: {len(ytm1_series)}, {len(ytm2_series)})")
                         

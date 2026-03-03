@@ -339,6 +339,66 @@ class TestFormatCointegrationReport:
         assert 'Engle-Granger' in report
         assert 'Half-life' in report
 
+    def test_report_with_bond_names(self):
+        """Тест: отчёт с названиями облигаций"""
+        from core.cointegration import format_cointegration_report
+        
+        result = {
+            'engle_granger': {
+                'coint_statistic': -3.5,
+                'pvalue': 0.02,
+                'ytm1_stationary': False,
+                'ytm2_stationary': False,
+                'ytm1_adf_pvalue': 0.3,
+                'ytm2_adf_pvalue': 0.4,
+                'interpretation': '✅ Коинтеграция есть'
+            },
+            'half_life': 15.5,
+            'hedge_ratio': 1.05,
+            'recommendation': {
+                'strategy': 'Pair Trading',
+                'reason': 'Test reason',
+                'risk': 'low'
+            }
+        }
+        
+        report = format_cointegration_report(result, "ОФЗ 26238", "ОФЗ 26243")
+        
+        # Проверяем, что названия облигаций в отчёте
+        assert 'ОФЗ 26238' in report
+        assert 'ОФЗ 26243' in report
+        # Проверяем, что старые YTM₁/YTM₂ не используются
+        assert 'YTM₁' not in report
+        assert 'YTM₂' not in report
+
+    def test_hedge_ratio_explanation(self):
+        """Тест: текстовое объяснение Hedge Ratio"""
+        from core.cointegration import format_cointegration_report
+        
+        result = {
+            'engle_granger': {
+                'coint_statistic': -3.5,
+                'pvalue': 0.02,
+                'ytm1_stationary': False,
+                'ytm2_stationary': False,
+                'ytm1_adf_pvalue': 0.3,
+                'ytm2_adf_pvalue': 0.4,
+                'interpretation': '✅ Коинтеграция есть'
+            },
+            'hedge_ratio': 1.25,
+            'recommendation': {
+                'strategy': 'Pair Trading',
+                'reason': 'Test reason',
+                'risk': 'low'
+            }
+        }
+        
+        report = format_cointegration_report(result, "ОФЗ 26238", "ОФЗ 26243")
+        
+        # Проверяем текстовое объяснение
+        assert '1.25 единицы ОФЗ 26243' in report
+        assert '1 единицу ОФЗ 26238' in report
+
 
 class TestIntegrationWithYTM:
     """Интеграционные тесты с реальными данными YTM"""
