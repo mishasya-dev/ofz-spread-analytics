@@ -1120,6 +1120,37 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    def set_favorite(self, isin: str, is_favorite: bool) -> bool:
+        """
+        Установить/снять флаг избранного для облигации
+        
+        Args:
+            isin: ISIN облигации
+            is_favorite: True - добавить в избранное, False - убрать
+            
+        Returns:
+            True если успешно
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('''
+                UPDATE bonds SET is_favorite = ?, last_updated = ?
+                WHERE isin = ?
+            ''', (
+                1 if is_favorite else 0,
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                isin
+            ))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Ошибка установки избранного: {e}")
+            return False
+        finally:
+            conn.close()
+
     def delete_bond(self, isin: str) -> bool:
         """Удалить облигацию из БД"""
         conn = get_connection()

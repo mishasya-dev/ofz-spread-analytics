@@ -68,9 +68,8 @@ def show_bond_manager_dialog():
             # Очищаем DataFrame для пересоздания с новыми данными
             if 'bond_manager_df' in st.session_state:
                 del st.session_state['bond_manager_df']
-            # Очищаем состояние data_editor
-            if 'bonds_table_editor' in st.session_state:
-                del st.session_state['bonds_table_editor']
+            # Увеличиваем версию data_editor для пересоздания
+            st.session_state.bond_editor_version = st.session_state.get('bond_editor_version', 0) + 1
             # Генерируем новый UUID, но НЕ сбрасываем last_shown_id
             # Тогда при rerun: open_id != last_shown_id → диалог откроется
             st.session_state.bond_manager_open_id = str(uuid.uuid4())
@@ -148,10 +147,13 @@ def show_bond_manager_dialog():
     # ВОССТАНОВЛЕНИЕ СОСТОЯНИЯ ЧЕКБОКСОВ
     # ========================================
     # КРИТИЧЕСКИ ВАЖНО: если data_editor уже рендерился в этой сессии,
-    # берём состояние чекбоксов из session_state["bonds_table_editor"]
-    # Это происходит ДО создания DataFrame!
-    if "bonds_table_editor" in st.session_state:
-        prev_state = st.session_state["bonds_table_editor"]
+    # берём состояние чекбоксов из session_state
+    # Используем динамический key с версией
+    editor_version = st.session_state.get('bond_editor_version', 0)
+    editor_key = f"bonds_table_editor_{editor_version}"
+    
+    if editor_key in st.session_state:
+        prev_state = st.session_state[editor_key]
         if prev_state is not None and hasattr(prev_state, 'columns') and '⭐' in prev_state.columns:
             # Обновляем current_favourites из предыдущего состояния
             current_favorites = set(prev_state[prev_state['⭐']]['ISIN'])
@@ -172,9 +174,8 @@ def show_bond_manager_dialog():
             # Удаляем DataFrame чтобы пересоздать с очищенными чекбоксами
             if 'bond_manager_df' in st.session_state:
                 del st.session_state.bond_manager_df
-            # Очищаем состояние data_editor
-            if "bonds_table_editor" in st.session_state:
-                del st.session_state["bonds_table_editor"]
+            # Увеличиваем версию data_editor для принудительного пересоздания
+            st.session_state.bond_editor_version = st.session_state.get('bond_editor_version', 0) + 1
             # Генерируем новый UUID для reopen диалога (НЕ сбрасываем last_shown_id)
             st.session_state.bond_manager_open_id = str(uuid.uuid4())
             st.rerun()
@@ -237,8 +238,8 @@ def show_bond_manager_dialog():
         st.session_state.bond_manager_df = df
 
         # Очищаем старое состояние data_editor при создании нового DataFrame
-        if "bonds_table_editor" in st.session_state:
-            del st.session_state["bonds_table_editor"]
+        if editor_key in st.session_state:
+            del st.session_state[editor_key]
 
     # Используем DataFrame из session_state
     df = st.session_state.bond_manager_df
@@ -259,7 +260,7 @@ def show_bond_manager_dialog():
         hide_index=True,
         width="stretch",
         num_rows="fixed",
-        key="bonds_table_editor",
+        key=editor_key,
     )
     
     # ========================================
@@ -287,8 +288,8 @@ def show_bond_manager_dialog():
             # Очищаем DataFrame и состояние data_editor
             if 'bond_manager_df' in st.session_state:
                 del st.session_state['bond_manager_df']
-            if "bonds_table_editor" in st.session_state:
-                del st.session_state["bonds_table_editor"]
+            if editor_key in st.session_state:
+                del st.session_state[editor_key]
             st.rerun()
 
     with col_done:
@@ -327,9 +328,9 @@ def show_bond_manager_dialog():
                     })
                     added_count += 1
             
-            # Удаляем убранные из БД
+            # Убираем из избранного (не удаляем запись!)
             for isin in to_remove:
-                db.delete_bond(isin)
+                db.set_favorite(isin, False)
                 removed_count += 1
             
             # Очищаем состояние
@@ -340,8 +341,8 @@ def show_bond_manager_dialog():
             # Очищаем DataFrame и состояние data_editor
             if 'bond_manager_df' in st.session_state:
                 del st.session_state['bond_manager_df']
-            if "bonds_table_editor" in st.session_state:
-                del st.session_state["bonds_table_editor"]
+            if editor_key in st.session_state:
+                del st.session_state[editor_key]
             st.session_state.cached_favorites_count = len(new_favorites)
             
             # Показываем результат и закрываем
@@ -377,9 +378,8 @@ def render_bond_manager_button():
         # Очищаем DataFrame для пересоздания
         if 'bond_manager_df' in st.session_state:
             del st.session_state['bond_manager_df']
-        # Очищаем состояние data_editor
-        if 'bonds_table_editor' in st.session_state:
-            del st.session_state['bonds_table_editor']
+        # Сбрасываем версию data_editor
+        st.session_state.bond_editor_version = 0
         # Очищаем список облигаций для перезагрузки из кэша
         if 'bond_manager_bonds' in st.session_state:
             del st.session_state['bond_manager_bonds']
