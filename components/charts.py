@@ -1400,8 +1400,8 @@ def create_spread_analytics_chart(
         title="Анализ спреда",
         template="plotly_white",
         height=700,
-        hovermode='x',  # 'x' для синхронизации spike между панелями
-        margin=dict(l=60, r=30, t=60, b=60),  # Увеличил bottom margin для заголовка
+        hovermode='x unified',  # Единая всплывашка для всех traces
+        margin=dict(l=60, r=30, t=60, b=60),
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -1414,23 +1414,13 @@ def create_spread_analytics_chart(
             dict(
                 text=f"Анализ спреда (Rolling {window} дн., Z-Score ±{z_threshold})",
                 x=0.5,
-                y=-0.08,  # Ниже графика
+                y=-0.08,
                 xref="paper",
                 yref="paper",
                 showarrow=False,
                 font=dict(size=14)
             )
         ]
-    )
-
-    # Spike lines - синхронизированы между панелями благодаря shared_xaxes
-    fig.update_xaxes(
-        showspikes=True,
-        spikemode='across',
-        spikesnap='cursor',
-        spikethickness=1,
-        spikedash='solid',
-        spikecolor='rgba(100, 100, 100, 0.5)'
     )
 
     # Сетка (пунктир) и категориальная ось X
