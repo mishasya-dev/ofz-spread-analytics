@@ -936,8 +936,7 @@ def create_combined_ytm_chart(
             x=[p['idx'] for p in history_points],
             y=[p['ytm1'] for p in history_points],
             name=f"{bond1_name} (дневн.)",
-            line=dict(color=BOND1_COLORS["history"], width=2, dash='dash'),
-            opacity=0.8,
+            line=dict(color=BOND1_COLORS["history"], width=1, dash='dash'),
             customdata=[p['label'] for p in history_points],
             hovertemplate=f'{bond1_name} (дневн.): %{{y:.2f}}%<br><br>📅 %{{customdata}}<extra></extra>'
         ))
@@ -948,7 +947,7 @@ def create_combined_ytm_chart(
             x=[p['idx'] for p in intraday_points],
             y=[p['ytm1'] for p in intraday_points],
             name=f"{bond1_name} (свечи)",
-            line=dict(color=BOND1_COLORS["intraday"], width=2),
+            line=dict(color=BOND1_COLORS["intraday"], width=1),
             hovertemplate=f'{bond1_name} (свечи): %{{y:.2f}}%<extra></extra>'
         ))
     
@@ -960,8 +959,7 @@ def create_combined_ytm_chart(
                 x=[p['idx'] for p in history_points],
                 y=ytm2_history,
                 name=f"{bond2_name} (дневн.)",
-                line=dict(color=BOND2_COLORS["history"], width=2, dash='dash'),
-                opacity=0.8,
+                line=dict(color=BOND2_COLORS["history"], width=1, dash='dash'),
                 hovertemplate=f'{bond2_name} (дневн.): %{{y:.2f}}%<extra></extra>'
             ))
     
@@ -973,7 +971,7 @@ def create_combined_ytm_chart(
                 x=[p['idx'] for p in intraday_points],
                 y=ytm2_intraday,
                 name=f"{bond2_name} (свечи)",
-                line=dict(color=BOND2_COLORS["intraday"], width=2),
+                line=dict(color=BOND2_COLORS["intraday"], width=1),
                 hovertemplate=f'{bond2_name} (свечи): %{{y:.2f}}%<extra></extra>'
             ))
     
@@ -998,10 +996,10 @@ def create_combined_ytm_chart(
             x=[p['idx'] for p in value1_points],
             y=[p['value1'] for p in value1_points],
             name=f'{bond1_name} объём',
-            marker_color='rgba(52, 152, 219, 0.3)',  # Светло-голубой
+            marker_color='rgba(52, 152, 219, 0.3)',
+            marker_line_width=0,  # Убираем белый абрис
             yaxis='y2',
-            hovertemplate='%{customdata}<extra></extra>',
-            customdata=[format_value(p['value1']) for p in value1_points]
+            hovertemplate='Объём: %{y:,.0f} ₽<extra></extra>'
         ))
     
     # Объём облигации 2 (светло-розовый)
@@ -1011,10 +1009,10 @@ def create_combined_ytm_chart(
             x=[p['idx'] for p in value2_points],
             y=[p['value2'] for p in value2_points],
             name=f'{bond2_name} объём',
-            marker_color='rgba(231, 76, 60, 0.3)',  # Светло-розовый
+            marker_color='rgba(231, 76, 60, 0.3)',
+            marker_line_width=0,  # Убираем белый абрис
             yaxis='y2',
-            hovertemplate='%{customdata}<extra></extra>',
-            customdata=[format_value(p['value2']) for p in value2_points]
+            hovertemplate='Объём: %{y:,.0f} ₽<extra></extra>'
         ))
     
     # Подпись о границе склейки
