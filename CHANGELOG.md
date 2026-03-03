@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.5.6] - 2026-03-03
+
+### Added
+- **Data Period Info**: Display actual data period for each bond under Spread Analytics chart
+  - Shows individual date ranges for both bonds
+  - Shows combined period after inner join (determined by later-issued bond)
+
+### Info
+- Spread Analytics uses **inner join** on dates → only days with BOTH bonds' data are shown
+- If one bond was issued later, the chart starts from that date regardless of requested period
+
 ## [v0.5.5] - 2026-03-03
 
 ### Fixed
