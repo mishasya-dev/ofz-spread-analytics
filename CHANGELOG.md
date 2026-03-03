@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.5.3] - 2026-03-01
+
+### Added
+- **Test Suite**: New tests for period slider functionality
+  - `tests/test_period_slider.py`: 9 tests for incremental loading logic
+  - Tests for `fetch_historical_data_cached()` behavior
+  - Tests for slider range validation (candle period slider)
+  - Tests for edge case: hourly interval with 30-day period (min == max)
+
 ## [v0.5.2] - 2026-03-01
 
 ### Fixed
