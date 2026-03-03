@@ -1095,7 +1095,7 @@ def main():
                     st.code("pip install statsmodels", language="bash")
                 except Exception as e:
                     st.error(f"❌ Ошибка анализа: {e}")
-                    logger.error(f"Cointegration analysis error: {e}", exc_info=True))
+                    logger.error(f"Cointegration analysis error: {e}", exc_info=True)
     
     st.divider()
     
