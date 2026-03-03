@@ -1278,15 +1278,17 @@ def create_spread_analytics_chart(
             ticktext = [date_labels[i] for i in tickvals]
             
             # --- ВЕРХНЯЯ ПАНЕЛЬ: YTM (yaxis='y') ---
+            # Bond1 - дата показывается вверху unified hover
             fig.add_trace(go.Scatter(
                 x=x_indices,
                 y=combined['ytm_long'],
                 name=bond1_name,
                 line=dict(color=BOND1_COLORS["history"], width=2),
                 customdata=date_labels,
-                hovertemplate=f'📅 %{{customdata}}<br>{bond1_name}: %{{y:.2f}}%<extra></extra>'
+                hovertemplate=f'<b>📅 %{{customdata}}</b><br><br>{bond1_name}: %{{y:.2f}}%<extra></extra>'
             ))
             
+            # Bond2 - без даты, только значение
             fig.add_trace(go.Scatter(
                 x=x_indices,
                 y=combined['ytm_short'],
@@ -1419,8 +1421,10 @@ def create_spread_analytics_chart(
             gridcolor='rgba(200, 200, 200, 0.3)',
             griddash='dot'
         ),
-        # X-ось (даты внизу)
+        # X-ось (привязана к нижней панели yaxis2)
         xaxis=dict(
+            domain=[0.0, 1.0],
+            anchor='y2',  # Привязываем к нижней оси Y
             showgrid=True,
             gridwidth=1,
             gridcolor='rgba(200, 200, 200, 0.3)',
@@ -1428,7 +1432,7 @@ def create_spread_analytics_chart(
             tickmode='array',
             tickvals=tickvals,
             ticktext=ticktext,
-            side='bottom'  # Даты внизу графика
+            side='bottom'
         ),
         # Разделительная линия между панелями
         shapes=[

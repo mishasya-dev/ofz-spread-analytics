@@ -8,8 +8,8 @@ from datetime import datetime
 from pathlib import Path
 
 # Основные данные версии
-VERSION = "0.6.2"
-RELEASE_NAME = "Date in Hover + X-axis Bottom"
+VERSION = "0.6.3"
+RELEASE_NAME = "Fix Date Position"
 
 def get_git_info():
     """Получить информацию из git"""
