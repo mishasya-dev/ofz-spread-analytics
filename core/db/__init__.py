@@ -7,6 +7,7 @@ from .connection import get_connection, init_database, DB_PATH
 from .bonds_repo import BondsRepository
 from .ytm_repo import YTMRepository
 from .spreads_repo import SpreadsRepository
+from .facade import DatabaseFacade, get_db_facade
 
 __all__ = [
     'get_connection',
@@ -15,6 +16,13 @@ __all__ = [
     'BondsRepository',
     'YTMRepository',
     'SpreadsRepository',
+    'DatabaseFacade',
+    'get_db_facade',
+    # Фабрики
+    'get_bonds_repo',
+    'get_ytm_repo',
+    'get_spreads_repo',
+    'get_ytm_repo',  # Алиас для совместимости
 ]
 
 
