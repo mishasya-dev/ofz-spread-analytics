@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.5.1] - 2026-03-01
+
+### Fixed
+- **Slider Crash**: Fixed `StreamlitAPIException: Slider min_value must be less than the max_value` when candle period slider had equal min/max values (occurred with 1-hour interval and 30-day analysis period)
+- **UI Improvement**: When slider range is degenerate (min >= max), show info message instead of crashing
+
 ## [v0.5.0] - 2026-03-01
 
 ### Added
