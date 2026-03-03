@@ -1233,15 +1233,13 @@ def create_spread_analytics_chart(
     """
     
     # Создаём subplot с двумя панелями
+    # Заголовок второй панели перенесён вниз (annotation в update_layout)
     fig = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
         vertical_spacing=0.08,
         row_heights=[0.5, 0.5],
-        subplot_titles=(
-            "Доходности YTM",
-            f"Анализ спреда (Rolling {window} дн., Z-Score ±{z_threshold})"
-        )
+        subplot_titles=("Доходности YTM",)  # Только для верхней панели
     )
     
     ytm_col = 'ytm'
@@ -1403,14 +1401,26 @@ def create_spread_analytics_chart(
         template="plotly_white",
         height=700,
         hovermode='x unified',
-        margin=dict(l=60, r=30, t=60, b=40),
+        margin=dict(l=60, r=30, t=60, b=60),  # Увеличил bottom margin для заголовка
         legend=dict(
             orientation="h",
             yanchor="bottom",
             y=1.02,
             xanchor="right",
             x=1
-        )
+        ),
+        # Заголовок второй панели внизу
+        annotations=[
+            dict(
+                text=f"Анализ спреда (Rolling {window} дн., Z-Score ±{z_threshold})",
+                x=0.5,
+                y=-0.08,  # Ниже графика
+                xref="paper",
+                yref="paper",
+                showarrow=False,
+                font=dict(size=14)
+            )
+        ]
     )
 
     # Сетка (пунктир) и категориальная ось X
