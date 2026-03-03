@@ -1027,13 +1027,18 @@ def main():
     # ==========================================
     st.subheader("📊 Spread Analytics с Z-Score")
     
+    # Логируем количество данных для графика
+    logger.info(f"Spread Analytics: daily_df1={len(daily_df1)}, daily_df2={len(daily_df2)}, period={period}")
+    
     fig_analytics = create_spread_analytics_chart(
         daily_df1, daily_df2,
         bond1.name, bond2.name,
         window=st.session_state.spread_window,
         z_threshold=st.session_state.z_threshold
     )
-    st.plotly_chart(fig_analytics, use_container_width=True)
+    # key для принудительной перерисовки при изменении периода или облигаций
+    chart_key = f"spread_analytics_{period}_{bond1.isin}_{bond2.isin}_{len(daily_df1)}_{len(daily_df2)}"
+    st.plotly_chart(fig_analytics, use_container_width=True, key=chart_key)
     
     # Легенда сигналов
     st.markdown("""
@@ -1053,14 +1058,16 @@ def main():
         bond1.name, bond2.name,
         candle_days=candle_days
     )
-    st.plotly_chart(fig2, use_container_width=True)
+    chart_key2 = f"combined_ytm_{period}_{candle_days}_{bond1.isin}_{bond2.isin}_{len(daily_df1)}_{len(intraday_df1)}"
+    st.plotly_chart(fig2, use_container_width=True, key=chart_key2)
     
     # График 3: Спред intraday (с перцентилями от дневных данных)
     fig3 = create_intraday_spread_chart(
         intraday_spread_df,
         daily_stats=daily_stats  # Перцентили от дневных!
     )
-    st.plotly_chart(fig3, use_container_width=True)
+    chart_key3 = f"intraday_spread_{candle_days}_{bond1.isin}_{bond2.isin}_{len(intraday_spread_df)}"
+    st.plotly_chart(fig3, use_container_width=True, key=chart_key3)
     
     # ==========================================
     # АВТООБНОВЛЕНИЕ
