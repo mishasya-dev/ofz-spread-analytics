@@ -1397,7 +1397,7 @@ def create_spread_analytics_chart(
     
     # Оформление
     fig.update_layout(
-        title="📊 Профессиональный анализ спреда",
+        title="Анализ спреда",
         template="plotly_white",
         height=700,
         hovermode='x unified',
@@ -1442,7 +1442,6 @@ def create_spread_analytics_chart(
         tickmode='array',
         tickvals=tickvals if 'tickvals' in dir() else [],
         ticktext=ticktext if 'ticktext' in dir() else [],
-        title_text="Дата",
         row=2, col=1
     )
     fig.update_yaxes(
