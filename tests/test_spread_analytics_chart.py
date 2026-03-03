@@ -3,14 +3,25 @@
 
 Проверяет корректность отображения:
 - Структура графика (traces, layout)
-- Hover labels с датой вверху
+- Hover labels с датой внизу (последний trace в unified hover)
 - X-axis (даты внизу, привязка к нижней панели)
 - Y-axis domains (верхняя и нижняя панели)
 - Легенда (индивидуальное переключение traces)
 - Разделительная линия между панелями
 - Аннотации и заголовки
 
-Версия: 0.6.5 (STABLE)
+Hover label структура (hovermode='x unified'):
+┌─────────────────────┐
+│ Bond1: 14.52%       │
+│ Bond2: 13.85%       │
+│ +2σ: 125.3 б.п.     │
+│ -2σ: 45.2 б.п.      │
+│ MA(30): 85.1 б.п.   │
+│ Спред: 67.0 б.п.    │
+│ 📅 15.01.25         │  ← Дата внизу (от последнего trace)
+└─────────────────────┘
+
+Версия: 0.6.6 (STABLE)
 """
 import sys
 import os
@@ -175,8 +186,8 @@ class TestHoverLabels:
             assert hasattr(trace, 'customdata'), f"Trace {i} missing customdata"
             assert trace.customdata is not None, f"Trace {i} customdata is None"
 
-    def test_date_in_invisible_traces_hovertemplate(self, chart_figure):
-        """Тест: невидимые traces показывают дату в hovertemplate"""
+    def test_date_via_invisible_traces(self, chart_figure):
+        """Тест: дата показывается через невидимые traces (0 и 3)"""
         # Trace 0 - невидимый для YTM панели
         hover0 = chart_figure.data[0].hovertemplate
         assert 'customdata' in hover0, "Trace 0 should show date"
@@ -188,8 +199,9 @@ class TestHoverLabels:
         assert '📅' in hover3, "Trace 3 should have calendar emoji"
 
     def test_visible_traces_do_not_show_date(self, chart_figure):
-        """Тест: видимые traces НЕ показывают дату (она от невидимых)"""
-        for i in [1, 2, 4, 5, 6, 7]:  # Видимые traces
+        """Тест: видимые traces НЕ показывают дату (она от невидимых traces)"""
+        # Видимые traces: 1, 2, 4, 5, 6, 7
+        for i in [1, 2, 4, 5, 6, 7]:
             hover = chart_figure.data[i].hovertemplate
             assert '📅' not in hover, f"Trace {i} should not show date emoji"
 

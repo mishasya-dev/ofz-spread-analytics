@@ -4,21 +4,20 @@
 Ожидаемая схема hover label (hovermode='x unified'):
 
 ┌────────────────────────────┐
-│ 📅 15.01.25                │  ← Дата жирным вверху (один раз)
-│                            │  ← Пустая строка
 │ ОФЗ 26238: 14.52%          │  ← Bond1
 │ ОФЗ 26243: 13.85%          │  ← Bond2
-│                            │
 │ +2σ: 125.3 б.п.            │
 │ -2σ: 45.2 б.п.             │
 │ MA(30): 85.1 б.п.          │
 │ Спред: 67.0 б.п.           │
+│ 📅 15.01.25                │  ← Дата внизу (от невидимого trace)
 └────────────────────────────┘
 
 Ключевые требования:
-1. Дата показывается один раз в самом верху
+1. Дата показывается один раз внизу hover label
 2. Дата показывается при наведении на ЛЮБУЮ часть графика
 3. Формат даты: DD.MM.YY
+4. Реализовано через невидимые traces (trace 0 и trace 3)
 """
 import sys
 import os
@@ -96,6 +95,7 @@ class TestHoverLabelSchema:
         Тест: дата должна быть в hovertemplate
         
         Проверяем что hovertemplate содержит customdata
+        Дата показывается внизу unified hover label
         """
         import importlib.util
         spec = importlib.util.spec_from_file_location('charts', 'components/charts.py')
@@ -108,14 +108,12 @@ class TestHoverLabelSchema:
             df1, df2, 'Bond1', 'Bond2', window=30, z_threshold=2.0
         )
         
-        # Первый trace (Bond1) должен показывать дату вверху
-        first_trace = fig.data[0]
-        hovertemplate = first_trace.hovertemplate
-        
-        # Должен содержать customdata и эмодзи календаря
-        assert '%{customdata}' in hovertemplate, "Hovertemplate should contain %{customdata}"
-        assert '📅' in hovertemplate or 'customdata' in hovertemplate.lower(), \
-            "Hovertemplate should show date with calendar emoji"
+        # Невидимые traces должны содержать customdata для даты
+        # Trace 0 (невидимый для YTM) и Trace 3 (невидимый для Spread)
+        for i in [0, 3]:
+            hover = fig.data[i].hovertemplate
+            assert '%{customdata}' in hover, f"Trace {i} hovertemplate should contain customdata"
+            assert '📅' in hover, f"Trace {i} hovertemplate should have calendar emoji"
 
     def test_hovermode_is_x_unified(self, sample_data):
         """
@@ -137,15 +135,12 @@ class TestHoverLabelSchema:
         assert fig.layout.hovermode == 'x unified', \
             f"hovermode should be 'x unified', got: {fig.layout.hovermode}"
 
-    def test_date_at_top_of_hovertemplate(self, sample_data):
+    def test_date_via_invisible_traces(self, sample_data):
         """
-        Тест: дата должна быть вверху hovertemplate (до остальных значений)
+        Тест: дата добавляется через невидимые traces
         
-        Схема:
-        1. 📅 DD.MM.YY (вверху)
-        2. Пустая строка
-        3. Bond значения
-        4. Spread значения
+        Невидимые traces (0 и 3) показывают дату в hovertemplate.
+        В unified hover дата появляется в конце списка traces.
         """
         import importlib.util
         spec = importlib.util.spec_from_file_location('charts', 'components/charts.py')
@@ -158,17 +153,19 @@ class TestHoverLabelSchema:
             df1, df2, 'Bond1', 'Bond2', window=30, z_threshold=2.0
         )
         
-        # Первый trace должен начинаться с даты
-        first_trace = fig.data[0]
-        hovertemplate = first_trace.hovertemplate
+        # Невидимые traces для даты
+        # Trace 0: невидимый для верхней панели (YTM)
+        # Trace 3: невидимый для нижней панели (Spread)
+        invisible_traces = [0, 3]
         
-        # Дата должна быть в начале (до имени облигации)
-        date_pos = hovertemplate.find('customdata')
-        bond_pos = hovertemplate.find('Bond1')
-        
-        if bond_pos >= 0:  # Если имя bond есть в template
-            assert date_pos < bond_pos, \
-                f"Date should come before bond name in hovertemplate. Date pos: {date_pos}, Bond pos: {bond_pos}"
+        for i in invisible_traces:
+            trace = fig.data[i]
+            # Невидимый trace не показывается в легенде
+            assert trace.showlegend == False, f"Trace {i} should not show in legend"
+            # Но имеет customdata с датами
+            assert trace.customdata is not None, f"Trace {i} should have customdata"
+            # И hovertemplate с датой
+            assert 'customdata' in trace.hovertemplate, f"Trace {i} should show date in hover"
 
     def test_number_of_traces(self, sample_data):
         """
@@ -204,9 +201,11 @@ class TestHoverLabelSchema:
         
         При hovermode='x unified' Plotly объединяет hovertemplates всех traces.
         
-        Чтобы дата показывалась только один раз вверху:
-        - Первый trace: показывает дату
-        - Остальные traces: НЕ показывают дату
+        Дата показывается через невидимые traces:
+        - Trace 0: для верхней панели (YTM)
+        - Trace 3: для нижней панели (Spread)
+        
+        В unified hover дата появляется в конце, после всех видимых traces.
         """
         import importlib.util
         spec = importlib.util.spec_from_file_location('charts', 'components/charts.py')
@@ -219,19 +218,12 @@ class TestHoverLabelSchema:
             df1, df2, 'Bond1', 'Bond2', window=30, z_threshold=2.0
         )
         
-        # Первый trace должен показывать дату
-        first_hover = fig.data[0].hovertemplate
-        assert 'customdata' in first_hover, "First trace should show date"
-        
-        # Остальные traces НЕ должны дублировать дату вверху
-        # (они могут иметь customdata для других целей, но не показывать её первой строкой)
-        for i, trace in enumerate(fig.data[1:], start=1):
-            hover = trace.hovertemplate
-            # Если trace показывает customdata, он не должен быть первым элементом
-            if 'customdata' in hover:
-                # Дата не должна быть в самом начале
-                # (допускается дата в середине или конце hovertemplate)
-                pass  # Будет уточнено после реализации
+        # Видимые traces НЕ должны показывать дату (она от невидимых)
+        visible_traces = [1, 2, 4, 5, 6, 7]  # Bond1, Bond2, +2σ, -2σ, MA, Спред
+        for i in visible_traces:
+            hover = fig.data[i].hovertemplate
+            # Видимые traces показывают только значения, без даты
+            assert '📅' not in hover, f"Trace {i} should not show date emoji"
 
 
 class TestHoverLabelIntegration:
