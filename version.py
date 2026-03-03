@@ -8,8 +8,8 @@ from datetime import datetime
 from pathlib import Path
 
 # Основные данные версии
-VERSION = "0.5.11"
-RELEASE_NAME = "Revert Spike Sync"
+VERSION = "0.6.0"
+RELEASE_NAME = "Single Chart Dual Y-Axis"
 
 def get_git_info():
     """Получить информацию из git"""

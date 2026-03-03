@@ -1212,13 +1212,13 @@ def create_spread_analytics_chart(
     z_threshold: float = 2.0
 ) -> go.Figure:
     """
-    Создать профессиональную панель анализа спреда с Z-Score.
+    Создать панель анализа спреда с Z-Score.
     
-    Две панели:
-    1. Доходности YTM обеих облигаций
-    2. Спред + Rolling Mean + ±Z Sigma границы
+    Один график с двумя Y-осями (domain):
+    - Верхняя часть: Доходности YTM обеих облигаций
+    - Нижняя часть: Спред + Rolling Mean + ±Z Sigma границы
     
-    Использует категориальную ось X (без неторговых дней).
+    Spike line работает по всему графику благодаря единой X-оси.
     
     Args:
         df1: DataFrame с YTM облигации 1 (длинная)
@@ -1229,18 +1229,14 @@ def create_spread_analytics_chart(
         z_threshold: Порог Z-Score для границ (обычно 2.0)
         
     Returns:
-        Plotly Figure с двумя панелями
+        Plotly Figure с двумя панелями на одном графике
     """
     
-    # Создаём subplot с двумя панелями
-    # Заголовок второй панели перенесён вниз (annotation в update_layout)
-    fig = make_subplots(
-        rows=2, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.08,
-        row_heights=[0.5, 0.5],
-        subplot_titles=("Доходности YTM",)  # Только для верхней панели
-    )
+    fig = go.Figure()
+    
+    # Инициализируем переменные для пустого случая
+    tickvals = []
+    ticktext = []
     
     ytm_col = 'ytm'
 
@@ -1269,7 +1265,6 @@ def create_spread_analytics_chart(
             combined['lower_band'] = combined['rolling_mean'] - z_threshold * combined['rolling_std']
             
             # === КАТЕГОРИАЛЬНАЯ ОСЬ ===
-            # x = порядковый номер торговой сессии
             n_points = len(combined)
             x_indices = list(range(n_points))
             
@@ -1282,85 +1277,74 @@ def create_spread_analytics_chart(
             tickvals = x_indices[::tick_step]
             ticktext = [date_labels[i] for i in tickvals]
             
-            # --- ПАНЕЛЬ 1: Доходности ---
-            # Первый trace: добавляем дату внизу (для unified hover)
-            fig.add_trace(
-                go.Scatter(
-                    x=x_indices,
-                    y=combined['ytm_long'],
-                    name=bond1_name,
-                    line=dict(color=BOND1_COLORS["history"], width=2),
-                    customdata=date_labels,
-                    hovertemplate=f'{bond1_name}: %{{y:.2f}}%<br><br>📅 %{{customdata}}<extra></extra>'
-                ),
-                row=1, col=1
-            )
+            # --- ВЕРХНЯЯ ПАНЕЛЬ: YTM (yaxis='y') ---
+            fig.add_trace(go.Scatter(
+                x=x_indices,
+                y=combined['ytm_long'],
+                name=bond1_name,
+                legendgroup='ytm',
+                line=dict(color=BOND1_COLORS["history"], width=2),
+                customdata=date_labels,
+                hovertemplate=f'{bond1_name}: %{{y:.2f}}%<extra></extra>'
+            ))
             
-            # Второй trace: без даты
-            fig.add_trace(
-                go.Scatter(
-                    x=x_indices,
-                    y=combined['ytm_short'],
-                    name=bond2_name,
-                    line=dict(color=BOND2_COLORS["history"], width=2),
-                    hovertemplate=f'{bond2_name}: %{{y:.2f}}%<extra></extra>'
-                ),
-                row=1, col=1
-            )
+            fig.add_trace(go.Scatter(
+                x=x_indices,
+                y=combined['ytm_short'],
+                name=bond2_name,
+                legendgroup='ytm',
+                line=dict(color=BOND2_COLORS["history"], width=2),
+                hovertemplate=f'{bond2_name}: %{{y:.2f}}%<extra></extra>'
+            ))
             
-            # --- ПАНЕЛЬ 2: Спред и анализ ---
-            # Верхняя граница - первый trace, добавляем дату внизу
-            fig.add_trace(
-                go.Scatter(
-                    x=x_indices,
-                    y=combined['upper_band'],
-                    name=f"+{z_threshold}σ",
-                    line=dict(color='rgba(255, 0, 0, 0.4)', dash='dot', width=1),
-                    showlegend=True,
-                    customdata=date_labels,
-                    hovertemplate=f'+{z_threshold}σ: %{{y:.1f}} б.п.<br><br>📅 %{{customdata}}<extra></extra>'
-                ),
-                row=2, col=1
-            )
+            # --- НИЖНЯЯ ПАНЕЛЬ: Спред (yaxis='y2') ---
+            # Верхняя граница
+            fig.add_trace(go.Scatter(
+                x=x_indices,
+                y=combined['upper_band'],
+                name=f"+{z_threshold}σ",
+                legendgroup='spread',
+                yaxis='y2',
+                line=dict(color='rgba(255, 0, 0, 0.4)', dash='dot', width=1),
+                showlegend=True,
+                hovertemplate=f'+{z_threshold}σ: %{{y:.1f}} б.п.<extra></extra>'
+            ))
             
-            # Нижняя граница с заливкой - без даты
-            fig.add_trace(
-                go.Scatter(
-                    x=x_indices,
-                    y=combined['lower_band'],
-                    name=f"-{z_threshold}σ",
-                    line=dict(color='rgba(0, 180, 0, 0.4)', dash='dot', width=1),
-                    fill='tonexty',
-                    fillcolor='rgba(128, 128, 128, 0.08)',
-                    showlegend=True,
-                    hovertemplate=f'-{z_threshold}σ: %{{y:.1f}} б.п.<extra></extra>'
-                ),
-                row=2, col=1
-            )
+            # Нижняя граница с заливкой
+            fig.add_trace(go.Scatter(
+                x=x_indices,
+                y=combined['lower_band'],
+                name=f"-{z_threshold}σ",
+                legendgroup='spread',
+                yaxis='y2',
+                line=dict(color='rgba(0, 180, 0, 0.4)', dash='dot', width=1),
+                fill='tonexty',
+                fillcolor='rgba(128, 128, 128, 0.1)',
+                showlegend=True,
+                hovertemplate=f'-{z_threshold}σ: %{{y:.1f}} б.п.<extra></extra>'
+            ))
             
-            # Rolling Mean - без даты
-            fig.add_trace(
-                go.Scatter(
-                    x=x_indices,
-                    y=combined['rolling_mean'],
-                    name=f"MA({window})",
-                    line=dict(color='gray', dash='dash', width=1),
-                    hovertemplate=f'MA({window}): %{{y:.1f}} б.п.<extra></extra>'
-                ),
-                row=2, col=1
-            )
+            # Rolling Mean
+            fig.add_trace(go.Scatter(
+                x=x_indices,
+                y=combined['rolling_mean'],
+                name=f"MA({window})",
+                legendgroup='spread',
+                yaxis='y2',
+                line=dict(color='gray', dash='dash', width=1),
+                hovertemplate=f'MA({window}): %{{y:.1f}} б.п.<extra></extra>'
+            ))
             
-            # Спред - без даты
-            fig.add_trace(
-                go.Scatter(
-                    x=x_indices,
-                    y=combined['spread'],
-                    name="Спред",
-                    line=dict(color=SPREAD_COLOR, width=2),
-                    hovertemplate=f'Спред: %{{y:.1f}} б.п.<extra></extra>'
-                ),
-                row=2, col=1
-            )
+            # Спред
+            fig.add_trace(go.Scatter(
+                x=x_indices,
+                y=combined['spread'],
+                name="Спред",
+                legendgroup='spread',
+                yaxis='y2',
+                line=dict(color=SPREAD_COLOR, width=2),
+                hovertemplate=f'Спред: %{{y:.1f}} б.п.<extra></extra>'
+            ))
             
             # Текущая точка с сигналом
             last_spread = combined['spread'].iloc[-1]
@@ -1379,29 +1363,37 @@ def create_spread_analytics_chart(
                 marker_color = 'gray'
                 signal = "Нейтрально"
             
-            fig.add_trace(
-                go.Scatter(
-                    x=[last_idx],
-                    y=[last_spread],
-                    mode='markers+text',
-                    marker=dict(size=12, color=marker_color, symbol='diamond'),
-                    text=[f"Z={last_zscore:.1f}"],
-                    textposition="top center",
-                    textfont=dict(size=10, color=marker_color),
-                    name=f"Текущий: {last_spread:.1f} б.п.",
-                    customdata=[last_date_label],
-                    hovertemplate=f'<b>{last_date_label}</b><br>{signal}<br>Спред: {last_spread:.1f} б.п.<br>Z: {last_zscore:.2f}<extra></extra>'
-                ),
-                row=2, col=1
-            )
+            fig.add_trace(go.Scatter(
+                x=[last_idx],
+                y=[last_spread],
+                mode='markers+text',
+                name=f"Текущий: {last_spread:.1f} б.п.",
+                legendgroup='spread',
+                yaxis='y2',
+                marker=dict(size=12, color=marker_color, symbol='diamond'),
+                text=[f"Z={last_zscore:.1f}"],
+                textposition="top center",
+                textfont=dict(size=10, color=marker_color),
+                hovertemplate=f'<b>{last_date_label}</b><br>{signal}<br>Спред: {last_spread:.1f} б.п.<br>Z: {last_zscore:.2f}<extra></extra>'
+            ))
     
-    # Оформление
+    # --- Оформление с двумя Y-осями ---
+    # Вычисляем диапазоны для Y-осей
+    ytm_min = combined['ytm_long'].min() if 'combined' in dir() and len(combined) > 0 else 13
+    ytm_max = combined['ytm_long'].max() if 'combined' in dir() and len(combined) > 0 else 16
+    spread_min = combined['spread'].min() if 'combined' in dir() and len(combined) > 0 else -50
+    spread_max = combined['spread'].max() if 'combined' in dir() and len(combined) > 0 else 150
+    
+    # Padding
+    ytm_padding = (ytm_max - ytm_min) * 0.1
+    spread_padding = (spread_max - spread_min) * 0.1
+    
     fig.update_layout(
         title="Анализ спреда",
         template="plotly_white",
         height=700,
-        hovermode='x unified',  # Единая всплывашка для всех traces
-        margin=dict(l=60, r=30, t=60, b=60),
+        hovermode='x unified',
+        margin=dict(l=60, r=60, t=60, b=60),
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -1409,56 +1401,63 @@ def create_spread_analytics_chart(
             xanchor="right",
             x=1
         ),
-        # Заголовок второй панели внизу
+        # YTM ось (верхняя панель)
+        yaxis=dict(
+            domain=[0.52, 1.0],
+            title=dict(text="YTM (%)", standoff=10),
+            range=[ytm_min - ytm_padding, ytm_max + ytm_padding],
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='rgba(200, 200, 200, 0.3)',
+            griddash='dot'
+        ),
+        # Спред ось (нижняя панель)
+        yaxis2=dict(
+            domain=[0.0, 0.48],
+            title=dict(text="Спред (б.п.)", standoff=10),
+            range=[spread_min - spread_padding, spread_max + spread_padding],
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='rgba(200, 200, 200, 0.3)',
+            griddash='dot'
+        ),
+        # X-ось
+        xaxis=dict(
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='rgba(200, 200, 200, 0.3)',
+            griddash='dot',
+            tickmode='array',
+            tickvals=tickvals,
+            ticktext=ticktext
+        ),
+        # Разделительная линия между панелями
+        shapes=[
+            dict(
+                type='line',
+                xref='paper', yref='paper',
+                x0=0, y0=0.5, x1=1, y1=0.5,
+                line=dict(color='rgba(100, 100, 100, 0.3)', width=1, dash='solid')
+            )
+        ],
+        # Аннотации для заголовков панелей
         annotations=[
             dict(
+                text="Доходности YTM",
+                x=0.01, y=1.0,
+                xref='paper', yref='paper',
+                showarrow=False,
+                font=dict(size=12, color='rgba(100, 100, 100, 0.8)'),
+                yanchor='bottom'
+            ),
+            dict(
                 text=f"Анализ спреда (Rolling {window} дн., Z-Score ±{z_threshold})",
-                x=0.5,
-                y=-0.08,
-                xref="paper",
-                yref="paper",
+                x=0.5, y=-0.06,
+                xref='paper', yref='paper',
                 showarrow=False,
                 font=dict(size=14)
             )
         ]
-    )
-
-    # Сетка (пунктир) и категориальная ось X
-    fig.update_xaxes(
-        showgrid=True,
-        gridwidth=1,
-        gridcolor='rgba(200, 200, 200, 0.3)',
-        griddash='dot',
-        tickmode='array',
-        tickvals=tickvals if 'tickvals' in dir() else [],
-        ticktext=ticktext if 'ticktext' in dir() else [],
-        row=1, col=1
-    )
-    fig.update_xaxes(
-        showgrid=True,
-        gridwidth=1,
-        gridcolor='rgba(200, 200, 200, 0.3)',
-        griddash='dot',
-        tickmode='array',
-        tickvals=tickvals if 'tickvals' in dir() else [],
-        ticktext=ticktext if 'ticktext' in dir() else [],
-        row=2, col=1
-    )
-    fig.update_yaxes(
-        showgrid=True,
-        gridwidth=1,
-        gridcolor='rgba(200, 200, 200, 0.3)',
-        griddash='dot',
-        title_text="YTM (%)",
-        row=1, col=1
-    )
-    fig.update_yaxes(
-        showgrid=True,
-        gridwidth=1,
-        gridcolor='rgba(200, 200, 200, 0.3)',
-        griddash='dot',
-        title_text="Спред (б.п.)",
-        row=2, col=1
     )
     
     return fig
