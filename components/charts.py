@@ -1282,7 +1282,6 @@ def create_spread_analytics_chart(
                 x=x_indices,
                 y=combined['ytm_long'],
                 name=bond1_name,
-                legendgroup='ytm',
                 line=dict(color=BOND1_COLORS["history"], width=2),
                 customdata=date_labels,
                 hovertemplate=f'{bond1_name}: %{{y:.2f}}%<extra></extra>'
@@ -1292,7 +1291,6 @@ def create_spread_analytics_chart(
                 x=x_indices,
                 y=combined['ytm_short'],
                 name=bond2_name,
-                legendgroup='ytm',
                 line=dict(color=BOND2_COLORS["history"], width=2),
                 hovertemplate=f'{bond2_name}: %{{y:.2f}}%<extra></extra>'
             ))
@@ -1303,7 +1301,6 @@ def create_spread_analytics_chart(
                 x=x_indices,
                 y=combined['upper_band'],
                 name=f"+{z_threshold}σ",
-                legendgroup='spread',
                 yaxis='y2',
                 line=dict(color='rgba(255, 0, 0, 0.4)', dash='dot', width=1),
                 showlegend=True,
@@ -1315,7 +1312,6 @@ def create_spread_analytics_chart(
                 x=x_indices,
                 y=combined['lower_band'],
                 name=f"-{z_threshold}σ",
-                legendgroup='spread',
                 yaxis='y2',
                 line=dict(color='rgba(0, 180, 0, 0.4)', dash='dot', width=1),
                 fill='tonexty',
@@ -1329,7 +1325,6 @@ def create_spread_analytics_chart(
                 x=x_indices,
                 y=combined['rolling_mean'],
                 name=f"MA({window})",
-                legendgroup='spread',
                 yaxis='y2',
                 line=dict(color='gray', dash='dash', width=1),
                 hovertemplate=f'MA({window}): %{{y:.1f}} б.п.<extra></extra>'
@@ -1340,7 +1335,6 @@ def create_spread_analytics_chart(
                 x=x_indices,
                 y=combined['spread'],
                 name="Спред",
-                legendgroup='spread',
                 yaxis='y2',
                 line=dict(color=SPREAD_COLOR, width=2),
                 hovertemplate=f'Спред: %{{y:.1f}} б.п.<extra></extra>'
@@ -1368,7 +1362,6 @@ def create_spread_analytics_chart(
                 y=[last_spread],
                 mode='markers+text',
                 name=f"Текущий: {last_spread:.1f} б.п.",
-                legendgroup='spread',
                 yaxis='y2',
                 marker=dict(size=12, color=marker_color, symbol='diamond'),
                 text=[f"Z={last_zscore:.1f}"],
