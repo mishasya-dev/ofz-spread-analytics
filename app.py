@@ -1030,6 +1030,20 @@ def main():
     # Логируем количество данных для графика
     logger.info(f"Spread Analytics: daily_df1={len(daily_df1)}, daily_df2={len(daily_df2)}, period={period}")
     
+    # Показываем фактический период данных
+    if not daily_df1.empty and not daily_df2.empty:
+        df1_start = daily_df1.index.min().strftime('%d.%m.%Y')
+        df1_end = daily_df1.index.max().strftime('%d.%m.%Y')
+        df2_start = daily_df2.index.min().strftime('%d.%m.%Y')
+        df2_end = daily_df2.index.max().strftime('%d.%m.%Y')
+        
+        # После inner join период определяется "младшей" облигацией
+        actual_start = max(daily_df1.index.min(), daily_df2.index.min()).strftime('%d.%m.%Y')
+        
+        st.caption(f"📅 {bond1.name}: {df1_start} — {df1_end} ({len(daily_df1)} дн.) | "
+                   f"{bond2.name}: {df2_start} — {df2_end} ({len(daily_df2)} дн.)")
+        st.caption(f"📊 Общий период после объединения: с **{actual_start}** (по дате более позднего выпуска)")
+    
     fig_analytics = create_spread_analytics_chart(
         daily_df1, daily_df2,
         bond1.name, bond2.name,
