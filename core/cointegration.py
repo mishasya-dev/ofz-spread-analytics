@@ -170,7 +170,8 @@ class CointegrationAnalyzer:
         self,
         ytm1: pd.Series,
         ytm2: pd.Series,
-        trend: str = 'c'
+        trend: str = 'c',
+        bidirectional: bool = True
     ) -> Dict:
         """
         Engle-Granger тест на коинтеграцию.
@@ -179,6 +180,12 @@ class CointegrationAnalyzer:
         H1: ряды коинтегрированы
         
         Важно: оба ряда должны быть нестационарны!
+        
+        Args:
+            ytm1: YTM первой облигации
+            ytm2: YTM второй облигации
+            trend: тип тренда ('c' = константа)
+            bidirectional: проверять оба направления и брать лучший результат
         """
         if not STATSMODELS_AVAILABLE:
             return {'error': 'statsmodels not installed'}
@@ -200,7 +207,24 @@ class CointegrationAnalyzer:
         
         # Engle-Granger тест
         try:
-            score, pvalue, critical_values = coint(ytm1_sync, ytm2_sync, trend=trend)
+            # Направление 1: ytm1 ~ ytm2
+            score1, pvalue1, crit1 = coint(ytm1_sync, ytm2_sync, trend=trend)
+            
+            if bidirectional:
+                # Направление 2: ytm2 ~ ytm1
+                score2, pvalue2, crit2 = coint(ytm2_sync, ytm1_sync, trend=trend)
+                
+                # Берём лучший результат (минимальный p-value)
+                if pvalue2 < pvalue1:
+                    score, pvalue, critical_values = score2, pvalue2, crit2
+                    direction = 'ytm2_ytm1'
+                else:
+                    score, pvalue, critical_values = score1, pvalue1, crit1
+                    direction = 'ytm1_ytm2'
+            else:
+                score, pvalue, critical_values = score1, pvalue1, crit1
+                direction = 'ytm1_ytm2'
+                
         except (ValueError, np.linalg.LinAlgError) as e:
             return {
                 'test': 'Engle-Granger',
@@ -229,6 +253,7 @@ class CointegrationAnalyzer:
             'ytm2_stationary': adf2.get('is_stationary'),
             'both_nonstationary': both_nonstationary,
             'n_observations': len(ytm1_sync),
+            'direction': direction,
             'interpretation': self._interpret_coint(pvalue, both_nonstationary)
         }
     
