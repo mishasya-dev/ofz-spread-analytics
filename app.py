@@ -278,7 +278,15 @@ def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
     db_df = db.load_daily_ytm(secid, start_date=start_date)
     last_db_date = db.get_last_daily_ytm_date(secid)
     
-    if not db_df.empty and last_db_date:
+    # Проверяем покрытие периода (как в fetch_candle_data_cached)
+    need_reload = False
+    if not db_df.empty:
+        db_min_date = db_df.index.min().date() if hasattr(db_df.index.min(), 'date') else db_df.index.min()
+        if db_min_date > start_date:
+            need_reload = True
+            logger.info(f"Данные в БД начинаются с {db_min_date}, нужно с {start_date} - перезагружаем")
+    
+    if not db_df.empty and last_db_date and not need_reload:
         days_since_update = (date.today() - last_db_date).days
         
         if days_since_update <= 1:
