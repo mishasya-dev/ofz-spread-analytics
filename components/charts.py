@@ -1278,17 +1278,32 @@ def create_spread_analytics_chart(
             ticktext = [date_labels[i] for i in tickvals]
             
             # --- ВЕРХНЯЯ ПАНЕЛЬ: YTM (yaxis='y') ---
-            # Bond1 - дата показывается вверху unified hover
+            # Невидимый trace для даты (первым!)
+            # Используем среднее значение YTM для позиционирования
+            ytm_avg = (combined['ytm_long'].mean() + combined['ytm_short'].mean()) / 2
+            fig.add_trace(go.Scatter(
+                x=x_indices,
+                y=[ytm_avg] * n_points,
+                name='',
+                showlegend=False,
+                hoverinfo='skip',
+                mode='lines',
+                line=dict(color='rgba(0,0,0,0)', width=0),
+                customdata=date_labels,
+                hovertemplate=f'<b>📅 %{{customdata}}</b><extra></extra>'
+            ))
+            
+            # Bond1
             fig.add_trace(go.Scatter(
                 x=x_indices,
                 y=combined['ytm_long'],
                 name=bond1_name,
                 line=dict(color=BOND1_COLORS["history"], width=2),
                 customdata=date_labels,
-                hovertemplate=f'<b>📅 %{{customdata}}</b><br><br>{bond1_name}: %{{y:.2f}}%<extra></extra>'
+                hovertemplate=f'{bond1_name}: %{{y:.2f}}%<extra></extra>'
             ))
             
-            # Bond2 - без даты, только значение
+            # Bond2
             fig.add_trace(go.Scatter(
                 x=x_indices,
                 y=combined['ytm_short'],
@@ -1299,7 +1314,22 @@ def create_spread_analytics_chart(
             ))
             
             # --- НИЖНЯЯ ПАНЕЛЬ: Спред (yaxis='y2') ---
-            # Верхняя граница - показывает дату для нижней панели
+            # Невидимый trace для даты (первым в нижней панели!)
+            spread_avg = combined['spread'].mean()
+            fig.add_trace(go.Scatter(
+                x=x_indices,
+                y=[spread_avg] * n_points,
+                name='',
+                yaxis='y2',
+                showlegend=False,
+                hoverinfo='skip',
+                mode='lines',
+                line=dict(color='rgba(0,0,0,0)', width=0),
+                customdata=date_labels,
+                hovertemplate=f'<b>📅 %{{customdata}}</b><extra></extra>'
+            ))
+            
+            # Верхняя граница
             fig.add_trace(go.Scatter(
                 x=x_indices,
                 y=combined['upper_band'],
@@ -1308,7 +1338,7 @@ def create_spread_analytics_chart(
                 line=dict(color='rgba(255, 0, 0, 0.4)', dash='dot', width=1),
                 showlegend=True,
                 customdata=date_labels,
-                hovertemplate=f'<b>📅 %{{customdata}}</b><br><br>+{z_threshold}σ: %{{y:.1f}} б.п.<extra></extra>'
+                hovertemplate=f'+{z_threshold}σ: %{{y:.1f}} б.п.<extra></extra>'
             ))
             
             # Нижняя граница с заливкой

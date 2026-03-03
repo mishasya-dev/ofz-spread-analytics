@@ -175,13 +175,15 @@ class TestHoverLabelSchema:
         Тест: правильное количество traces
         
         Ожидаемые traces:
-        1. Bond1 (YTM)
-        2. Bond2 (YTM)
-        3. +2σ (граница)
-        4. -2σ (граница)
-        5. MA(30) (rolling mean)
-        6. Спред
-        7. Текущая точка
+        1. Невидимый (дата для верхней панели)
+        2. Bond1 (YTM)
+        3. Bond2 (YTM)
+        4. Невидимый (дата для нижней панели)
+        5. +2σ (граница)
+        6. -2σ (граница)
+        7. MA(30) (rolling mean)
+        8. Спред
+        9. Текущая точка
         """
         import importlib.util
         spec = importlib.util.spec_from_file_location('charts', 'components/charts.py')
@@ -194,7 +196,7 @@ class TestHoverLabelSchema:
             df1, df2, 'Bond1', 'Bond2', window=30, z_threshold=2.0
         )
         
-        assert len(fig.data) == 7, f"Expected 7 traces, got {len(fig.data)}"
+        assert len(fig.data) == 9, f"Expected 9 traces, got {len(fig.data)}"
 
     def test_hovertemplate_structure(self, sample_data):
         """
