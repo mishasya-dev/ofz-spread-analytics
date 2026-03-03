@@ -342,6 +342,8 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
     # Проверяем нужно ли обновить историю
     # Условия: 1) БД пуста ИЛИ 2) данных меньше чем нужно (по датам)
     need_history = False
+    history_start = start_date  # По умолчанию загружаем весь период
+    
     if days > 1:
         if db_ytm_df.empty:
             need_history = True
@@ -350,24 +352,42 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
             db_min_date = db_ytm_df.index.min().date() if hasattr(db_ytm_df.index.min(), 'date') else db_ytm_df.index.min()
             if db_min_date > start_date:
                 need_history = True
-                logger.info(f"Данные в БД начинаются с {db_min_date}, нужно с {start_date} - перезагружаем")
+                # ОПТИМИЗАЦИЯ: загружаем только недостающий период
+                history_start = start_date
+                history_end = db_min_date - timedelta(days=1)
+                logger.info(f"Данные в БД с {db_min_date}, нужно с {start_date} - дозагружаем")
     
     if need_history:
-        history_df = fetcher.fetch_candles(
-            isin,
-            bond_config=bond_config,
-            interval=candle_interval,
-            start_date=start_date,
-            end_date=date.today() - timedelta(days=1)
-        )
-        
-        if not history_df.empty and 'ytm_close' in history_df.columns:
-            # Удаляем старые данные и сохраняем новые
-            db.clear_intraday_ytm(isin, interval)
-            db.save_intraday_ytm(isin, interval, history_df)
-            logger.info(f"Сохранены intraday YTM в БД для {isin}: {len(history_df)} записей")
-        
-        db_ytm_df = history_df
+        # Если БД не пуста, дозагружаем только недостающий период
+        if not db_ytm_df.empty:
+            history_df = fetcher.fetch_candles(
+                isin,
+                bond_config=bond_config,
+                interval=candle_interval,
+                start_date=history_start,
+                end_date=history_end
+            )
+            
+            if not history_df.empty and 'ytm_close' in history_df.columns:
+                # Добавляем к существующим данным (не удаляем!)
+                db.save_intraday_ytm(isin, interval, history_df)
+                db_ytm_df = pd.concat([history_df, db_ytm_df])
+                db_ytm_df = db_ytm_df[~db_ytm_df.index.duplicated(keep='last')]
+                logger.info(f"Дозагружены intraday YTM для {isin}: {len(history_df)} записей")
+        else:
+            # БД пуста - загружаем весь период
+            history_df = fetcher.fetch_candles(
+                isin,
+                bond_config=bond_config,
+                interval=candle_interval,
+                start_date=start_date,
+                end_date=date.today() - timedelta(days=1)
+            )
+            
+            if not history_df.empty and 'ytm_close' in history_df.columns:
+                db.save_intraday_ytm(isin, interval, history_df)
+                db_ytm_df = history_df
+                logger.info(f"Сохранены intraday YTM в БД для {isin}: {len(history_df)} записей")
     
     # Сохраняем текущие данные
     if not today_df.empty and 'ytm_close' in today_df.columns:
