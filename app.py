@@ -695,32 +695,34 @@ def main():
         # Период свечей (динамический слайдер)
         st.subheader("📊 Период свечей")
         candle_config = CANDLE_INTERVAL_CONFIG[candle_interval]
-        
+
         # Динамический максимум: минимум из настройки и периода анализа
         max_candle_days = min(candle_config["max_days"], period)
         min_candle_days = candle_config["min_days"]
-        
-        # Корректируем если максимум меньше минимума
-        if max_candle_days < min_candle_days:
-            max_candle_days = min_candle_days
-        
-        # Корректируем текущее значение если оно вне диапазона
-        # ВАЖНО: делаем ДО рендеринга слайдера
-        current_candle_days = st.session_state.get('candle_days', min_candle_days)
-        if current_candle_days < min_candle_days or current_candle_days > max_candle_days:
-            st.session_state.candle_days = min_candle_days
-        
-        candle_days = st.slider(
-            "Период свечей (дней)",
-            min_value=min_candle_days,
-            max_value=max_candle_days,
-            key="candle_days",  # Автоматическая синхронизация с session_state
-            step=candle_config["step_days"],
-            format="%d дн."
-        )
-        
-        # Пояснение
-        st.caption(f"Макс. {candle_config['max_days']} дн. для {candle_config['name']} (ограничен периодом анализа: {period} дн.)")
+
+        # Если диапазон допустим (min < max), показываем слайдер
+        if min_candle_days < max_candle_days:
+            # Корректируем текущее значение если оно вне диапазона
+            current_candle_days = st.session_state.get('candle_days', min_candle_days)
+            if current_candle_days < min_candle_days or current_candle_days > max_candle_days:
+                st.session_state.candle_days = min_candle_days
+
+            candle_days = st.slider(
+                "Период свечей (дней)",
+                min_value=min_candle_days,
+                max_value=max_candle_days,
+                key="candle_days",  # Автоматическая синхронизация с session_state
+                step=candle_config["step_days"],
+                format="%d дн."
+            )
+            # Пояснение
+            st.caption(f"Макс. {candle_config['max_days']} дн. для {candle_config['name']} (ограничен периодом анализа: {period} дн.)")
+        else:
+            # Диапазон вырожден - фиксированное значение
+            candle_days = min_candle_days
+            st.session_state.candle_days = candle_days
+            st.info(f"📅 Период свечей: **{candle_days} дн.** (ограничен периодом анализа)")
+            st.caption(f"Увеличьте период анализа для изменения периода свечей")
         
         st.divider()
         
