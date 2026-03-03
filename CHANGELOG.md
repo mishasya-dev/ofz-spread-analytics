@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.5.2] - 2026-03-01
+
+### Fixed
+- **Period Slider Bug**: Fixed chart not updating when increasing analysis period
+  - When period increased (e.g., 365 → 730 days), only missing historical data is now loaded incrementally
+  - Data is properly merged with existing database records instead of being overwritten
+- **Incremental Loading**: Added proper handling for `need_reload` case in `fetch_historical_data_cached()`
+
 ## [v0.5.1] - 2026-03-01
 
 ### Fixed
