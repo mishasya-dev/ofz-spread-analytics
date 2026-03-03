@@ -274,9 +274,13 @@ def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
     db = get_db()
     start_date = date.today() - timedelta(days=days)
     
+    logger.info(f"fetch_historical_data_cached: secid={secid}, days={days}, start_date={start_date}")
+    
     # Проверяем наличие данных в БД
     db_df = db.load_daily_ytm(secid, start_date=start_date)
     last_db_date = db.get_last_daily_ytm_date(secid)
+    
+    logger.info(f"Загружено из БД: {len(db_df)} записей, last_db_date={last_db_date}")
     
     # Проверяем покрытие периода (как в fetch_candle_data_cached)
     need_reload = False
@@ -291,6 +295,8 @@ def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
         
         if days_since_update <= 1:
             logger.info(f"Загружены дневные YTM из БД для {secid}: {len(db_df)} записей")
+            # Фильтруем по запрошенному периоду
+            db_df = db_df[db_df.index.date >= start_date]
             return db_df
         else:
             # Дозагружаем только новые данные
@@ -301,6 +307,7 @@ def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
                 db.save_daily_ytm(secid, new_df)
                 db_df = pd.concat([db_df, new_df])
                 db_df = db_df[~db_df.index.duplicated(keep='last')]
+                logger.info(f"Дозагружены новые данные: +{len(new_df)} записей")
     elif need_reload:
         # Данных недостаточно - дозагружаем недостающий период
         # db_min_date уже вычислен выше
@@ -311,6 +318,8 @@ def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
         logger.info(f"Дозагружаем период с {start_date} по {history_end}")
         
         new_df = fetcher.fetch_ytm_history(secid, start_date=start_date, end_date=history_end)
+        
+        logger.info(f"Загружено с MOEX: {len(new_df)} записей")
         
         if not new_df.empty:
             db.save_daily_ytm(secid, new_df)
@@ -325,6 +334,12 @@ def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
         if not db_df.empty:
             db.save_daily_ytm(secid, db_df)
             logger.info(f"Сохранены дневные YTM в БД для {secid}: {len(db_df)} записей")
+    
+    # Фильтруем по запрошенному периоду перед возвратом
+    if not db_df.empty:
+        db_df = db_df[db_df.index.date >= start_date]
+    
+    logger.info(f"Возвращаем: {len(db_df)} записей для периода {days} дней")
     
     return db_df
 
