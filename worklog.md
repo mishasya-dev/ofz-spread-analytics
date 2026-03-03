@@ -1562,3 +1562,93 @@ streamlit-app/
 ---
 
 *Сессия сохранена: 2026-03-01*
+
+---
+
+## v0.5.0 — Рефакторинг: Модульная архитектура (2026-03-01)
+
+### Выполненный рефакторинг
+
+#### Фаза 1: Сервисы загрузки данных
+
+Создан `services/data_loader.py` (~350 строк):
+- `get_history_fetcher()` — кэшированный HistoryFetcher
+- `get_candle_fetcher()` — кэшированный CandleFetcher
+- `fetch_trading_data()` — торговые данные с MOEX
+- `fetch_historical_data()` — исторические YTM с инкрементальным обновлением
+- `fetch_candle_data()` — свечи с YTM с инкрементальным обновлением
+- `update_database_full()` — полное обновление БД
+
+#### Фаза 2: Калькулятор спредов
+
+Создан `services/spread_calculator.py` (~150 строк):
+- `calculate_spread_stats()` — статистика спреда (mean, std, percentiles)
+- `generate_signal()` — генерация торговых сигналов
+- `prepare_spread_dataframe()` — подготовка DataFrame со спредом
+- `calculate_rolling_stats()` — скользящая статистика
+- `calculate_zscore()` — расчёт Z-Score
+
+#### Фаза 3: Утилиты облигаций
+
+Создан `utils/bond_utils.py` (~150 строк):
+- `BondItem` класс — унифицированное представление облигации
+- `get_years_to_maturity()` — расчёт лет до погашения
+- `get_bonds_list()` — получение списка BondItem
+- `format_bond_label()` — форматирование метки для UI
+
+#### Фаза 4: Фасад базы данных
+
+Создан `core/db/facade.py` (~280 строк):
+- `DatabaseFacade` — фасад для работы с БД
+- Делегирует вызовы специализированным репозиториям:
+  - `BondsRepository` — облигации
+  - `YTMRepository` — YTM данные
+  - `SpreadsRepository` — спреды
+
+### Структура после рефакторинга
+
+```
+streamlit-app/
+├── app.py                    # UI (~1040 строк) — без изменений
+├── services/
+│   ├── candle_service.py     # CandleService (существующий)
+│   ├── data_loader.py        # Загрузка данных ← NEW
+│   └── spread_calculator.py  # Расчёт спредов ← NEW
+├── utils/
+│   └── bond_utils.py         # BondItem класс ← NEW
+├── core/db/
+│   ├── connection.py         # Соединение с БД
+│   ├── bonds_repo.py         # Репозиторий облигаций
+│   ├── ytm_repo.py           # Репозиторий YTM
+│   ├── spreads_repo.py       # Репозиторий спредов
+│   └── facade.py             # Фасад БД ← NEW
+└── components/
+    └── charts.py             # Графики (~1470 строк) — без изменений
+```
+
+### Статистика
+
+| Метрика | До | После |
+|---------|-----|-------|
+| Тестов | 364 | 364 |
+| Проходят | 364 | 364 ✅ |
+| Новых файлов | - | 5 |
+| Новых строк | - | ~930 |
+
+### Git
+
+```
+Commit: b75d36b
+Tag:    v0.5.0-refactor
+Push:   origin/experiments
+```
+
+### Следующие шаги
+
+1. Интегрировать новые сервисы в app.py (заменить inline функции)
+2. Разбить charts.py на ytm_charts.py и spread_charts.py
+3. Мигрировать DatabaseManager → DatabaseFacade
+
+---
+
+*Рефакторинг завершён: 2026-03-01*

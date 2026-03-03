@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.5.0] - 2026-03-01
+
+### Added
+- **Modular Architecture**: Refactored code into focused modules
+  - `services/data_loader.py`: MOEX data fetching with caching
+  - `services/spread_calculator.py`: Spread statistics and signal generation
+  - `utils/bond_utils.py`: BondItem class and bond utilities
+  - `core/db/facade.py`: DatabaseFacade using repository pattern
+- **BondItem Class**: Unified bond representation for UI
+- **Spread DataFrame Preparation**: `prepare_spread_dataframe()` function
+
+### Changed
+- **Code Organization**: Better separation of concerns
+  - Services handle business logic and external APIs
+  - Utils contain pure utility functions
+  - Facade pattern for database access
+- **Repository Pattern**: `DatabaseFacade` delegates to specialized repositories
+
+### Technical
+- All 364 tests passing
+- No breaking changes to existing functionality
+- Backward compatible with existing code
+
 ## [v0.4.8] - 2026-03-01
 
 ### Fixed
