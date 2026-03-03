@@ -614,17 +614,15 @@ def main():
             "Облигация 1",
             range(len(bonds)),
             format_func=lambda i: bond_labels[i],
-            index=st.session_state.selected_bond1
+            key="selected_bond1"  # Автоматическая синхронизация с session_state
         )
-        st.session_state.selected_bond1 = bond1_idx
         
         bond2_idx = st.selectbox(
             "Облигация 2",
             range(len(bonds)),
             format_func=lambda i: bond_labels[i],
-            index=st.session_state.selected_bond2
+            key="selected_bond2"  # Автоматическая синхронизация с session_state
         )
-        st.session_state.selected_bond2 = bond2_idx
         
         st.divider()
         
@@ -669,11 +667,10 @@ def main():
             "Интервал для intraday графиков",
             options=["1", "10", "60"],
             format_func=lambda x: interval_options[x],
-            index=["1", "10", "60"].index(st.session_state.candle_interval),
+            key="candle_interval",  # Автоматическая синхронизация с session_state
             horizontal=True,
             label_visibility="collapsed"
         )
-        st.session_state.candle_interval = candle_interval
         
         # Период свечей (динамический слайдер)
         st.subheader("📊 Период свечей")
@@ -687,20 +684,20 @@ def main():
         if max_candle_days < min_candle_days:
             max_candle_days = min_candle_days
         
-        # Текущее значение
+        # Корректируем текущее значение если оно вне диапазона
+        # ВАЖНО: делаем ДО рендеринга слайдера
         current_candle_days = st.session_state.get('candle_days', min_candle_days)
         if current_candle_days < min_candle_days or current_candle_days > max_candle_days:
-            current_candle_days = min_candle_days
+            st.session_state.candle_days = min_candle_days
         
         candle_days = st.slider(
             "Период свечей (дней)",
             min_value=min_candle_days,
             max_value=max_candle_days,
-            value=current_candle_days,
+            key="candle_days",  # Автоматическая синхронизация с session_state
             step=candle_config["step_days"],
             format="%d дн."
         )
-        st.session_state.candle_days = candle_days
         
         # Пояснение
         st.caption(f"Макс. {candle_config['max_days']} дн. для {candle_config['name']} (ограничен периодом анализа: {period} дн.)")
@@ -711,9 +708,8 @@ def main():
         st.subheader("🔄 Автообновление")
         auto_refresh = st.toggle(
             "Включить",
-            value=st.session_state.auto_refresh
+            key="auto_refresh"  # Автоматическая синхронизация с session_state
         )
-        st.session_state.auto_refresh = auto_refresh
         
         if auto_refresh:
             refresh_interval = st.slider(
