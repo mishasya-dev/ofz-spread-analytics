@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.5.5] - 2026-03-03
+
+### Fixed
+- **Chart Not Updating**: Fixed Spread Analytics chart not redrawing when period slider changes
+  - Added `key` parameter to `st.plotly_chart()` for forced redraw
+  - Key includes period, bond ISINs, and data length for unique identification
+- **Logging**: Added logging of data counts before chart creation for debugging
+
+### Note
+- MOEX returns 0 records for periods before bond issue date (expected behavior)
+- For example, SU26254RMFS1 was issued 2025-10-22, so no data exists before that date
+
 ## [v0.5.4] - 2026-03-01
 
 ### Fixed
