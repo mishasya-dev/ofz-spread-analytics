@@ -1284,7 +1284,7 @@ def create_spread_analytics_chart(
                 name=bond1_name,
                 line=dict(color=BOND1_COLORS["history"], width=2),
                 customdata=date_labels,
-                hovertemplate=f'{bond1_name}: %{{y:.2f}}%<extra></extra>'
+                hovertemplate=f'📅 %{{customdata}}<br>{bond1_name}: %{{y:.2f}}%<extra></extra>'
             ))
             
             fig.add_trace(go.Scatter(
@@ -1292,6 +1292,7 @@ def create_spread_analytics_chart(
                 y=combined['ytm_short'],
                 name=bond2_name,
                 line=dict(color=BOND2_COLORS["history"], width=2),
+                customdata=date_labels,
                 hovertemplate=f'{bond2_name}: %{{y:.2f}}%<extra></extra>'
             ))
             
@@ -1304,6 +1305,7 @@ def create_spread_analytics_chart(
                 yaxis='y2',
                 line=dict(color='rgba(255, 0, 0, 0.4)', dash='dot', width=1),
                 showlegend=True,
+                customdata=date_labels,
                 hovertemplate=f'+{z_threshold}σ: %{{y:.1f}} б.п.<extra></extra>'
             ))
             
@@ -1317,6 +1319,7 @@ def create_spread_analytics_chart(
                 fill='tonexty',
                 fillcolor='rgba(128, 128, 128, 0.1)',
                 showlegend=True,
+                customdata=date_labels,
                 hovertemplate=f'-{z_threshold}σ: %{{y:.1f}} б.п.<extra></extra>'
             ))
             
@@ -1327,6 +1330,7 @@ def create_spread_analytics_chart(
                 name=f"MA({window})",
                 yaxis='y2',
                 line=dict(color='gray', dash='dash', width=1),
+                customdata=date_labels,
                 hovertemplate=f'MA({window}): %{{y:.1f}} б.п.<extra></extra>'
             ))
             
@@ -1337,6 +1341,7 @@ def create_spread_analytics_chart(
                 name="Спред",
                 yaxis='y2',
                 line=dict(color=SPREAD_COLOR, width=2),
+                customdata=date_labels,
                 hovertemplate=f'Спред: %{{y:.1f}} б.п.<extra></extra>'
             ))
             
@@ -1386,7 +1391,7 @@ def create_spread_analytics_chart(
         template="plotly_white",
         height=700,
         hovermode='x unified',
-        margin=dict(l=60, r=60, t=60, b=60),
+        margin=dict(l=60, r=60, t=60, b=80),  # Увеличен bottom для дат
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -1414,7 +1419,7 @@ def create_spread_analytics_chart(
             gridcolor='rgba(200, 200, 200, 0.3)',
             griddash='dot'
         ),
-        # X-ось
+        # X-ось (даты внизу)
         xaxis=dict(
             showgrid=True,
             gridwidth=1,
@@ -1422,7 +1427,8 @@ def create_spread_analytics_chart(
             griddash='dot',
             tickmode='array',
             tickvals=tickvals,
-            ticktext=ticktext
+            ticktext=ticktext,
+            side='bottom'  # Даты внизу графика
         ),
         # Разделительная линия между панелями
         shapes=[
@@ -1445,10 +1451,10 @@ def create_spread_analytics_chart(
             ),
             dict(
                 text=f"Анализ спреда (Rolling {window} дн., Z-Score ±{z_threshold})",
-                x=0.5, y=-0.06,
+                x=0.5, y=-0.08,
                 xref='paper', yref='paper',
                 showarrow=False,
-                font=dict(size=14)
+                font=dict(size=13)
             )
         ]
     )
