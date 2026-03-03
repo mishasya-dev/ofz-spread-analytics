@@ -8,8 +8,8 @@ from datetime import datetime
 from pathlib import Path
 
 # Основные данные версии
-VERSION = "0.3.0"
-RELEASE_NAME = "Unified Charts"
+VERSION = "0.4.8"
+RELEASE_NAME = "Volume & Optimizations"
 
 def get_git_info():
     """Получить информацию из git"""

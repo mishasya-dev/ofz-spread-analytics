@@ -2,6 +2,60 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.4.8] - 2026-03-01
+
+### Fixed
+- **Test Fix**: Added `volume` and `value` columns to test fixtures for `intraday_ytm` table
+- **Database Migration**: Ensured migration runs for new columns
+
+### Changed
+- **Test Count**: 364 tests passing (12 Playwright UI tests skipped)
+
+## [v0.4.7] - 2026-03-01
+
+### Performance
+- **Chart Optimizations**: Removed white outline from volume bars, simplified hover templates
+
+## [v0.4.6] - 2026-03-01
+
+### Changed
+- **Incremental Data Loading**: Only load missing period instead of full reload when increasing period slider
+- **Optimization**: Use `pd.concat([new, old])` instead of delete + reload
+
+## [v0.4.5] - 2026-03-01
+
+### Fixed
+- **Slider Bounce**: All sliders use `key` parameter for automatic session_state sync
+
+## [v0.4.4] - 2026-03-01
+
+### Fixed
+- **Slider Sync**: Fixed slider bounce-back bug using `key` parameter pattern
+
+## [v0.4.3] - 2026-03-01
+
+### Fixed
+- **Period Coverage**: Check if DB data covers requested period before returning cached data
+
+## [v0.4.2] - 2026-03-01
+
+### Fixed
+- **Modal Bugs**: Fixed "Clear" button not working and shrinking bond list issues
+- **Dynamic Key**: Added version counter for `st.data_editor` to force widget recreation
+- **Favorite Toggle**: Use `set_favorite(isin, False)` instead of `delete_bond()`
+
+## [v0.4.1] - 2026-03-01
+
+### Added
+- **Volume Bars**: Trading volume (value in rubles) displayed on YTM charts
+- **Two Volume Traces**: Light blue for bond 1, light pink for bond 2
+
+## [v0.4.0] - 2026-03-01
+
+### Added
+- **Volume Data**: Added `value` column to database for trading volume in rubles
+- **MOEX API**: Fetch both `volume` (pieces) and `value` (rubles) from API
+
 ## [v0.3.1] - 2026-03-01
 
 ### Added

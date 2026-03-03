@@ -77,6 +77,8 @@ def temp_db():
             price_close REAL,
             ytm REAL,
             accrued_interest REAL,
+            volume REAL,
+            value REAL,
             PRIMARY KEY (isin, interval, datetime)
         )
     ''')
@@ -163,7 +165,9 @@ def sample_intraday_ytm_df():
     return pd.DataFrame({
         'close': [95.0 + i * 0.1 for i in range(10)],
         'ytm_close': [14.5 + i * 0.01 for i in range(10)],
-        'accrued_interest': [25.0] * 10
+        'accrued_interest': [25.0] * 10,
+        'volume': [1000 + i * 100 for i in range(10)],
+        'value': [950000 + i * 10000 for i in range(10)]
     }, index=dates)
 
 
