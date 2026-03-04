@@ -25,6 +25,47 @@ class BondData:
     maturity_date: Optional[date]
 
 
+def is_valid_ytm_row(
+    row: list,
+    board_idx: Optional[int],
+    yield_idx: int,
+    target_board: str = 'TQOB'
+) -> bool:
+    """
+    Проверяет, подходит ли строка данных для сохранения.
+    
+    Фильтрует по критериям (в порядке проверки):
+    1. Торговая площадка должна быть target_board
+    2. Значение YTM должно быть (не None)
+    
+    Args:
+        row: Строка данных из MOEX API
+        board_idx: Индекс колонки BOARDID (может быть None)
+        yield_idx: Индекс колонки YIELDCLOSE
+        target_board: Целевая торговая площадка (default: 'TQOB')
+    
+    Returns:
+        True если строка проходит все фильтры
+    
+    Examples:
+        >>> is_valid_ytm_row(['TQOB', '2025-01-15', 15.5], 0, 2)
+        True
+        >>> is_valid_ytm_row(['PACT', '2025-01-15', 15.5], 0, 2)
+        False  # Не та площадка
+        >>> is_valid_ytm_row(['TQOB', '2025-01-15', None], 0, 2)
+        False  # Нет YTM
+    """
+    # 1. Фильтр по площадке
+    if board_idx is not None and row[board_idx] != target_board:
+        return False
+    
+    # 2. Фильтр по наличию YTM
+    if row[yield_idx] is None:
+        return False
+    
+    return True
+
+
 class HistoryFetcher:
     """Получение исторических данных по облигациям"""
     
@@ -106,19 +147,20 @@ class HistoryFetcher:
                     logger.warning(f"Required columns not found for {isin}: {e}")
                     break
                 
-                for row in rows:
-                    # Фильтруем только основную площадку TQOB
-                    # MOEX возвращает данные с разных площадок (TQOB, PACT и др.)
-                    if board_idx is not None and row[board_idx] != 'TQOB':
-                        continue
-                    
-                    if row[yield_idx] is not None:
-                        all_data.append({
-                            "date": row[date_idx],
-                            "ytm": row[yield_idx],
-                            "duration_days": row[duration_idx] if duration_idx is not None and row[duration_idx] else None,
-                            "secid": isin
-                        })
+                # Фильтруем строки с помощью is_valid_ytm_row
+                valid_rows = filter(
+                    lambda r: is_valid_ytm_row(r, board_idx, yield_idx),
+                    rows
+                )
+                
+                # Преобразуем в нужный формат
+                for row in valid_rows:
+                    all_data.append({
+                        "date": row[date_idx],
+                        "ytm": row[yield_idx],
+                        "duration_days": row[duration_idx] if duration_idx is not None and row[duration_idx] else None,
+                        "secid": isin
+                    })
                 
                 if len(rows) < batch_size:
                     break
