@@ -156,7 +156,8 @@ class CointegrationService:
         self,
         bond1_isin: str,
         bond2_isin: str,
-        db=None
+        db=None,
+        period_days: int = None
     ) -> CointegrationResult:
         """
         Анализирует одну пару облигаций.
@@ -165,6 +166,7 @@ class CointegrationService:
             bond1_isin: ISIN первой облигации
             bond2_isin: ISIN второй облигации
             db: Экземпляр DatabaseManager
+            period_days: Период анализа в днях (если None - до 2 лет)
             
         Returns:
             CointegrationResult с результатами анализа
@@ -178,7 +180,10 @@ class CointegrationService:
         
         try:
             # Загружаем данные из БД
-            start_date = date.today() - timedelta(days=730)  # До 2 лет
+            if period_days:
+                start_date = date.today() - timedelta(days=period_days)
+            else:
+                start_date = date.today() - timedelta(days=730)  # До 2 лет
             
             df1 = db.load_daily_ytm(bond1_isin, start_date=start_date)
             df2 = db.load_daily_ytm(bond2_isin, start_date=start_date)
