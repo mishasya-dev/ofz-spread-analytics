@@ -90,6 +90,18 @@ class CointegrationService:
         logger.info(f"✨ Расчёт: {bond1_isin}/{bond2_isin} period={period_days}")
         result = self._calculate(ytm1, ytm2)
 
+        # Логируем результат
+        if 'error' not in result:
+            eg = result.get('engle_granger', {})
+            adf1 = result.get('adf_ytm1', {})
+            adf2 = result.get('adf_ytm2', {})
+            logger.debug(f"Результат: n_obs={result.get('n_observations')}, "
+                        f"ytm1_adf_p={adf1.get('pvalue')}, "
+                        f"ytm2_adf_p={adf2.get('pvalue')}, "
+                        f"both_nonstationary={result.get('both_nonstationary')}, "
+                        f"is_cointegrated={result.get('is_cointegrated')}, "
+                        f"eg_pvalue={eg.get('pvalue')}")
+
         # Сохраняем в кэш (даже если ошибка - сохраняем чтобы не долбить повторно)
         if 'error' not in result:
             self.db.save_cointegration_cache(
