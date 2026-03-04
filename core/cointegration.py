@@ -404,7 +404,7 @@ def run_cointegration_analysis(
             error=str(e)
         )
     
-    is_cointegrated = pval < significance_level
+    is_cointegrated = pval < significance_level and both_nonstationary
     
     # 4. Спред и метрики
     spread = (ytm1_sync - ytm2_sync) * 100  # в базисных пунктах
