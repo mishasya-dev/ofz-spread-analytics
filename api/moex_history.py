@@ -101,11 +101,17 @@ class HistoryFetcher:
                     # ИСПРАВЛЕНО: YIELDCLOSE вместо YIELDCOUPON
                     yield_idx = columns.index('YIELDCLOSE')
                     duration_idx = columns.index('DURATION') if 'DURATION' in columns else None
+                    board_idx = columns.index('BOARDID') if 'BOARDID' in columns else None
                 except ValueError as e:
                     logger.warning(f"Required columns not found for {isin}: {e}")
                     break
                 
                 for row in rows:
+                    # Фильтруем только основную площадку TQOB
+                    # MOEX возвращает данные с разных площадок (TQOB, PACT и др.)
+                    if board_idx is not None and row[board_idx] != 'TQOB':
+                        continue
+                    
                     if row[yield_idx] is not None:
                         all_data.append({
                             "date": row[date_idx],
