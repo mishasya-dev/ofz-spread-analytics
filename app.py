@@ -29,6 +29,7 @@ from components.charts import (
 )
 from version import format_version_badge
 from core.cointegration import CointegrationAnalyzer, format_cointegration_report
+from core.cointegration_service import get_cointegration_service
 
 # Настройка логирования
 logging.basicConfig(
@@ -228,6 +229,30 @@ def init_session_state():
     # Результат валидации YTM
     if 'ytm_validation' not in st.session_state:
         st.session_state.ytm_validation = None
+    
+    # Состояние анализа коинтеграции
+    if 'cointegration_needs_update' not in st.session_state:
+        st.session_state.cointegration_needs_update = False
+    
+    if 'cointegration_results' not in st.session_state:
+        st.session_state.cointegration_results = {}
+    
+    if 'cointegration_running' not in st.session_state:
+        st.session_state.cointegration_running = False
+    
+    # Проверка при первом запуске: если избранное есть, а результатов нет — запустить анализ
+    if 'cointegration_initialized' not in st.session_state:
+        st.session_state.cointegration_initialized = True
+        db = get_db()
+        cached_count = len(db.get_cointegrated_pairs())
+        favorites_count = len(db.get_favorite_bonds())
+        
+        # Если есть избранное (>=2), но результатов нет — нужен анализ
+        if favorites_count >= 2 and cached_count == 0:
+            st.session_state.cointegration_needs_update = True
+            favorite_isins = [b['isin'] for b in db.get_favorite_bonds()]
+            st.session_state.cointegration_favorites = favorite_isins
+            logger.info(f"Автозапуск анализа коинтеграции: {favorites_count} облигаций, {cached_count} результатов")
 
 
 def get_bonds_list() -> List:
@@ -247,6 +272,98 @@ def get_bonds_list() -> List:
             self.day_count_convention = data.get('day_count_convention', 'ACT/ACT')
     
     return [BondItem(bond_data) for bond_data in bonds_dict.values()]
+
+
+def run_cointegration_analysis_for_favorites(favorite_isins: List[str]) -> Dict:
+    """
+    Запускает анализ коинтеграции для всех пар избранных облигаций.
+    
+    Args:
+        favorite_isins: Список ISIN избранных облигаций
+        
+    Returns:
+        Словарь с результатами по парам
+    """
+    from core.cointegration_service import CointegrationService
+    
+    if len(favorite_isins) < 2:
+        return {}
+    
+    service = CointegrationService()
+    db = get_db()
+    
+    # Загружаем кэшированные результаты
+    service.load_cached_results(db, max_age_hours=24)
+    
+    # Запускаем анализ синхронно (для простоты)
+    pairs = service.generate_pairs(favorite_isins)
+    results = {}
+    
+    for isin1, isin2 in pairs:
+        key = service.get_pair_key(isin1, isin2)
+        
+        # Проверяем кэш
+        cached = service.get_result(isin1, isin2)
+        if cached and not cached.error:
+            results[key] = cached
+            continue
+        
+        # Анализируем
+        result = service.analyze_pair(isin1, isin2, db)
+        results[key] = result
+        
+        # Сохраняем в БД
+        db.save_cointegration_result(result.to_dict())
+    
+    return {k: v.to_dict() for k, v in results.items()}
+
+
+def get_cointegration_status_text(result: Dict, bond1_name: str, bond2_name: str) -> str:
+    """
+    Формирует краткий текст статуса коинтеграции для отображения.
+    
+    Args:
+        result: Результат анализа
+        bond1_name: Имя первой облигации
+        bond2_name: Имя второй облигации
+        
+    Returns:
+        HTML строка со статусом
+    """
+    if not result:
+        return ""
+    
+    is_cointegrated = result.get('is_cointegrated', False)
+    pvalue = result.get('pvalue')
+    data_days = result.get('data_days', 0)
+    low_data = result.get('low_data', False)
+    error = result.get('error')
+    
+    if error:
+        return f'<span style="color: #999;">⚠️ {error}</span>'
+    
+    if is_cointegrated:
+        status_color = '#28a745'
+        status_icon = '✅'
+        status_text = 'Коинтегрированы'
+        pval_text = f'p={pvalue:.4f}' if pvalue else ''
+    else:
+        status_color = '#dc3545'
+        status_icon = '❌'
+        status_text = 'Не коинтегрированы'
+        pval_text = f'p={pvalue:.4f}' if pvalue else ''
+    
+    data_warning = ' ⚠️ мало данных' if low_data else ''
+    
+    return f'''
+    <div style="display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; 
+                background: {status_color}15; border-radius: 8px; border-left: 3px solid {status_color};">
+        <span style="font-size: 1.2em;">{status_icon}</span>
+        <span style="font-weight: 500; color: {status_color};">{status_text}</span>
+        <span style="color: #666; font-size: 0.9em;">{pval_text}</span>
+        <span style="color: #888; font-size: 0.85em;">({data_days} дн.{data_warning})</span>
+    </div>
+    '''
 
 
 @st.cache_resource
@@ -952,6 +1069,18 @@ def main():
     """, unsafe_allow_html=True)
     
     # ==========================================
+    # АНАЛИЗ КОИНТЕГРАЦИИ (фоновый запуск)
+    # ==========================================
+    if st.session_state.get('cointegration_needs_update', False):
+        favorite_isins = st.session_state.get('cointegration_favorites', [])
+        if len(favorite_isins) >= 2:
+            with st.spinner("Анализ коинтеграции пар..."):
+                results = run_cointegration_analysis_for_favorites(favorite_isins)
+                st.session_state.cointegration_results = results
+                st.session_state.cointegration_needs_update = False
+                logger.info(f"Анализ коинтеграции завершён: {len(results)} пар")
+    
+    # ==========================================
     # ЗАГРУЗКА ДАННЫХ
     # ==========================================
     bond1 = bonds[bond1_idx]
@@ -976,6 +1105,34 @@ def main():
     
     # Спред по intraday данным
     intraday_spread_df = prepare_spread_dataframe(intraday_df1, intraday_df2, is_intraday=True)
+    
+    # ==========================================
+    # ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ КОИНТЕГРАЦИИ
+    # ==========================================
+    # Получаем результат для текущей пары из БД
+    db = get_db()
+    coint_result = db.load_cointegration_result(bond1.isin, bond2.isin)
+    
+    if coint_result:
+        status_html = get_cointegration_status_text(coint_result, bond1.name, bond2.name)
+        st.markdown(f"""
+        <div style="margin-bottom: 16px;">
+            <span style="font-weight: 500; margin-right: 8px;">🔗 Коинтеграция:</span>
+            {status_html}
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Если коинтегрированы - показываем дополнительные метрики
+        if coint_result.get('is_cointegrated') and coint_result.get('half_life'):
+            col_hl, col_hr = st.columns(2)
+            with col_hl:
+                half_life = coint_result.get('half_life')
+                if half_life and half_life != float('inf'):
+                    st.caption(f"⏱️ Half-life: **{half_life:.1f} дней**")
+            with col_hr:
+                hedge_ratio = coint_result.get('hedge_ratio')
+                if hedge_ratio:
+                    st.caption(f"⚖️ Hedge ratio: **{hedge_ratio:.4f}**")
     
     # ==========================================
     # МЕТРИКИ

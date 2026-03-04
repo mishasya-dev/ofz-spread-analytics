@@ -345,6 +345,11 @@ def show_bond_manager_dialog():
                 del st.session_state[editor_key]
             st.session_state.cached_favorites_count = len(new_favorites)
             
+            # Запускаем анализ коинтеграции для нового набора избранного
+            if len(new_favorites) >= 2:
+                st.session_state.cointegration_needs_update = True
+                st.session_state.cointegration_favorites = list(new_favorites)
+            
             # Показываем результат и закрываем
             if added_count or removed_count:
                 st.toast(f"✅ Добавлено: {added_count}, Убрано: {removed_count}")
