@@ -32,9 +32,17 @@ from core.cointegration import CointegrationAnalyzer, format_cointegration_repor
 from core.cointegration_service import get_cointegration_service
 
 # Настройка логирования
+import os
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs', 'app.log')
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+
 logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(LOG_FILE, encoding='utf-8')
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -822,6 +830,22 @@ def main():
         if st.button("🗑️ Очистить кэш", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
+        
+        st.divider()
+        
+        # Переключатель уровня логирования
+        st.subheader("📜 Логи")
+        log_level = st.radio(
+            "Уровень",
+            options=["INFO", "DEBUG"],
+            horizontal=True,
+            key="log_level"
+        )
+        
+        if log_level == "DEBUG":
+            logging.getLogger().setLevel(logging.DEBUG)
+        else:
+            logging.getLogger().setLevel(logging.INFO)
         
         st.divider()
         
