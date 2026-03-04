@@ -802,7 +802,7 @@ def main():
             st.write(f"**Дневных YTM:** {db_stats['daily_ytm_count']}")
             st.write(f"**Intraday YTM:** {db_stats['intraday_ytm_count']}")
         
-        if st.button("🔄 Обновить БД", use_container_width=True):
+        if st.button("🔄 Обновить БД", width="stretch"):
             st.session_state.updating_db = True
         
         if st.session_state.get('updating_db', False):
@@ -827,7 +827,7 @@ def main():
         
         st.divider()
         
-        if st.button("🗑️ Очистить кэш", use_container_width=True):
+        if st.button("🗑️ Очистить кэш", width="stretch"):
             st.cache_data.clear()
             st.rerun()
         
@@ -899,7 +899,7 @@ def main():
                 }
             </style>
             """, unsafe_allow_html=True)
-            button_pressed = st.button(button_label, use_container_width=True, type="primary")
+            button_pressed = st.button(button_label, width="stretch", type="primary")
         elif button_color == "red":
             st.markdown("""
             <style>
@@ -914,9 +914,9 @@ def main():
                 }
             </style>
             """, unsafe_allow_html=True)
-            button_pressed = st.button(button_label, use_container_width=True, type="secondary")
+            button_pressed = st.button(button_label, width="stretch", type="secondary")
         else:
-            button_pressed = st.button(button_label, use_container_width=True, type="secondary")
+            button_pressed = st.button(button_label, width="stretch", type="secondary")
         
         if button_pressed:
             ytm_repo = get_ytm_repo()
@@ -1078,7 +1078,7 @@ def main():
     )
     # key для принудительной перерисовки при изменении периода или облигаций
     chart_key = f"spread_analytics_{period}_{bond1.isin}_{bond2.isin}_{len(daily_df1)}_{len(daily_df2)}"
-    st.plotly_chart(fig_analytics, use_container_width=True, key=chart_key)
+    st.plotly_chart(fig_analytics, width="stretch", key=chart_key)
     
     # Легенда сигналов
     st.markdown("""
@@ -1164,7 +1164,7 @@ def main():
         candle_days=candle_days
     )
     chart_key2 = f"combined_ytm_{period}_{candle_days}_{bond1.isin}_{bond2.isin}_{len(daily_df1)}_{len(intraday_df1)}"
-    st.plotly_chart(fig2, use_container_width=True, key=chart_key2)
+    st.plotly_chart(fig2, width="stretch", key=chart_key2)
     
     # График 3: Спред intraday (с перцентилями от дневных данных)
     fig3 = create_intraday_spread_chart(
@@ -1172,7 +1172,7 @@ def main():
         daily_stats=daily_stats  # Перцентили от дневных!
     )
     chart_key3 = f"intraday_spread_{candle_days}_{bond1.isin}_{bond2.isin}_{len(intraday_spread_df)}"
-    st.plotly_chart(fig3, use_container_width=True, key=chart_key3)
+    st.plotly_chart(fig3, width="stretch", key=chart_key3)
     
     # ==========================================
     # АВТООБНОВЛЕНИЕ

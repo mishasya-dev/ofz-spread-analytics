@@ -261,7 +261,7 @@ def render_db_panel(
         st.write(f"**Дневных YTM:** {db_stats.get('daily_ytm_count', 0)}")
         st.write(f"**Intraday YTM:** {db_stats.get('intraday_ytm_count', 0)}")
     
-    if st.button("🔄 Обновить БД", use_container_width=True):
+    if st.button("🔄 Обновить БД", width="stretch"):
         st.session_state.updating_db = True
     
     if st.session_state.get('updating_db', False):
@@ -288,7 +288,7 @@ def render_db_panel(
 
 def render_cache_clear():
     """Рендерит кнопку очистки кэша"""
-    if st.button("🗑️ Очистить кэш", use_container_width=True):
+    if st.button("🗑️ Очистить кэш", width="stretch"):
         st.cache_data.clear()
         st.rerun()
 
