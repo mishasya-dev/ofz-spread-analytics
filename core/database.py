@@ -274,6 +274,40 @@ def init_database():
         )
     ''')
     
+    # ==========================================
+    # ТАБЛИЦА КЭША КОИНТЕГРАЦИИ
+    # ==========================================
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS cointegration_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bond1_isin TEXT NOT NULL,
+            bond2_isin TEXT NOT NULL,
+            pair_key TEXT NOT NULL UNIQUE,
+            is_cointegrated INTEGER DEFAULT 0,
+            pvalue REAL,
+            half_life REAL,
+            hedge_ratio REAL,
+            data_days INTEGER DEFAULT 0,
+            adf_bond1_pvalue REAL,
+            adf_bond2_pvalue REAL,
+            both_nonstationary INTEGER DEFAULT 0,
+            low_data INTEGER DEFAULT 0,
+            error TEXT,
+            checked_at TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_cointegration_pair_key 
+        ON cointegration_cache(pair_key)
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_cointegration_checked_at 
+        ON cointegration_cache(checked_at)
+    ''')
+    
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована")
@@ -1370,6 +1404,125 @@ class DatabaseManager:
         conn.close()
         
         logger.info("Все данные очищены")
+    
+    # ==========================================
+    # КОИНТЕГРАЦИЯ
+    # ==========================================
+    
+    def save_cointegration_result(self, result: Dict) -> bool:
+        """
+        Сохранить результат анализа коинтеграции.
+        
+        Args:
+            result: Словарь с результатами
+            
+        Returns:
+            True если сохранено успешно
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            isins = sorted([result['bond1_isin'], result['bond2_isin']])
+            pair_key = f"{isins[0]}-{isins[1]}"
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO cointegration_cache (
+                    bond1_isin, bond2_isin, pair_key,
+                    is_cointegrated, pvalue, half_life, hedge_ratio,
+                    data_days, adf_bond1_pvalue, adf_bond2_pvalue,
+                    both_nonstationary, low_data, error, checked_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                isins[0], isins[1], pair_key,
+                1 if result.get('is_cointegrated') else 0,
+                result.get('pvalue'),
+                result.get('half_life'),
+                result.get('hedge_ratio'),
+                result.get('data_days', 0),
+                result.get('adf_bond1_pvalue'),
+                result.get('adf_bond2_pvalue'),
+                1 if result.get('both_nonstationary') else 0,
+                1 if result.get('low_data') else 0,
+                result.get('error'),
+                result.get('checked_at', datetime.now().isoformat())
+            ))
+            
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка сохранения коинтеграции: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def load_cointegration_result(self, isin1: str, isin2: str) -> Optional[Dict]:
+        """Загрузить результат коинтеграции для пары"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            isins = sorted([isin1, isin2])
+            pair_key = f"{isins[0]}-{isins[1]}"
+            
+            cursor.execute('''
+                SELECT * FROM cointegration_cache WHERE pair_key = ?
+            ''', (pair_key,))
+            
+            row = cursor.fetchone()
+            
+            if row:
+                return {
+                    'bond1_isin': row['bond1_isin'],
+                    'bond2_isin': row['bond2_isin'],
+                    'is_cointegrated': bool(row['is_cointegrated']),
+                    'pvalue': row['pvalue'],
+                    'half_life': row['half_life'],
+                    'hedge_ratio': row['hedge_ratio'],
+                    'data_days': row['data_days'],
+                    'adf_bond1_pvalue': row['adf_bond1_pvalue'],
+                    'adf_bond2_pvalue': row['adf_bond2_pvalue'],
+                    'both_nonstationary': bool(row['both_nonstationary']),
+                    'low_data': bool(row['low_data']),
+                    'error': row['error'],
+                    'checked_at': row['checked_at']
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Ошибка загрузки коинтеграции: {e}")
+            return None
+        finally:
+            conn.close()
+
+    def get_cointegrated_pairs(self) -> List[Dict]:
+        """Получить все коинтегрированные пары"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                SELECT * FROM cointegration_cache 
+                WHERE is_cointegrated = 1
+                ORDER BY pvalue ASC
+            ''')
+            
+            rows = cursor.fetchall()
+            return [{
+                'bond1_isin': row['bond1_isin'],
+                'bond2_isin': row['bond2_isin'],
+                'pair_key': row['pair_key'],
+                'pvalue': row['pvalue'],
+                'half_life': row['half_life'],
+                'hedge_ratio': row['hedge_ratio'],
+                'data_days': row['data_days'],
+                'low_data': bool(row['low_data']),
+                'checked_at': row['checked_at']
+            } for row in rows]
+        except Exception as e:
+            logger.error(f"Ошибка получения коинтегрированных пар: {e}")
+            return []
+        finally:
+            conn.close()
 
 
 # ==========================================

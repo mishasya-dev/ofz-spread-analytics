@@ -5,7 +5,7 @@
 делегируя вызовы специализированным репозиториям.
 """
 import pandas as pd
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Any
 import logging
 
@@ -273,6 +273,198 @@ class DatabaseFacade:
         Делегирует YTMRepository.
         """
         return self._ytm_repo.validate_ytm_accuracy(isin, interval, days)
+
+    # ==========================================
+    # КОИНТЕГРАЦИЯ
+    # ==========================================
+
+    def save_cointegration_result(self, result: Dict) -> bool:
+        """
+        Сохранить результат анализа коинтеграции.
+        
+        Args:
+            result: Словарь с результатами (CointegrationResult.to_dict())
+            
+        Returns:
+            True если сохранено успешно
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            pair_key = f"{result['bond1_isin']}-{result['bond2_isin']}"
+            # Сортируем ISIN для key
+            isins = sorted([result['bond1_isin'], result['bond2_isin']])
+            pair_key = f"{isins[0]}-{isins[1]}"
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO cointegration_cache (
+                    bond1_isin, bond2_isin, pair_key,
+                    is_cointegrated, pvalue, half_life, hedge_ratio,
+                    data_days, adf_bond1_pvalue, adf_bond2_pvalue,
+                    both_nonstationary, low_data, error, checked_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                isins[0],
+                isins[1],
+                pair_key,
+                1 if result.get('is_cointegrated') else 0,
+                result.get('pvalue'),
+                result.get('half_life'),
+                result.get('hedge_ratio'),
+                result.get('data_days', 0),
+                result.get('adf_bond1_pvalue'),
+                result.get('adf_bond2_pvalue'),
+                1 if result.get('both_nonstationary') else 0,
+                1 if result.get('low_data') else 0,
+                result.get('error'),
+                result.get('checked_at', datetime.now().isoformat())
+            ))
+            
+            conn.commit()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Ошибка сохранения коинтеграции: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def load_cointegration_result(self, isin1: str, isin2: str) -> Optional[Dict]:
+        """
+        Загрузить результат коинтеграции для пары.
+        
+        Args:
+            isin1: ISIN первой облигации
+            isin2: ISIN второй облигации
+            
+        Returns:
+            Словарь с результатами или None
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            isins = sorted([isin1, isin2])
+            pair_key = f"{isins[0]}-{isins[1]}"
+            
+            cursor.execute('''
+                SELECT * FROM cointegration_cache WHERE pair_key = ?
+            ''', (pair_key,))
+            
+            row = cursor.fetchone()
+            
+            if row:
+                return {
+                    'bond1_isin': row['bond1_isin'],
+                    'bond2_isin': row['bond2_isin'],
+                    'is_cointegrated': bool(row['is_cointegrated']),
+                    'pvalue': row['pvalue'],
+                    'half_life': row['half_life'],
+                    'hedge_ratio': row['hedge_ratio'],
+                    'data_days': row['data_days'],
+                    'adf_bond1_pvalue': row['adf_bond1_pvalue'],
+                    'adf_bond2_pvalue': row['adf_bond2_pvalue'],
+                    'both_nonstationary': bool(row['both_nonstationary']),
+                    'low_data': bool(row['low_data']),
+                    'error': row['error'],
+                    'checked_at': row['checked_at']
+                }
+            return None
+            
+        except Exception as e:
+            logger.error(f"Ошибка загрузки коинтеграции: {e}")
+            return None
+        finally:
+            conn.close()
+
+    def load_all_cointegration_results(self, max_age_hours: int = 24) -> Dict[str, Dict]:
+        """
+        Загрузить все результаты коинтеграции.
+        
+        Args:
+            max_age_hours: Максимальный возраст результатов (часы)
+            
+        Returns:
+            Словарь {pair_key: result}
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                SELECT * FROM cointegration_cache 
+                WHERE datetime(checked_at) >= datetime('now', ?)
+            ''', (f'-{max_age_hours} hours',))
+            
+            rows = cursor.fetchall()
+            results = {}
+            
+            for row in rows:
+                results[row['pair_key']] = {
+                    'bond1_isin': row['bond1_isin'],
+                    'bond2_isin': row['bond2_isin'],
+                    'is_cointegrated': bool(row['is_cointegrated']),
+                    'pvalue': row['pvalue'],
+                    'half_life': row['half_life'],
+                    'hedge_ratio': row['hedge_ratio'],
+                    'data_days': row['data_days'],
+                    'adf_bond1_pvalue': row['adf_bond1_pvalue'],
+                    'adf_bond2_pvalue': row['adf_bond2_pvalue'],
+                    'both_nonstationary': bool(row['both_nonstationary']),
+                    'low_data': bool(row['low_data']),
+                    'error': row['error'],
+                    'checked_at': row['checked_at']
+                }
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Ошибка загрузки всех результатов: {e}")
+            return {}
+        finally:
+            conn.close()
+
+    def get_cointegrated_pairs(self) -> List[Dict]:
+        """
+        Получить все коинтегрированные пары.
+        
+        Returns:
+            Список пар с is_cointegrated = True
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                SELECT * FROM cointegration_cache 
+                WHERE is_cointegrated = 1
+                ORDER BY pvalue ASC
+            ''')
+            
+            rows = cursor.fetchall()
+            results = []
+            
+            for row in rows:
+                results.append({
+                    'bond1_isin': row['bond1_isin'],
+                    'bond2_isin': row['bond2_isin'],
+                    'pair_key': row['pair_key'],
+                    'pvalue': row['pvalue'],
+                    'half_life': row['half_life'],
+                    'hedge_ratio': row['hedge_ratio'],
+                    'data_days': row['data_days'],
+                    'low_data': bool(row['low_data']),
+                    'checked_at': row['checked_at']
+                })
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения коинтегрированных пар: {e}")
+            return []
+        finally:
+            conn.close()
 
 
 # Глобальный экземпляр фасада
