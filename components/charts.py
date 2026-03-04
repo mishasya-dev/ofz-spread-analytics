@@ -102,8 +102,7 @@ class ChartBuilder:
                 y=ytm_data[col],
                 mode='lines',
                 name=name,
-                line=dict(color=color, width=1.5),
-                hovertemplate=f'%{{y:.2f}}%<extra></extra>'
+                line=dict(color=color, width=1.5)
             ))
         
         fig.update_layout(
@@ -166,8 +165,7 @@ class ChartBuilder:
                 y=spread_data[col],
                 mode='lines',
                 name=col,
-                line=dict(color=color, width=1.5),
-                hovertemplate=f'{col}: %{{y:.1f}} б.п.<extra></extra>'
+                line=dict(color=color, width=1.5)
             ))
         
         # Добавляем перцентили для первой пары если есть
@@ -246,8 +244,7 @@ class ChartBuilder:
             y=spread_series,
             mode='lines',
             name='Спред',
-            line=dict(color="#1f77b4", width=1.5),
-            hovertemplate='Спред: %{y:.1f} б.п.<extra></extra>'
+            line=dict(color="#1f77b4", width=1.5)
         ))
         
         # Перцентили
@@ -657,8 +654,7 @@ def create_daily_ytm_chart(
             x=df1.index,
             y=df1[ytm_col],
             name=bond1_name,
-            line=dict(color=BOND1_COLORS["history"], width=2),
-            hovertemplate=f'{bond1_name}: %{{y:.2f}}%<extra></extra>'
+            line=dict(color=BOND1_COLORS["history"], width=2)
         ))
     
     # Облигация 2 - тёмно-красный
@@ -667,8 +663,7 @@ def create_daily_ytm_chart(
             x=df2.index,
             y=df2[ytm_col],
             name=bond2_name,
-            line=dict(color=BOND2_COLORS["history"], width=2),
-            hovertemplate=f'{bond2_name}: %{{y:.2f}}%<extra></extra>'
+            line=dict(color=BOND2_COLORS["history"], width=2)
         ))
     
     # Рассчитать диапазон с будущим
@@ -743,8 +738,7 @@ def create_daily_spread_chart(
             name='Спред',
             line=dict(color=SPREAD_COLOR, width=2),
             fill='tozeroy',
-            fillcolor='rgba(155, 89, 182, 0.1)',
-            hovertemplate='Спред: %{y:.1f} б.п.<extra></extra>'
+            fillcolor='rgba(155, 89, 182, 0.1)'
         ))
     
     # Перцентили
@@ -930,28 +924,25 @@ def create_combined_ytm_chart(
     tickvals = x_indices[::tick_step]
     ticktext = [date_labels[i] for i in tickvals]
     
-    # Облигация 1 - история (пунктир) - первый trace, добавляем дату внизу
+    # Облигация 1 - история (пунктир)
     if history_points:
         fig.add_trace(go.Scatter(
             x=[p['idx'] for p in history_points],
             y=[p['ytm1'] for p in history_points],
             name=f"{bond1_name} (дневн.)",
-            line=dict(color=BOND1_COLORS["history"], width=1, dash='dash'),
-            customdata=[p['label'] for p in history_points],
-            hovertemplate=f'{bond1_name} (дневн.): %{{y:.2f}}%<br><br>📅 %{{customdata}}<extra></extra>'
+            line=dict(color=BOND1_COLORS["history"], width=1, dash='dash')
         ))
     
-    # Облигация 1 - intraday (сплошная) - без даты
+    # Облигация 1 - intraday (сплошная)
     if intraday_points:
         fig.add_trace(go.Scatter(
             x=[p['idx'] for p in intraday_points],
             y=[p['ytm1'] for p in intraday_points],
             name=f"{bond1_name} (свечи)",
-            line=dict(color=BOND1_COLORS["intraday"], width=1),
-            hovertemplate=f'{bond1_name} (свечи): %{{y:.2f}}%<extra></extra>'
+            line=dict(color=BOND1_COLORS["intraday"], width=1)
         ))
     
-    # Облигация 2 - история (пунктир) - без даты
+    # Облигация 2 - история (пунктир)
     if history_points:
         ytm2_history = [p['ytm2'] for p in history_points]
         if any(v is not None for v in ytm2_history):
@@ -959,11 +950,10 @@ def create_combined_ytm_chart(
                 x=[p['idx'] for p in history_points],
                 y=ytm2_history,
                 name=f"{bond2_name} (дневн.)",
-                line=dict(color=BOND2_COLORS["history"], width=1, dash='dash'),
-                hovertemplate=f'{bond2_name} (дневн.): %{{y:.2f}}%<extra></extra>'
+                line=dict(color=BOND2_COLORS["history"], width=1, dash='dash')
             ))
     
-    # Облигация 2 - intraday (сплошная) - без даты
+    # Облигация 2 - intraday (сплошная)
     if intraday_points:
         ytm2_intraday = [p['ytm2'] for p in intraday_points]
         if any(v is not None for v in ytm2_intraday):
@@ -971,8 +961,7 @@ def create_combined_ytm_chart(
                 x=[p['idx'] for p in intraday_points],
                 y=ytm2_intraday,
                 name=f"{bond2_name} (свечи)",
-                line=dict(color=BOND2_COLORS["intraday"], width=1),
-                hovertemplate=f'{bond2_name} (свечи): %{{y:.2f}}%<extra></extra>'
+                line=dict(color=BOND2_COLORS["intraday"], width=1)
             ))
     
     # Объём торгов в рублях (value) - два набора столбиков
@@ -997,9 +986,8 @@ def create_combined_ytm_chart(
             y=[p['value1'] for p in value1_points],
             name=f'{bond1_name} объём',
             marker_color='rgba(52, 152, 219, 0.3)',
-            marker_line_width=0,  # Убираем белый абрис
-            yaxis='y2',
-            hovertemplate='Объём: %{y:,.0f} ₽<extra></extra>'
+            marker_line_width=0,
+            yaxis='y2'
         ))
     
     # Объём облигации 2 (светло-розовый)
@@ -1010,9 +998,8 @@ def create_combined_ytm_chart(
             y=[p['value2'] for p in value2_points],
             name=f'{bond2_name} объём',
             marker_color='rgba(231, 76, 60, 0.3)',
-            marker_line_width=0,  # Убираем белый абрис
-            yaxis='y2',
-            hovertemplate='Объём: %{y:,.0f} ₽<extra></extra>'
+            marker_line_width=0,
+            yaxis='y2'
         ))
     
     # Подпись о границе склейки
@@ -1104,14 +1091,12 @@ def create_intraday_spread_chart(
         tickvals = x_indices[::tick_step]
         ticktext = [date_labels[i] for i in tickvals]
         
-        # Спред - единственный trace, добавляем дату внизу
+        # Спред
         fig.add_trace(go.Scatter(
             x=x_indices,
             y=spread_df['spread'],
             name='Спред',
-            line=dict(color=SPREAD_COLOR, width=2),
-            customdata=date_labels,
-            hovertemplate=f'Спред: %{{y:.1f}} б.п.<br><br>📅 %{{customdata}}<extra></extra>'
+            line=dict(color=SPREAD_COLOR, width=2)
         ))
     else:
         tickvals = []
@@ -1278,29 +1263,12 @@ def create_spread_analytics_chart(
             ticktext = [date_labels[i] for i in tickvals]
             
             # --- ВЕРХНЯЯ ПАНЕЛЬ: YTM (yaxis='y') ---
-            # Невидимый trace для даты (первым!)
-            # Используем среднее значение YTM для позиционирования
-            ytm_avg = (combined['ytm_long'].mean() + combined['ytm_short'].mean()) / 2
-            fig.add_trace(go.Scatter(
-                x=x_indices,
-                y=[ytm_avg] * n_points,
-                name='',
-                showlegend=False,
-                hoverinfo='skip',
-                mode='lines',
-                line=dict(color='rgba(0,0,0,0)', width=0),
-                customdata=date_labels,
-                hovertemplate=f'<b>📅 %{{customdata}}</b><extra></extra>'
-            ))
-            
             # Bond1
             fig.add_trace(go.Scatter(
                 x=x_indices,
                 y=combined['ytm_long'],
                 name=bond1_name,
-                line=dict(color=BOND1_COLORS["history"], width=2),
-                customdata=date_labels,
-                hovertemplate=f'{bond1_name}: %{{y:.2f}}%<extra></extra>'
+                line=dict(color=BOND1_COLORS["history"], width=2)
             ))
             
             # Bond2
@@ -1308,27 +1276,10 @@ def create_spread_analytics_chart(
                 x=x_indices,
                 y=combined['ytm_short'],
                 name=bond2_name,
-                line=dict(color=BOND2_COLORS["history"], width=2),
-                customdata=date_labels,
-                hovertemplate=f'{bond2_name}: %{{y:.2f}}%<extra></extra>'
+                line=dict(color=BOND2_COLORS["history"], width=2)
             ))
             
             # --- НИЖНЯЯ ПАНЕЛЬ: Спред (yaxis='y2') ---
-            # Невидимый trace для даты (первым в нижней панели!)
-            spread_avg = combined['spread'].mean()
-            fig.add_trace(go.Scatter(
-                x=x_indices,
-                y=[spread_avg] * n_points,
-                name='',
-                yaxis='y2',
-                showlegend=False,
-                hoverinfo='skip',
-                mode='lines',
-                line=dict(color='rgba(0,0,0,0)', width=0),
-                customdata=date_labels,
-                hovertemplate=f'<b>📅 %{{customdata}}</b><extra></extra>'
-            ))
-            
             # Верхняя граница
             fig.add_trace(go.Scatter(
                 x=x_indices,
@@ -1336,9 +1287,7 @@ def create_spread_analytics_chart(
                 name=f"+{z_threshold}σ",
                 yaxis='y2',
                 line=dict(color='rgba(255, 0, 0, 0.4)', dash='dot', width=1),
-                showlegend=True,
-                customdata=date_labels,
-                hovertemplate=f'+{z_threshold}σ: %{{y:.1f}} б.п.<extra></extra>'
+                showlegend=True
             ))
             
             # Нижняя граница с заливкой
@@ -1350,9 +1299,7 @@ def create_spread_analytics_chart(
                 line=dict(color='rgba(0, 180, 0, 0.4)', dash='dot', width=1),
                 fill='tonexty',
                 fillcolor='rgba(128, 128, 128, 0.1)',
-                showlegend=True,
-                customdata=date_labels,
-                hovertemplate=f'-{z_threshold}σ: %{{y:.1f}} б.п.<extra></extra>'
+                showlegend=True
             ))
             
             # Rolling Mean
@@ -1361,9 +1308,7 @@ def create_spread_analytics_chart(
                 y=combined['rolling_mean'],
                 name=f"MA({window})",
                 yaxis='y2',
-                line=dict(color='gray', dash='dash', width=1),
-                customdata=date_labels,
-                hovertemplate=f'MA({window}): %{{y:.1f}} б.п.<extra></extra>'
+                line=dict(color='gray', dash='dash', width=1)
             ))
             
             # Спред
@@ -1372,9 +1317,7 @@ def create_spread_analytics_chart(
                 y=combined['spread'],
                 name="Спред",
                 yaxis='y2',
-                line=dict(color=SPREAD_COLOR, width=2),
-                customdata=date_labels,
-                hovertemplate=f'Спред: %{{y:.1f}} б.п.<extra></extra>'
+                line=dict(color=SPREAD_COLOR, width=2)
             ))
             
             # Текущая точка с сигналом
@@ -1403,9 +1346,7 @@ def create_spread_analytics_chart(
                 marker=dict(size=12, color=marker_color, symbol='diamond'),
                 text=[f"Z={last_zscore:.1f}"],
                 textposition="top center",
-                textfont=dict(size=10, color=marker_color),
-                customdata=[last_date_label],
-                hovertemplate=f'{signal}<br>Спред: {last_spread:.1f} б.п.<br>Z: {last_zscore:.2f}<extra></extra>'
+                textfont=dict(size=10, color=marker_color)
             ))
     
     # --- Оформление с двумя Y-осями ---
@@ -1420,7 +1361,12 @@ def create_spread_analytics_chart(
     spread_padding = (spread_max - spread_min) * 0.1
     
     fig.update_layout(
-        title="Анализ спреда",
+        title=dict(
+            text=f"Анализ спреда (Rolling {window} дн., Z-Score ±{z_threshold})",
+            x=0.01,  # Влево
+            xanchor='left',
+            font=dict(size=14)
+        ),
         template="plotly_white",
         height=700,
         hovermode='x unified',
@@ -1481,15 +1427,8 @@ def create_spread_analytics_chart(
                 x=0.01, y=1.0,
                 xref='paper', yref='paper',
                 showarrow=False,
-                font=dict(size=12, color='rgba(100, 100, 100, 0.8)'),
+                font=dict(size=11, color='rgba(100, 100, 100, 0.7)'),
                 yanchor='bottom'
-            ),
-            dict(
-                text=f"Анализ спреда (Rolling {window} дн., Z-Score ±{z_threshold})",
-                x=0.5, y=-0.08,
-                xref='paper', yref='paper',
-                showarrow=False,
-                font=dict(size=13)
             )
         ]
     )
