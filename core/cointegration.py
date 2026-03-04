@@ -129,7 +129,11 @@ def synchronize_series(
     return combined['y'], combined['x']
 
 
-def adf_test(series: pd.Series) -> Dict:
+def adf_test(
+    series: pd.Series,
+    regression: str = 'c',
+    significance: float = 0.05
+) -> Dict:
     """
     Augmented Dickey-Fuller тест на стационарность.
     
@@ -138,9 +142,15 @@ def adf_test(series: pd.Series) -> Dict:
     
     Args:
         series: Временной ряд
+        regression: Тип регрессии:
+            'c' - константа (по умолчанию)
+            'ct' - константа + тренд
+            'ctt' - константа + тренд + тренд²
+            'n' - без константы
+        significance: Уровень значимости (default 0.05)
         
     Returns:
-        Dict с pvalue и is_stationary
+        Dict с pvalue, is_stationary, is_nonstationary, adf_statistic
     """
     if not STATSMODELS_AVAILABLE:
         return {'error': 'statsmodels not installed'}
@@ -148,22 +158,53 @@ def adf_test(series: pd.Series) -> Dict:
     series = series.dropna()
     
     if len(series) < MIN_OBSERVATIONS:
-        return {'error': f'Недостаточно данных (минимум {MIN_OBSERVATIONS})'}
+        return {
+            'error': f'Недостаточно данных (минимум {MIN_OBSERVATIONS})',
+            'n_observations': len(series)
+        }
     
-    # Константный ряд
-    if series.std() < 1e-10:
-        return {'pvalue': 0.0, 'is_stationary': True}
+    # Проверка на константный ряд
+    std = series.std()
+    if std < 1e-10:
+        logger.warning(f"Константный ряд (std={std:.2e}) - возможно ошибка данных")
+        return {
+            'pvalue': 1.0,  # Не можем отвергнуть H0 -> считаем нестационарным
+            'is_stationary': False,
+            'is_nonstationary': True,
+            'adf_statistic': 0.0,
+            'n_observations': len(series),
+            'warning': 'Константный ряд - недостаточно вариации для теста'
+        }
     
     try:
-        result = adfuller(series, autolag='AIC')
+        # Оптимальный maxlag: ~n^(1/3)
+        maxlag = int(len(series) ** (1/3))
+        
+        result = adfuller(
+            series,
+            maxlag=maxlag,
+            autolag='AIC',
+            regression=regression
+        )
+        
+        adf_statistic = result[0]
         pvalue = result[1]
+        used_lag = result[2]
+        n_obs = result[3]
+        critical_values = result[4]
         
         return {
             'pvalue': pvalue,
-            'is_stationary': pvalue < 0.05,
-            'is_nonstationary': pvalue >= 0.05
+            'adf_statistic': adf_statistic,
+            'used_lag': used_lag,
+            'n_observations': n_obs,
+            'critical_values': critical_values,
+            'is_stationary': pvalue < significance,
+            'is_nonstationary': pvalue >= significance,
+            'regression': regression
         }
     except Exception as e:
+        logger.error(f"ADF test error: {e}")
         return {'error': str(e)}
 
 
@@ -374,6 +415,24 @@ def run_cointegration_analysis(
         adf1.get('is_nonstationary', False) and 
         adf2.get('is_nonstationary', False)
     )
+    
+    # Логируем результаты ADF
+    p1 = adf1.get('pvalue')
+    p2 = adf2.get('pvalue')
+    p1_str = f"{p1:.4f}" if p1 is not None else "N/A"
+    p2_str = f"{p2:.4f}" if p2 is not None else "N/A"
+    logger.debug(f"ADF: ytm1_p={p1_str}, ytm2_p={p2_str}, both_nonstationary={both_nonstationary}")
+    
+    # Предупреждение если хотя бы один ряд стационарен
+    if not both_nonstationary:
+        p1_val = adf1.get('pvalue')
+        p2_val = adf2.get('pvalue')
+        if adf1.get('is_stationary'):
+            p1_fmt = f"{p1_val:.4f}" if p1_val is not None else "N/A"
+            logger.warning(f"Ряд YTM1 стационарен (p={p1_fmt}) - коинтеграция неприменима")
+        if adf2.get('is_stationary'):
+            p2_fmt = f"{p2_val:.4f}" if p2_val is not None else "N/A"
+            logger.warning(f"Ряд YTM2 стационарен (p={p2_fmt}) - коинтеграция неприменима")
     
     # 3. Engle-Granger тест
     try:
