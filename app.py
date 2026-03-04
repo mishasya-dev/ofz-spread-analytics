@@ -28,12 +28,12 @@ from components.charts import (
     apply_zoom_range
 )
 from version import format_version_badge
-from core.cointegration import CointegrationAnalyzer
+from core.cointegration import CointegrationAnalyzer, format_cointegration_report
 from core.cointegration_service import get_cointegration_service
 
 # Настройка логирования
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -229,30 +229,6 @@ def init_session_state():
     # Результат валидации YTM
     if 'ytm_validation' not in st.session_state:
         st.session_state.ytm_validation = None
-    
-    # Состояние анализа коинтеграции
-    if 'cointegration_needs_update' not in st.session_state:
-        st.session_state.cointegration_needs_update = False
-    
-    if 'cointegration_results' not in st.session_state:
-        st.session_state.cointegration_results = {}
-    
-    if 'cointegration_running' not in st.session_state:
-        st.session_state.cointegration_running = False
-    
-    # Проверка при первом запуске: если избранное есть, а результатов нет — запустить анализ
-    if 'cointegration_initialized' not in st.session_state:
-        st.session_state.cointegration_initialized = True
-        db = get_db()
-        cached_count = len(db.get_cointegrated_pairs())
-        favorites_count = len(db.get_favorite_bonds())
-        
-        # Если есть избранное (>=2), но результатов нет — нужен анализ
-        if favorites_count >= 2 and cached_count == 0:
-            st.session_state.cointegration_needs_update = True
-            favorite_isins = [b['isin'] for b in db.get_favorite_bonds()]
-            st.session_state.cointegration_favorites = favorite_isins
-            logger.info(f"Автозапуск анализа коинтеграции: {favorites_count} облигаций, {cached_count} результатов")
 
 
 def get_bonds_list() -> List:
@@ -272,239 +248,6 @@ def get_bonds_list() -> List:
             self.day_count_convention = data.get('day_count_convention', 'ACT/ACT')
     
     return [BondItem(bond_data) for bond_data in bonds_dict.values()]
-
-
-def run_cointegration_analysis_for_favorites(favorite_isins: List[str]) -> Dict:
-    """
-    Запускает анализ коинтеграции для всех пар избранных облигаций.
-    
-    Args:
-        favorite_isins: Список ISIN избранных облигаций
-        
-    Returns:
-        Словарь с результатами по парам
-    """
-    from core.cointegration_service import CointegrationService
-    
-    if len(favorite_isins) < 2:
-        return {}
-    
-    service = CointegrationService()
-    db = get_db()
-    
-    # Загружаем кэшированные результаты
-    service.load_cached_results(db, max_age_hours=24)
-    
-    # Запускаем анализ синхронно (для простоты)
-    pairs = service.generate_pairs(favorite_isins)
-    results = {}
-    
-    for isin1, isin2 in pairs:
-        key = service.get_pair_key(isin1, isin2)
-        
-        # Проверяем кэш
-        cached = service.get_result(isin1, isin2)
-        if cached and not cached.error:
-            results[key] = cached
-            continue
-        
-        # Анализируем
-        result = service.analyze_pair(isin1, isin2, db)
-        results[key] = result
-        
-        # Сохраняем в БД
-        db.save_cointegration_result(result.to_dict())
-    
-    return {k: v.to_dict() for k, v in results.items()}
-
-
-def get_cointegration_status_html(result: Dict, bond1_name: str, bond2_name: str) -> str:
-    """
-    Формирует HTML блок со статусом коинтеграции.
-    
-    Args:
-        result: Результат анализа
-        bond1_name: Имя первой облигации
-        bond2_name: Имя второй облигации
-        
-    Returns:
-        HTML строка со статусом
-    """
-    if not result:
-        return ""
-    
-    is_cointegrated = result.get('is_cointegrated', False)
-    pvalue = result.get('pvalue')
-    data_days = result.get('data_days', 0)
-    low_data = result.get('low_data', False)
-    error = result.get('error')
-    half_life = result.get('half_life')
-    hedge_ratio = result.get('hedge_ratio')
-    
-    if error:
-        return f'<span style="color: #999;">⚠️ {error}</span>'
-    
-    if is_cointegrated:
-        status_color = '#28a745'
-        status_icon = '✅'
-        status_text = 'Тест коинтеграции пройден'
-        pval_text = f'p={pvalue:.4f}' if pvalue else ''
-    else:
-        status_color = '#dc3545'
-        status_icon = '❌'
-        status_text = 'Тест коинтеграции не пройден'
-        pval_text = f'p={pvalue:.4f}' if pvalue else ''
-    
-    data_warning = ' ⚠️ мало данных' if low_data else ''
-    
-    # Первая строка - статус
-    status_line = f'''
-    <div style="display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; 
-                background: {status_color}15; border-radius: 8px; border-left: 3px solid {status_color};">
-        <span style="font-size: 1.2em;">{status_icon}</span>
-        <span style="font-weight: 500; color: {status_color};">{status_text}</span>
-        <span style="color: #666; font-size: 0.9em;">{pval_text}</span>
-        <span style="color: #888; font-size: 0.85em;">({data_days} дн.{data_warning})</span>
-    </div>'''
-    
-    # Вторая строка - метрики (только если коинтегрированы)
-    if is_cointegrated and (half_life or hedge_ratio):
-        metrics_parts = []
-        if half_life and half_life != float('inf'):
-            metrics_parts.append(f'⏱️ Half-life: <strong>{half_life:.1f} дней</strong>')
-        if hedge_ratio:
-            metrics_parts.append(f'⚖️ Hedge ratio: <strong>{hedge_ratio:.4f}</strong>')
-        
-        if metrics_parts:
-            metrics_line = f'''
-    <div style="padding: 6px 12px; color: #666; font-size: 0.9em;">
-        {'    '.join(metrics_parts)}
-    </div>'''
-            return status_line + metrics_line
-    
-    return status_line
-
-
-def run_single_cointegration_analysis(isin1: str, isin2: str, period: int) -> Optional[Dict]:
-    """
-    Запускает анализ коинтеграции для одной пары за указанный период.
-    
-    Args:
-        isin1: ISIN первой облигации
-        isin2: ISIN второй облигации
-        period: Период анализа в днях
-        
-    Returns:
-        Словарь с результатом или None при ошибке
-    """
-    from core.cointegration_service import CointegrationService
-    
-    try:
-        service = CointegrationService()
-        db = get_db()
-        
-        result = service.analyze_pair(isin1, isin2, db, period_days=period)
-        
-        if result and not result.error:
-            result_dict = result.to_dict()
-            result_dict['period_days'] = period  # Сохраняем запрошенный период
-            db.save_cointegration_result(result_dict)
-            return result_dict
-        elif result:
-            return result.to_dict()
-    except Exception as e:
-        logger.error(f"Ошибка анализа коинтеграции: {e}", exc_info=True)
-    
-    return None
-
-
-def format_cointegration_details(result: Dict, bond1_name: str, bond2_name: str) -> str:
-    """
-    Форматирует подробный отчёт коинтеграции для expandable блока.
-    
-    Args:
-        result: Результат анализа
-        bond1_name: Имя первой облигации
-        bond2_name: Имя второй облигации
-        
-    Returns:
-        Markdown строка с отчётом
-    """
-    if not result:
-        return "Нет данных для отображения."
-    
-    error = result.get('error')
-    if error:
-        return f"❌ **Ошибка:** {error}"
-    
-    lines = []
-    
-    # Секция "Что проверяем"
-    lines.append("**Что проверяем:**")
-    lines.append("- Являются ли YTM обоих облигаций нестационарными (должны быть!)")
-    lines.append("- Существует ли долгосрочная равновесная связь (коинтеграция)")
-    lines.append("- Как быстро спред возвращается к среднему (half-life)")
-    lines.append("")
-    
-    # Проверка стационарности
-    adf_pval1 = result.get('adf_bond1_pvalue')
-    adf_pval2 = result.get('adf_bond2_pvalue')
-    both_nonstationary = result.get('both_nonstationary', False)
-    
-    lines.append("**Проверка облигаций (должны быть нестационарны):**")
-    
-    if adf_pval1 is not None:
-        stat1 = "❌ стационарен" if adf_pval1 < 0.05 else "✅ нестационарен"
-        lines.append(f"- {bond1_name}: {stat1} (p={adf_pval1:.4f})")
-    
-    if adf_pval2 is not None:
-        stat2 = "❌ стационарен" if adf_pval2 < 0.05 else "✅ нестационарен"
-        lines.append(f"- {bond2_name}: {stat2} (p={adf_pval2:.4f})")
-    
-    lines.append("")
-    
-    # Engle-Granger тест
-    pvalue = result.get('pvalue')
-    is_cointegrated = result.get('is_cointegrated', False)
-    
-    lines.append("**Engle-Granger тест:**")
-    if pvalue is not None:
-        coint_status = "✅ Коинтеграция есть" if is_cointegrated else "❌ Коинтеграции нет"
-        lines.append(f"- p-value: `{pvalue:.4f}`")
-        lines.append(f"- **{coint_status}** (p={pvalue:.4f})")
-    lines.append("")
-    
-    # Half-life и Hedge Ratio (только если коинтегрированы)
-    if is_cointegrated:
-        half_life = result.get('half_life')
-        hedge_ratio = result.get('hedge_ratio')
-        
-        if half_life is not None and half_life != float('inf'):
-            lines.append(f"**Half-life:** `{half_life:.1f}` дней")
-        
-        if hedge_ratio is not None:
-            lines.append(f"**Hedge Ratio:** `{hedge_ratio:.4f}`")
-            lines.append(f"> На каждые **{abs(hedge_ratio):.2f} единицы {bond2_name}** нужно взять **1 единицу {bond1_name}**")
-        
-        lines.append("")
-        
-        # Рекомендация по стратегии
-        half_life = result.get('half_life')
-        if half_life is not None and half_life != float('inf'):
-            if half_life <= 10:
-                risk = "низкий"
-                emoji = "✅"
-            elif half_life <= 30:
-                risk = "средний"
-                emoji = "⚠️"
-            else:
-                risk = "высокий"
-                emoji = "⚠️"
-            
-            lines.append(f"{emoji} **Pair Trading (Mean Reversion)**")
-            lines.append(f"- Коинтеграция подтверждена. Mean reversion {'сильная' if half_life <= 10 else 'умеренная' if half_life <= 30 else 'слабая'} (half-life: {half_life:.1f} дней)")
-    
-    return "\n".join(lines)
 
 
 @st.cache_resource
@@ -1210,18 +953,6 @@ def main():
     """, unsafe_allow_html=True)
     
     # ==========================================
-    # АНАЛИЗ КОИНТЕГРАЦИИ (фоновый запуск)
-    # ==========================================
-    if st.session_state.get('cointegration_needs_update', False):
-        favorite_isins = st.session_state.get('cointegration_favorites', [])
-        if len(favorite_isins) >= 2:
-            with st.spinner("Анализ коинтеграции пар..."):
-                results = run_cointegration_analysis_for_favorites(favorite_isins)
-                st.session_state.cointegration_results = results
-                st.session_state.cointegration_needs_update = False
-                logger.info(f"Анализ коинтеграции завершён: {len(results)} пар")
-    
-    # ==========================================
     # ЗАГРУЗКА ДАННЫХ
     # ==========================================
     bond1 = bonds[bond1_idx]
@@ -1246,45 +977,6 @@ def main():
     
     # Спред по intraday данным
     intraday_spread_df = prepare_spread_dataframe(intraday_df1, intraday_df2, is_intraday=True)
-    
-    # ==========================================
-    # ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ КОИНТЕГРАЦИИ
-    # ==========================================
-    # Получаем результат для текущей пары из БД
-    db = get_db()
-    coint_result = db.load_cointegration_result(bond1.isin, bond2.isin)
-    
-    # Проверяем, нужен ли перерасчёт (период изменился)
-    needs_refresh = False
-    if coint_result:
-        cached_days = coint_result.get('data_days', 0)
-        # Если текущий период значительно отличается от кэшированного (>30 дней разницы)
-        if abs(period - cached_days) > 30:
-            needs_refresh = True
-    
-    # Кнопка обновления (показываем если есть результат)
-    col_status, col_btn = st.columns([4, 1])
-    
-    with col_status:
-        if coint_result:
-            status_html = get_cointegration_status_html(coint_result, bond1.name, bond2.name)
-            st.markdown(f"""
-            <div style="margin-bottom: 8px;">
-                {status_html}
-            </div>
-            """, unsafe_allow_html=True)
-    
-    with col_btn:
-        if coint_result:
-            btn_label = "🔄 Обновить" if needs_refresh else "↻ Обновить"
-            if st.button(btn_label, key="refresh_cointegration", help="Пересчитать коинтеграцию за текущий период"):
-                with st.spinner("Пересчёт коинтеграции..."):
-                    new_result = run_single_cointegration_analysis(bond1.isin, bond2.isin, period)
-                    if new_result:
-                        st.success("✅ Обновлено!")
-                        st.rerun()
-                    else:
-                        st.error("Ошибка при расчёте")
     
     # ==========================================
     # МЕТРИКИ
@@ -1374,13 +1066,69 @@ def main():
     """.format(threshold=st.session_state.z_threshold))
     
     # ==========================================
-    # ПОДРОБНОСТИ АНАЛИЗА (ADF)
+    # АНАЛИЗ КОИНТЕГРАЦИИ
     # ==========================================
-    with st.expander("📊 Подробности анализа (ADF)"):
-        if coint_result:
-            st.markdown(format_cointegration_details(coint_result, bond1.name, bond2.name))
+    with st.expander("📊 Анализ коинтеграции (ADF + Engle-Granger)", expanded=False):
+        st.markdown("""
+        **Что проверяем:**
+        1. Являются ли YTM обоих облигаций нестационарными (должны быть!)
+        2. Существует ли долгосрочная равновесная связь (коинтеграция)
+        3. Как быстро спред возвращается к среднему (half-life)
+        """)
+
+        # Кнопка принудительного обновления
+        col_refresh, col_status = st.columns([1, 3])
+        with col_refresh:
+            refresh_clicked = st.button("🔄 Обновить", key="refresh_cointegration")
+
+        # Получаем сервис коинтеграции
+        coint_service = get_cointegration_service()
+
+        # Подготовка данных
+        ytm1_series = daily_df1['ytm'].dropna() if not daily_df1.empty else pd.Series()
+        ytm2_series = daily_df2['ytm'].dropna() if not daily_df2.empty else pd.Series()
+
+        # Ключ для отслеживания изменений пары/периода
+        coint_key = f"coint_result_{bond1.isin}_{bond2.isin}_{period}"
+
+        # Определяем нужно ли пересчитывать
+        need_refresh = refresh_clicked or st.session_state.get(coint_key) is None
+
+        if need_refresh and len(ytm1_series) >= 30 and len(ytm2_series) >= 30:
+            with st.spinner("Анализ коинтеграции..."):
+                try:
+                    result = coint_service.get_or_calculate(
+                        bond1.isin, bond2.isin, period,
+                        ytm1_series, ytm2_series,
+                        force_refresh=refresh_clicked
+                    )
+                    st.session_state[coint_key] = result
+                except ImportError:
+                    st.error("❌ **statsmodels не установлен.**")
+                    st.code("pip install statsmodels", language="bash")
+                    st.session_state[coint_key] = None
+                except Exception as e:
+                    st.error(f"❌ Ошибка анализа: {e}")
+                    logger.error(f"Cointegration analysis error: {e}", exc_info=True)
+                    st.session_state[coint_key] = None
+
+        # Показываем результат
+        result = st.session_state.get(coint_key)
+
+        if result:
+            # Статус кэша
+            with col_status:
+                if result.get('from_cache', False):
+                    st.caption("📦 Из кэша (нажмите 'Обновить' для пересчёта)")
+                else:
+                    st.caption("✨ Свежий расчёт")
+
+            # Отчёт
+            st.markdown(format_cointegration_report(result, bond1.name, bond2.name))
+        elif len(ytm1_series) < 30 or len(ytm2_series) < 30:
+            st.warning(f"⚠️ Недостаточно данных для анализа (нужно ≥30, есть: {len(ytm1_series)}, {len(ytm2_series)})")
         else:
-            st.info("Нет данных коинтеграции для текущей пары. Результаты появятся после фонового анализа всех пар избранного.")
+            st.info("Нажмите 'Обновить' для запуска анализа")
     
     st.divider()
     

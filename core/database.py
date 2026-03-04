@@ -282,30 +282,21 @@ def init_database():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             bond1_isin TEXT NOT NULL,
             bond2_isin TEXT NOT NULL,
-            pair_key TEXT NOT NULL UNIQUE,
-            is_cointegrated INTEGER DEFAULT 0,
-            pvalue REAL,
-            half_life REAL,
-            hedge_ratio REAL,
-            data_days INTEGER DEFAULT 0,
-            adf_bond1_pvalue REAL,
-            adf_bond2_pvalue REAL,
-            both_nonstationary INTEGER DEFAULT 0,
-            low_data INTEGER DEFAULT 0,
-            error TEXT,
-            checked_at TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            period_days INTEGER NOT NULL,
+            result_json TEXT NOT NULL,
+            calculated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(bond1_isin, bond2_isin, period_days)
         )
     ''')
     
     cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_cointegration_pair_key 
-        ON cointegration_cache(pair_key)
+        CREATE INDEX IF NOT EXISTS idx_cointegration_cache_isins 
+        ON cointegration_cache(bond1_isin, bond2_isin)
     ''')
     
     cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_cointegration_checked_at 
-        ON cointegration_cache(checked_at)
+        CREATE INDEX IF NOT EXISTS idx_cointegration_cache_period 
+        ON cointegration_cache(period_days)
     ''')
     
     conn.commit()
@@ -1404,125 +1395,151 @@ class DatabaseManager:
         conn.close()
         
         logger.info("Все данные очищены")
-    
+
     # ==========================================
-    # КОИНТЕГРАЦИЯ
+    # КЭШ КОИНТЕГРАЦИИ
     # ==========================================
-    
-    def save_cointegration_result(self, result: Dict) -> bool:
+
+    def get_cointegration_cache(
+        self,
+        bond1_isin: str,
+        bond2_isin: str,
+        period_days: int,
+        ttl_hours: int = 24
+    ) -> Optional[Dict]:
         """
-        Сохранить результат анализа коинтеграции.
-        
+        Получить кэшированный результат коинтеграции
+
         Args:
-            result: Словарь с результатами
-            
+            bond1_isin: ISIN первой облигации
+            bond2_isin: ISIN второй облигации
+            period_days: Период анализа в днях
+            ttl_hours: Время жизни кэша в часах (default 24)
+
         Returns:
-            True если сохранено успешно
+            Словарь с результатом или None если кэш устарел/отсутствует
         """
         conn = get_connection()
         cursor = conn.cursor()
-        
+
+        # Нормализуем порядок ISIN (алфавитный) для уникального ключа
+        isins = sorted([bond1_isin, bond2_isin])
+
+        cursor.execute('''
+            SELECT result_json, calculated_at
+            FROM cointegration_cache
+            WHERE bond1_isin = ? AND bond2_isin = ? AND period_days = ?
+        ''', (isins[0], isins[1], period_days))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        if row is None:
+            return None
+
+        # Проверяем TTL
+        calculated_at = datetime.strptime(row['calculated_at'], '%Y-%m-%d %H:%M:%S')
+        age_hours = (datetime.now() - calculated_at).total_seconds() / 3600
+
+        if age_hours > ttl_hours:
+            logger.debug(f"Кэш коинтеграции устарел ({age_hours:.1f} ч. > {ttl_hours} ч.)")
+            return None
+
         try:
-            isins = sorted([result['bond1_isin'], result['bond2_isin']])
-            pair_key = f"{isins[0]}-{isins[1]}"
-            
+            return json.loads(row['result_json'])
+        except json.JSONDecodeError as e:
+            logger.warning(f"Ошибка декодирования JSON кэша: {e}")
+            return None
+
+    def save_cointegration_cache(
+        self,
+        bond1_isin: str,
+        bond2_isin: str,
+        period_days: int,
+        result: Dict
+    ) -> bool:
+        """
+        Сохранить результат коинтеграции в кэш
+
+        Args:
+            bond1_isin: ISIN первой облигации
+            bond2_isin: ISIN второй облигации
+            period_days: Период анализа в днях
+            result: Словарь с результатом анализа
+
+        Returns:
+            True если успешно
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Нормализуем порядок ISIN
+        isins = sorted([bond1_isin, bond2_isin])
+
+        try:
             cursor.execute('''
-                INSERT OR REPLACE INTO cointegration_cache (
-                    bond1_isin, bond2_isin, pair_key,
-                    is_cointegrated, pvalue, half_life, hedge_ratio,
-                    data_days, adf_bond1_pvalue, adf_bond2_pvalue,
-                    both_nonstationary, low_data, error, checked_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO cointegration_cache
+                (bond1_isin, bond2_isin, period_days, result_json, calculated_at)
+                VALUES (?, ?, ?, ?, ?)
             ''', (
-                isins[0], isins[1], pair_key,
-                1 if result.get('is_cointegrated') else 0,
-                result.get('pvalue'),
-                result.get('half_life'),
-                result.get('hedge_ratio'),
-                result.get('data_days', 0),
-                result.get('adf_bond1_pvalue'),
-                result.get('adf_bond2_pvalue'),
-                1 if result.get('both_nonstationary') else 0,
-                1 if result.get('low_data') else 0,
-                result.get('error'),
-                result.get('checked_at', datetime.now().isoformat())
+                isins[0], isins[1], period_days,
+                json.dumps(result, ensure_ascii=False, default=str),
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             ))
-            
             conn.commit()
+            logger.debug(f"Сохранён кэш коинтеграции для {isins[0]}/{isins[1]} (period={period_days})")
             return True
         except Exception as e:
-            logger.error(f"Ошибка сохранения коинтеграции: {e}")
+            logger.error(f"Ошибка сохранения кэша коинтеграции: {e}")
             return False
         finally:
             conn.close()
 
-    def load_cointegration_result(self, isin1: str, isin2: str) -> Optional[Dict]:
-        """Загрузить результат коинтеграции для пары"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            isins = sorted([isin1, isin2])
-            pair_key = f"{isins[0]}-{isins[1]}"
-            
-            cursor.execute('''
-                SELECT * FROM cointegration_cache WHERE pair_key = ?
-            ''', (pair_key,))
-            
-            row = cursor.fetchone()
-            
-            if row:
-                return {
-                    'bond1_isin': row['bond1_isin'],
-                    'bond2_isin': row['bond2_isin'],
-                    'is_cointegrated': bool(row['is_cointegrated']),
-                    'pvalue': row['pvalue'],
-                    'half_life': row['half_life'],
-                    'hedge_ratio': row['hedge_ratio'],
-                    'data_days': row['data_days'],
-                    'adf_bond1_pvalue': row['adf_bond1_pvalue'],
-                    'adf_bond2_pvalue': row['adf_bond2_pvalue'],
-                    'both_nonstationary': bool(row['both_nonstationary']),
-                    'low_data': bool(row['low_data']),
-                    'error': row['error'],
-                    'checked_at': row['checked_at']
-                }
-            return None
-        except Exception as e:
-            logger.error(f"Ошибка загрузки коинтеграции: {e}")
-            return None
-        finally:
-            conn.close()
+    def clear_cointegration_cache(
+        self,
+        bond1_isin: str = None,
+        bond2_isin: str = None,
+        period_days: int = None
+    ) -> int:
+        """
+        Очистить кэш коинтеграции
 
-    def get_cointegrated_pairs(self) -> List[Dict]:
-        """Получить все коинтегрированные пары"""
+        Args:
+            bond1_isin: ISIN первой облигации (опционально)
+            bond2_isin: ISIN второй облигации (опционально)
+            period_days: Период (опционально)
+
+        Returns:
+            Количество удалённых записей
+        """
         conn = get_connection()
         cursor = conn.cursor()
-        
-        try:
-            cursor.execute('''
-                SELECT * FROM cointegration_cache 
-                WHERE is_cointegrated = 1
-                ORDER BY pvalue ASC
-            ''')
-            
-            rows = cursor.fetchall()
-            return [{
-                'bond1_isin': row['bond1_isin'],
-                'bond2_isin': row['bond2_isin'],
-                'pair_key': row['pair_key'],
-                'pvalue': row['pvalue'],
-                'half_life': row['half_life'],
-                'hedge_ratio': row['hedge_ratio'],
-                'data_days': row['data_days'],
-                'low_data': bool(row['low_data']),
-                'checked_at': row['checked_at']
-            } for row in rows]
-        except Exception as e:
-            logger.error(f"Ошибка получения коинтегрированных пар: {e}")
-            return []
-        finally:
-            conn.close()
+
+        if bond1_isin and bond2_isin:
+            isins = sorted([bond1_isin, bond2_isin])
+            if period_days:
+                cursor.execute('''
+                    DELETE FROM cointegration_cache
+                    WHERE bond1_isin = ? AND bond2_isin = ? AND period_days = ?
+                ''', (isins[0], isins[1], period_days))
+            else:
+                cursor.execute('''
+                    DELETE FROM cointegration_cache
+                    WHERE bond1_isin = ? AND bond2_isin = ?
+                ''', (isins[0], isins[1]))
+        elif period_days:
+            cursor.execute('DELETE FROM cointegration_cache WHERE period_days = ?', (period_days,))
+        else:
+            cursor.execute('DELETE FROM cointegration_cache')
+
+        deleted = cursor.rowcount
+        conn.commit()
+        conn.close()
+
+        if deleted > 0:
+            logger.info(f"Удалено {deleted} записей кэша коинтеграции")
+
+        return deleted
 
 
 # ==========================================
