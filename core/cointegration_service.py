@@ -95,12 +95,19 @@ class CointegrationService:
             eg = result.get('engle_granger', {})
             adf1 = result.get('adf_ytm1', {})
             adf2 = result.get('adf_ytm2', {})
+            
+            p1 = adf1.get('pvalue')
+            p2 = adf2.get('pvalue')
+            stat1 = adf1.get('adf_statistic')
+            stat2 = adf2.get('adf_statistic')
+            
             logger.info(f"ADF результаты: "
-                       f"ytm1_p={adf1.get('pvalue'):.4f} (stat={adf1.get('adf_statistic'):.2f}), "
-                       f"ytm2_p={adf2.get('pvalue'):.4f} (stat={adf2.get('adf_statistic'):.2f}), "
+                       f"ytm1_p={p1:.4f if p1 else 'N/A'}, "
+                       f"ytm2_p={p2:.4f if p2 else 'N/A'}, "
                        f"both_nonstationary={result.get('both_nonstationary')}, "
                        f"n_obs={result.get('n_observations')}")
-            logger.info(f"Engle-Granger: p={eg.get('pvalue'):.4f}, is_cointegrated={result.get('is_cointegrated')}")
+            logger.info(f"Engle-Granger: p={eg.get('pvalue'):.4f if eg.get('pvalue') else 'N/A'}, "
+                       f"is_cointegrated={result.get('is_cointegrated')}")
 
         # Сохраняем в кэш (даже если ошибка - сохраняем чтобы не долбить повторно)
         if 'error' not in result:
