@@ -277,27 +277,43 @@ def init_database():
     # ==========================================
     # ТАБЛИЦА КЭША КОИНТЕГРАЦИИ
     # ==========================================
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS cointegration_cache (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            bond1_isin TEXT NOT NULL,
-            bond2_isin TEXT NOT NULL,
-            period_days INTEGER NOT NULL,
-            result_json TEXT NOT NULL,
-            calculated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(bond1_isin, bond2_isin, period_days)
-        )
-    ''')
-    
-    cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_cointegration_cache_isins 
-        ON cointegration_cache(bond1_isin, bond2_isin)
-    ''')
-    
-    cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_cointegration_cache_period 
-        ON cointegration_cache(period_days)
-    ''')
+    # Сначала проверяем, существует ли таблица
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cointegration_cache'")
+    table_exists = cursor.fetchone() is not None
+
+    if table_exists:
+        # Проверяем структуру существующей таблицы
+        cursor.execute("PRAGMA table_info(cointegration_cache)")
+        columns = {row[1] for row in cursor.fetchall()}
+
+        # Если нет колонки period_days - пересоздаём таблицу
+        if 'period_days' not in columns:
+            logger.info("Миграция: пересоздание cointegration_cache с period_days")
+            cursor.execute('DROP TABLE cointegration_cache')
+            table_exists = False
+
+    if not table_exists:
+        cursor.execute('''
+            CREATE TABLE cointegration_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bond1_isin TEXT NOT NULL,
+                bond2_isin TEXT NOT NULL,
+                period_days INTEGER NOT NULL,
+                result_json TEXT NOT NULL,
+                calculated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(bond1_isin, bond2_isin, period_days)
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_cointegration_cache_isins
+            ON cointegration_cache(bond1_isin, bond2_isin)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_cointegration_cache_period
+            ON cointegration_cache(period_days)
+        ''')
     
     conn.commit()
     conn.close()
