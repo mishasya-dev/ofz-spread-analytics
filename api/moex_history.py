@@ -131,6 +131,13 @@ class HistoryFetcher:
         df = df.set_index("date")
         df = df.sort_index()
         
+        # Удаляем дубликаты дат (оставляем последнее значение)
+        # MOEX иногда возвращает несколько записей на одну дату
+        duplicates = df.index.duplicated().sum()
+        if duplicates > 0:
+            logger.warning(f"Удалено {duplicates} дубликатов дат для {isin}")
+            df = df[~df.index.duplicated(keep='last')]
+        
         # Конвертируем дюрацию из дней в годы
         if "duration_days" in df.columns:
             df["duration_years"] = df["duration_days"] / 365.25

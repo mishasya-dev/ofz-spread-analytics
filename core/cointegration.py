@@ -45,12 +45,28 @@ def synchronize_series(
     Returns:
         Tuple синхронизированных рядов
     """
+    # Проверка на дубликаты в индексах
+    if ytm1.index.duplicated().any():
+        logger.warning(f"ytm1 содержит {ytm1.index.duplicated().sum()} дубликатов дат")
+        ytm1 = ytm1[~ytm1.index.duplicated(keep='last')]
+    
+    if ytm2.index.duplicated().any():
+        logger.warning(f"ytm2 содержит {ytm2.index.duplicated().sum()} дубликатов дат")
+        ytm2 = ytm2[~ytm2.index.duplicated(keep='last')]
+    
     combined = pd.DataFrame({'ytm1': ytm1, 'ytm2': ytm2})
+    
+    n_before = len(combined)
     
     if fill_method == 'ffill':
         combined = combined.ffill()
     
     combined = combined.dropna()
+    
+    n_after = len(combined)
+    
+    if n_before != n_after:
+        logger.info(f"Синхронизация: {n_before} → {n_after} записей (потеряно {n_before - n_after})")
     
     return combined['ytm1'], combined['ytm2']
 
