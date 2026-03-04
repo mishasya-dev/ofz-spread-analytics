@@ -320,7 +320,7 @@ def run_cointegration_analysis_for_favorites(favorite_isins: List[str]) -> Dict:
 
 def get_cointegration_status_text(result: Dict, bond1_name: str, bond2_name: str) -> str:
     """
-    Формирует краткий текст статуса коинтеграции для отображения.
+    Формирует HTML блок со статусом коинтеграции.
     
     Args:
         result: Результат анализа
@@ -338,6 +338,8 @@ def get_cointegration_status_text(result: Dict, bond1_name: str, bond2_name: str
     data_days = result.get('data_days', 0)
     low_data = result.get('low_data', False)
     error = result.get('error')
+    half_life = result.get('half_life')
+    hedge_ratio = result.get('hedge_ratio')
     
     if error:
         return f'<span style="color: #999;">⚠️ {error}</span>'
@@ -345,25 +347,42 @@ def get_cointegration_status_text(result: Dict, bond1_name: str, bond2_name: str
     if is_cointegrated:
         status_color = '#28a745'
         status_icon = '✅'
-        status_text = 'Коинтегрированы'
+        status_text = 'Тест коинтеграции пройден'
         pval_text = f'p={pvalue:.4f}' if pvalue else ''
     else:
         status_color = '#dc3545'
         status_icon = '❌'
-        status_text = 'Не коинтегрированы'
+        status_text = 'Тест коинтеграции не пройден'
         pval_text = f'p={pvalue:.4f}' if pvalue else ''
     
     data_warning = ' ⚠️ мало данных' if low_data else ''
     
-    return f'''
+    # Первая строка - статус
+    status_line = f'''
     <div style="display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; 
                 background: {status_color}15; border-radius: 8px; border-left: 3px solid {status_color};">
         <span style="font-size: 1.2em;">{status_icon}</span>
         <span style="font-weight: 500; color: {status_color};">{status_text}</span>
         <span style="color: #666; font-size: 0.9em;">{pval_text}</span>
         <span style="color: #888; font-size: 0.85em;">({data_days} дн.{data_warning})</span>
-    </div>
-    '''
+    </div>'''
+    
+    # Вторая строка - метрики (только если коинтегрированы)
+    if is_cointegrated and (half_life or hedge_ratio):
+        metrics_parts = []
+        if half_life and half_life != float('inf'):
+            metrics_parts.append(f'⏱️ Half-life: <strong>{half_life:.1f} дней</strong>')
+        if hedge_ratio:
+            metrics_parts.append(f'⚖️ Hedge ratio: <strong>{hedge_ratio:.4f}</strong>')
+        
+        if metrics_parts:
+            metrics_line = f'''
+    <div style="padding: 6px 12px; color: #666; font-size: 0.9em;">
+        {'    '.join(metrics_parts)}
+    </div>'''
+            return status_line + metrics_line
+    
+    return status_line
 
 
 @st.cache_resource
@@ -1117,22 +1136,9 @@ def main():
         status_html = get_cointegration_status_text(coint_result, bond1.name, bond2.name)
         st.markdown(f"""
         <div style="margin-bottom: 16px;">
-            <span style="font-weight: 500; margin-right: 8px;">🔗 Коинтеграция:</span>
             {status_html}
         </div>
         """, unsafe_allow_html=True)
-        
-        # Если коинтегрированы - показываем дополнительные метрики
-        if coint_result.get('is_cointegrated') and coint_result.get('half_life'):
-            col_hl, col_hr = st.columns(2)
-            with col_hl:
-                half_life = coint_result.get('half_life')
-                if half_life and half_life != float('inf'):
-                    st.caption(f"⏱️ Half-life: **{half_life:.1f} дней**")
-            with col_hr:
-                hedge_ratio = coint_result.get('hedge_ratio')
-                if hedge_ratio:
-                    st.caption(f"⚖️ Hedge ratio: **{hedge_ratio:.4f}**")
     
     # ==========================================
     # МЕТРИКИ
