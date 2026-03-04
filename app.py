@@ -28,7 +28,7 @@ from components.charts import (
     apply_zoom_range
 )
 from version import format_version_badge
-from core.cointegration import CointegrationAnalyzer, format_cointegration_report
+from core.cointegration import CointegrationAnalyzer
 from core.cointegration_service import get_cointegration_service
 
 # Настройка логирования
