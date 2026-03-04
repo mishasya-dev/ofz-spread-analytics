@@ -267,6 +267,63 @@ class TestCointegrationAnalyzer:
         if hedge_ratio is not None:
             # Hedge ratio должен быть числом
             assert isinstance(hedge_ratio, (int, float))
+    
+    def test_kpss_test_structure(self, analyzer, random_walk_pair):
+        """Тест: структура результата KPSS теста"""
+        ytm1, _ = random_walk_pair
+        
+        result = analyzer.kpss_test(ytm1)
+        
+        # Проверяем структуру
+        assert 'test' in result
+        assert 'kpss_statistic' in result
+        assert 'pvalue' in result
+        assert 'is_stationary' in result
+    
+    def test_kpss_insufficient_data(self, analyzer):
+        """Тест: KPSS при недостатке данных"""
+        short_series = pd.Series([1, 2, 3, 4, 5])
+        
+        result = analyzer.kpss_test(short_series)
+        
+        assert 'error' in result
+    
+    def test_engle_granger_bidirectional(self, analyzer):
+        """Тест: bidirectional Engle-Granger выбирает лучший результат"""
+        np.random.seed(999)
+        n = 200
+        dates = pd.date_range(end=pd.Timestamp.now(), periods=n, freq='D')
+        
+        # Создаём асимметричную пару
+        common = np.cumsum(np.random.randn(n) * 0.5)
+        ytm1 = pd.Series(14 + common + np.random.randn(n) * 0.1, index=dates)
+        ytm2 = pd.Series(13 + common * 1.5 + np.random.randn(n) * 0.1, index=dates)
+        
+        # Bidirectional = True (по умолчанию)
+        result_bi = analyzer.engle_granger_test(ytm1, ytm2, bidirectional=True)
+        
+        # Bidirectional = False
+        result_uni = analyzer.engle_granger_test(ytm1, ytm2, bidirectional=False)
+        
+        # Bidirectional должен вернуть p-value не хуже
+        assert result_bi['pvalue'] <= result_uni['pvalue'] + 0.001  # допуск на округление
+    
+    def test_duplicate_dates_handling(self, analyzer):
+        """Тест: обработка дубликатов дат"""
+        np.random.seed(111)
+        dates = pd.date_range('2024-01-01', periods=100)
+        
+        # Создаём дубликаты
+        dates_with_dupes = list(dates) + [dates[50], dates[75]]
+        values = np.random.randn(102)
+        
+        ytm1 = pd.Series(values[:100], index=dates)
+        ytm2 = pd.Series(values, index=dates_with_dupes)
+        
+        # Не должно падать
+        result = analyzer.analyze_pair(ytm1, ytm2)
+        
+        assert 'n_observations' in result
 
     def test_analyze_pair_structure(self, analyzer, cointegrated_pair):
         """Тест: структура результата analyze_pair"""
