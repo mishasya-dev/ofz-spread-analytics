@@ -4,30 +4,28 @@
 
 ## Описание
 
-OFZ Spread Analytics — приложение для анализа of yield spreads between Russian government bonds (OFZ). It helps identify trading opportunities by tracking the spread between different maturity bonds.
+OFZ Spread Analytics — приложение для анализа yield spreads между российскими государственными облигациями (ОФЗ). Помогает находить торговые возможности, отслеживая спреды между облигациями с разными сроками погашения.
 
 ## Features
 
-### Unified 4-Chart Layout (v0.3.0)
+### 3-Chart Layout (v0.6.0)
 
-The application displays 4 synchronized charts:
+Приложение отображает 3 синхронизированных графика:
 
 | Chart | Data | Description |
 |-------|------|-------------|
-| 1 | YTM Daily | YIELDCLOSE from MOEX | Yield history + statistics |
-| 2 | Spread Daily | Calculated from YTM | Percentiles P10, P25, P75, P90 |
-| 3 | YTM Combined | History + Candles | Combined chart |
-| 4 | Spread Intraday | Candle data + reference | Daily percentiles as reference |
+| 1 | Spread Analytics | YTM обеих облигаций + Z-Score анализ спреда |
+| 2 | YTM Combined | История (дневные) + свечи (intraday) |
+| 3 | Spread Intraday | Intraday спред с перцентилями от дневных данных |
 
 ### Key Features
 
-- **Real-time MOEX Data**: Direct connection to Moscow Exchange API
-- **YTM Calculation**: Accurate yield-to-maturity calculation from candle prices
-- **Spread Analysis**: Automatic spread calculation between any two bonds
-- **Trading Signals**: BUY/SELL signals based on percentile analysis
-- **Linked Zoom**: Synchronized zoom between paired charts
-- **Database Storage**: SQLite for historical data
-- **Bond Management**: Dynamic addition/removal of tracked bonds
+- **Real-time MOEX Data**: Прямое подключение к API Московской биржи
+- **YTM Calculation**: Точный расчёт доходности к погашению из цен свечей
+- **Spread Analysis**: Автоматический расчёт спреда между любыми двумя облигациями
+- **Z-Score Signals**: BUY/SELL сигналы на основе Z-Score анализа
+- **Database Storage**: SQLite для исторических данных
+- **Bond Management**: Динамическое добавление/удаление отслеживаемых облигаций
 
 ## Installation
 
@@ -45,7 +43,7 @@ streamlit run streamlit-app/app.py
 
 ## Configuration
 
-Bonds are configured in `config.py`:
+Облигации настраиваются через UI или в `config.py`:
 
 ### Adding a New Bond
 
@@ -65,10 +63,10 @@ bonds["SU26255RMFS1"] = BondConfig(
 
 ## Usage
 
-1. Select two bonds from the sidebar
-2. Adjust analysis period (30 days - 2 years)
-3. Select candle interval (1min/10min/1hour)
-4. Charts will update automatically
+1. Выберите две облигации из сайдбара
+2. Настройте период анализа (30 дней - 2 года)
+3. Выберите интервал свечей (1min/10min/1hour)
+4. Графики обновятся автоматически
 
 ## Project Structure
 
@@ -85,14 +83,15 @@ streamlit-app/
 │   ├── database.py        # SQLite database manager
 │   ├── ytm_calculator.py  # YTM calculation engine
 │   ├── spread.py           # Spread calculations
-│   └── signals.py          # Trading signal generation
+│   ├── signals.py          # Trading signal generation
+│   └── cointegration.py    # Cointegration analysis
 ├── components/
-│   ├── charts.py           # Plotly chart builders
+│   ├── charts.py           # Plotly chart builders (4 functions)
 │   ├── sidebar.py          # Sidebar components
 │   └── bond_manager.py     # Bond selection modal
 ├── models/
 │   └── bond.py              # Bond dataclass model
-└── tests/                  # Test suite (287 tests)
+└── tests/                  # Test suite
 ```
 
 ## Testing
@@ -103,21 +102,50 @@ cd streamlit-app
 python -m pytest tests/ -v
 
 # Run specific test file
-python -m pytest tests/test_ytm_calculation.py -v
+python -m pytest tests/test_spread_analytics_chart.py -v
 ```
 
 ### Test Coverage
 
 | File | Tests | Description |
 |------|-------|-------------|
-| test_ytm_calculation.py | 6 | YTM calculation accuracy |
-| test_app_integration.py | 30 | App integration tests |
-| test_edge_cases.py | 25 | Edge cases (empty data, NaN) |
-| test_linked_zoom.py | 22 | Linked zoom functionality |
+| test_spread_analytics_chart.py | 15 | Spread Analytics chart |
+| test_hover_label.py | 8 | Hover label structure |
+| test_cointegration.py | 12 | Cointegration analysis |
 | test_sidebar_v030.py | 36 | Sidebar components |
-| test_charts_v030.py | 28 | Chart creation |
-| test_models_bond.py | 26 | Bond dataclass |
 | test_database.py | ~100 | Database operations |
+| test_ytm_calculation.py | 6 | YTM calculation accuracy |
+
+## Charts API
+
+### Available Functions (components/charts.py)
+
+```python
+# Spread Analytics with Z-Score
+fig = create_spread_analytics_chart(
+    df1, df2,                    # YTM DataFrames
+    bond1_name, bond2_name,      # Bond names
+    window=30,                    # Rolling window (days)
+    z_threshold=2.0              # Z-Score threshold
+)
+
+# Combined YTM chart (history + candles)
+fig = create_combined_ytm_chart(
+    daily_df1, daily_df2,        # Daily YTM data
+    intraday_df1, intraday_df2,  # Intraday candle data
+    bond1_name, bond2_name,
+    candle_days=30               # Candle period
+)
+
+# Intraday spread chart
+fig = create_intraday_spread_chart(
+    spread_df,                   # Spread DataFrame
+    daily_stats                  # Daily percentiles
+)
+
+# Apply zoom range
+fig = apply_zoom_range(fig, x_range)
+```
 
 ## API Reference
 
@@ -129,7 +157,7 @@ python -m pytest tests/test_ytm_calculation.py -v
 
 ### YTM Calculation
 
-The application calculates YTM using Newton-Raphson method:
+Приложение рассчитывает YTM методом Ньютона-Рафсона:
 
 ```python
 from core.ytm_calculator import YTMCalculator
@@ -149,7 +177,7 @@ MIT License
 
 ## Author
 
-Developed for analysis of Russian government bond market.
+Разработано для анализа рынка российских государственных облигаций.
 
 ## Links
 

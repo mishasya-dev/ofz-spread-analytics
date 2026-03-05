@@ -1,89 +1,67 @@
-# Session Context - 01.03.2026
+# Session Context - 04.03.2026
 
 ## Project State
 
 ### Git Information
 - **Repository**: https://github.com/mishasya-dev/ofz-spread-analytics
-- **Branch**: `feature/v0.3.0-unified-charts`
-- **Last Commit**: `648ead8` - test: add 11 tests for create_spread_analytics_chart
-- **Previous Commit**: `34c2d1b` - refactor: remove redundant charts 1-2
-
-### Test Results
-```
-Total: 38 tests in test_charts_v030.py
-Passed: 38
-Failed: 0
-```
+- **Branch**: `experiments`
+- **Last Commit**: `026f2df` - refactor: remove unused code from charts.py
 
 ### Database Status
 - **Location**: `streamlit-app/data/ofz_data.db`
 - **Tables**: bonds, daily_ytm, intraday_ytm, spreads
 - **Bonds Tracked**: 16
 
-## Work Completed This Session
+## Recent Changes (v0.6.0)
 
-### 1. New Feature: Spread Analytics Chart with Z-Score
+### Code Cleanup
+Removed unused code from `components/charts.py`:
+- Deleted `ChartBuilder` class and all its methods
+- Deleted functions: `create_ytm_chart`, `create_spread_chart`, `create_signal_chart`, `create_backtest_chart`, `create_daily_ytm_chart`, `create_daily_spread_chart`, `calculate_future_range`
+- File reduced from 1512 to ~650 lines (-57%)
 
-**Created**: `create_spread_analytics_chart()` in `components/charts.py`
+### Kept Functions (used in app.py)
+- `create_combined_ytm_chart` - Combined YTM (history + candles)
+- `create_intraday_spread_chart` - Intraday spread chart
+- `create_spread_analytics_chart` - Z-Score analysis panel
+- `apply_zoom_range` - Zoom utility
 
-Two-panel chart:
-- Panel 1: YTM of both bonds (daily)
-- Panel 2: Spread + Rolling Mean + ±Zσ boundaries
+### Tests Cleanup
+Deleted obsolete test files:
+- `tests/test_charts_v030.py`
+- `tests/test_edge_cases.py`
+- `tests/test_linked_zoom.py`
 
-Features:
-- Rolling window (configurable, default 30 days)
-- Z-Score threshold (configurable, default ±2.0)
-- Signal colors: GREEN (BUY), RED (SELL), GRAY (Neutral)
-- Current point marker with Z-Score label
-- Dotted grid on both panels
+## Current Chart Layout (3 Charts)
 
-### 2. UI Refactoring
-
-**Removed redundant charts**:
-- Deleted `create_daily_ytm_chart` and `create_daily_spread_chart` from UI
-- Removed `daily_zoom_range` session state
-- Renamed remaining charts (3→2, 4→3)
-
-**New UI Structure**:
 ```
-📊 Metrics (YTM, Spread, Signal)
-─────────────────────────────────
 📊 Chart 1: Spread Analytics (Z-Score)
-─────────────────────────────────
-📊 Chart 2: Combined YTM (history + intraday)
+  - Panel 1: YTM both bonds (daily)
+  - Panel 2: Spread + Rolling Mean + ±Zσ
+
+📊 Chart 2: Combined YTM (history + candles)
+  - Bond 1 & 2 yields with volume bars
+
 📊 Chart 3: Intraday Spread
+  - Intraday spread with daily percentiles
 ```
-
-### 3. Bug Fixes
-
-1. **Slider Error**: Fixed `min_value == max_value` (30 == 30) error
-2. **Duplicate Indices**: Fixed `cannot reindex on an axis with duplicate labels` in spread analytics chart
-3. **Grid Style**: Changed from solid to dotted grid (matching charts 1-2)
-
-### 4. New Tests (+11)
-
-Added `TestSpreadAnalyticsChart` class with tests:
-- Empty and missing data handling
-- Basic chart structure
-- Spread calculation accuracy
-- Z-Score signal colors
-- Custom parameters
-- Duplicate indices
-- Grid style
-- Layout verification
 
 ## Key Files Reference
 
-### Modified Files
+### Core Files
 ```
-components/charts.py  - New function: create_spread_analytics_chart()
-app.py                - Removed charts 1-2, updated UI structure
-components/sidebar.py - Fixed slider min_value <= max_days bug
+components/charts.py    - 4 functions (~650 lines)
+app.py                  - Main Streamlit application
+components/sidebar.py   - Sidebar components
 ```
 
-### Test Files
+### Active Tests
 ```
-tests/test_charts_v030.py  - Added TestSpreadAnalyticsChart class
+tests/test_spread_analytics_chart.py  - 15 tests for Z-Score chart
+tests/test_hover_label.py              - 8 tests for hover labels
+tests/test_cointegration.py            - 12 tests for cointegration
+tests/test_sidebar_v030.py             - 36 tests for sidebar
+tests/test_database.py                 - ~100 tests for DB
 ```
 
 ## Technical Details
@@ -93,8 +71,8 @@ tests/test_charts_v030.py  - Added TestSpreadAnalyticsChart class
 Z-Score = (spread - rolling_mean) / rolling_std
 
 Signals:
-- Z > +threshold → SELL (spread too high, expect narrowing)
-- Z < -threshold → BUY (spread too low, expect widening)
+- Z > +threshold → SELL (spread too high)
+- Z < -threshold → BUY (spread too low)
 - Otherwise → NEUTRAL
 ```
 
@@ -104,33 +82,12 @@ Signals:
 | Rolling Window | 5-90 days | 30 |
 | Z-Score Threshold | 1.0-3.0σ | 2.0 |
 
-### Chart Color Scheme
-| Element | Color |
-|---------|-------|
-| +Zσ boundary | rgba(255, 0, 0, 0.4) red dotted |
-| -Zσ boundary | rgba(0, 180, 0, 0.4) green dotted |
-| Rolling Mean | gray dashed |
-| Spread line | #9B59B6 (purple) |
-| BUY signal | green marker |
-| SELL signal | red marker |
-| Neutral | gray marker |
-
-## Branch Status
-
-### feature/v0.3.0-unified-charts (current)
-- All changes committed and pushed
-- Ready for testing/review
-
-### stable
-- Updated with slider fix
-- Tag: v0.3.0-stable
-
 ## Notes for Next Session
 
 - Working directory: `/home/z/my-project/streamlit-app/`
-- Run tests: `python tests/test_charts_v030.py`
+- Run tests: `python -m pytest tests/ -v`
 - Start app: `streamlit run app.py`
 - Database: `data/ofz_data.db`
 
 ---
-*Session saved: 2026-03-01 13:50 UTC*
+*Session saved: 2026-03-04 UTC*

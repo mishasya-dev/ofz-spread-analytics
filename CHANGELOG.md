@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.6.0] - 2026-03-04
+
+### Changed
+- **Code Cleanup**: Removed unused code from charts.py
+  - Deleted `ChartBuilder` class and its methods
+  - Deleted unused functions: `create_ytm_chart`, `create_spread_chart`, `create_signal_chart`, `create_backtest_chart`, `create_daily_ytm_chart`, `create_daily_spread_chart`, `calculate_future_range`
+  - File reduced from 1512 to ~650 lines (-57%)
+- **Tests Cleanup**: Removed obsolete test files
+  - Deleted `tests/test_charts_v030.py` (functions removed)
+  - Deleted `tests/test_edge_cases.py` (functions removed)
+  - Deleted `tests/test_linked_zoom.py` (linked zoom removed earlier)
+
+### Kept Functions (used in app.py)
+- `create_combined_ytm_chart` - Combined YTM (history + candles)
+- `create_intraday_spread_chart` - Intraday spread chart
+- `create_spread_analytics_chart` - Z-Score analysis panel
+- `apply_zoom_range` - Zoom utility
+
 ## [v0.5.6] - 2026-03-03
 
 ### Added

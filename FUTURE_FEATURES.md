@@ -135,30 +135,24 @@
 | S-7 | `test_render_db_panel_progress_callback` | Callback для прогресса вызывается | ❌ Не написан |
 | S-8 | `test_render_sidebar_integration` | Интеграционный тест sidebar | ❌ Не написан |
 
-### 2. Unit-тесты: components/charts.py (новые функции)
+### 2. Unit-тесты: components/charts.py
 
 | # | Тест | Описание | Статус |
 |---|------|----------|--------|
-| C-1 | `test_create_daily_ytm_chart` | График дневного YTM | ❌ Не написан |
-| C-2 | `test_create_daily_ytm_chart_colors` | Цвета: тёмно-синий/тёмно-красный | ❌ Не написан |
-| C-3 | `test_create_daily_ytm_chart_statistics` | Отображение статистики | ❌ Не написан |
-| C-4 | `test_create_daily_spread_chart` | График дневного спреда | ❌ Не написан |
-| C-5 | `test_create_daily_spread_chart_percentiles` | Перцентили 5%, 25%, 50%, 75%, 95% | ❌ Не написан |
-| C-6 | `test_create_daily_spread_chart_mean` | Среднее значение | ❌ Не написан |
 | C-7 | `test_create_combined_ytm_chart` | Склеенный YTM график | ❌ Не написан |
 | C-8 | `test_create_combined_ytm_chart_candles` | Свечи с правильными интервалами | ❌ Не написан |
 | C-9 | `test_create_combined_ytm_chart_colors` | Цвета свечей: ярко-синий/ярко-красный | ❌ Не написан |
 | C-10 | `test_create_intraday_spread_chart` | График intraday спреда | ❌ Не написан |
 | C-11 | `test_create_intraday_spread_chart_percentiles` | Перцентили от дневных данных | ❌ Не написан |
+| C-12 | `test_create_spread_analytics_chart` | Z-Score анализ спреда | ✅ Есть (15 тестов) |
 
-### 3. Unit-тесты: Linked Zoom
+### 3. Unit-тесты: Cointegration
 
 | # | Тест | Описание | Статус |
 |---|------|----------|--------|
-| Z-1 | `test_linked_zoom_daily_charts` | Графики 1-2 синхронизированы | ❌ Не написан |
-| Z-2 | `test_linked_zoom_intraday_charts` | Графики 3-4 синхронизированы | ❌ Не написан |
-| Z-3 | `test_linked_zoom_state_persistence` | Состояние zoom сохраняется | ❌ Не написан |
-| Z-4 | `test_linked_zoom_reset` | Сброс zoom на default | ❌ Не написан |
+| CO-1 | `test_cointegration_analysis` | Анализ коинтеграции | ✅ Есть |
+| CO-2 | `test_adf_test` | ADF тест на стационарность | ✅ Есть |
+| CO-3 | `test_eg_test` | Engle-Granger тест | ✅ Есть |
 
 ### 4. Интеграционные тесты: MOEX Data Flow
 
