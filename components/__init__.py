@@ -2,15 +2,9 @@
 Компоненты визуализации v0.3.0
 """
 from .charts import (
-    ChartBuilder,
-    create_ytm_chart,
-    create_spread_chart,
-    create_signal_chart,
-    create_backtest_chart,
-    create_daily_ytm_chart,
-    create_daily_spread_chart,
     create_combined_ytm_chart,
     create_intraday_spread_chart,
+    create_spread_analytics_chart,
     apply_zoom_range,
 )
 from .sidebar import (
@@ -43,15 +37,9 @@ from .styles import apply_styles
 
 __all__ = [
     # Charts
-    "ChartBuilder",
-    "create_ytm_chart",
-    "create_spread_chart",
-    "create_signal_chart",
-    "create_backtest_chart",
-    "create_daily_ytm_chart",
-    "create_daily_spread_chart",
     "create_combined_ytm_chart",
     "create_intraday_spread_chart",
+    "create_spread_analytics_chart",
     "apply_zoom_range",
     # Sidebar
     "get_bonds_list",

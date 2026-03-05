@@ -49,38 +49,6 @@ SIGNAL_COLORS = {
 }
 
 
-# ============================================
-# ФУНКЦИИ ГРАФИКОВ v0.3.0
-# ============================================
-
-def calculate_future_range(df_index, future_percent: float = 0.15):
-    """
-    Рассчитать диапазон оси X с запасом для "будущего"
-    
-    Args:
-        df_index: Индекс DataFrame (datetime)
-        future_percent: Процент от длины для будущего
-        
-    Returns:
-        (x_min, x_max) tuple
-    """
-    if len(df_index) == 0:
-        return None, None
-    
-    start = df_index[0]
-    end = df_index[-1]
-    
-    # Добавляем future_percent от длины периода
-    period_length = (end - start).total_seconds() if hasattr(end, 'total_seconds') else (end - start).days
-    future_length = period_length * future_percent
-    
-    if hasattr(end, 'total_seconds'):
-        future_end = end + pd.Timedelta(seconds=future_length)
-    else:
-        future_end = end + pd.Timedelta(days=future_length)
-    
-    return start, future_end
-
 
 def create_combined_ytm_chart(
     daily_df1: pd.DataFrame,
