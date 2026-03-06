@@ -282,14 +282,12 @@ MAX_CACHE_PERIOD_DAYS = 730
 
 
 @st.cache_data(ttl=300)
-def _fetch_all_historical_data(_secid: str) -> pd.DataFrame:
+def _fetch_all_historical_data(secid: str) -> pd.DataFrame:
     """
     Загрузить ВСЕ исторические данные для ISIN (максимум 730 дней).
     
-    Кэшируется без привязки к периоду.
-    Подчёркивание в _secid - чтобы Streamlit не хэшировал аргумент.
+    Кэшируется по secid (без подчёркивания - чтобы был отдельный кэш для каждого ISIN).
     """
-    secid = _secid  # Локальная переменная для логики
     fetcher = get_history_fetcher()
     db = get_db()
     
@@ -363,16 +361,15 @@ MAX_CANDLE_DAYS = {
 
 
 @st.cache_data(ttl=60)
-def _fetch_all_candle_data(_isin: str, _interval: str) -> pd.DataFrame:
+def _fetch_all_candle_data(isin: str, interval: str) -> pd.DataFrame:
     """
     Загрузить ВСЕ свечи с YTM для ISIN и интервала.
     
-    Кэшируется по (isin, interval) без привязки к периоду.
+    Кэшируется по (isin, interval) - отдельный кэш для каждой пары.
+    Без подчёркиваний - чтобы Streamlit правильно хэшировал аргументы.
     """
     from services.candle_processor_ytm_for_bonds import BondYTMProcessor
     
-    isin = _isin
-    interval = _interval
     fetcher = get_candle_fetcher()
     db = get_db()
     ytm_processor = BondYTMProcessor()
