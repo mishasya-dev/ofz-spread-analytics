@@ -12,6 +12,7 @@ import logging
 from api.moex_candles import CandleFetcher, CandleInterval
 from core.db.ytm_repo import YTMRepository
 from models.bond import Bond
+from services.candle_processor_ytm_for_bonds import BondYTMProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -41,16 +42,23 @@ class CandleService:
         "60": {"max_days": 365, "default": 30},
     }
     
-    def __init__(self, fetcher: CandleFetcher = None, ytm_repo: YTMRepository = None):
+    def __init__(
+        self,
+        fetcher: CandleFetcher = None,
+        ytm_repo: YTMRepository = None,
+        ytm_processor: BondYTMProcessor = None
+    ):
         """
         Инициализация сервиса
         
         Args:
             fetcher: CandleFetcher для работы с MOEX API
             ytm_repo: Репозиторий YTM для работы с БД
+            ytm_processor: BondYTMProcessor для расчёта YTM
         """
         self._fetcher = fetcher
         self._ytm_repo = ytm_repo or YTMRepository()
+        self._ytm_processor = ytm_processor
     
     @property
     def fetcher(self) -> CandleFetcher:
@@ -58,6 +66,13 @@ class CandleService:
         if self._fetcher is None:
             self._fetcher = CandleFetcher()
         return self._fetcher
+    
+    @property
+    def ytm_processor(self) -> BondYTMProcessor:
+        """Ленивая инициализация YTM процессора"""
+        if self._ytm_processor is None:
+            self._ytm_processor = BondYTMProcessor()
+        return self._ytm_processor
     
     def get_interval_enum(self, interval: str) -> CandleInterval:
         """
@@ -136,15 +151,22 @@ class CandleService:
         return result_df
     
     def _fetch_today_candles(self, bond: Bond, interval: str) -> pd.DataFrame:
-        """Загрузить свечи за текущий день"""
+        """Загрузить свечи за текущий день с расчётом YTM"""
         try:
-            return self.fetcher.fetch_candles(
+            # 1. Получаем сырые свечи
+            raw_df = self.fetcher.fetch_candles(
                 bond.isin,
-                bond_config=bond,
                 interval=self.get_interval_enum(interval),
                 start_date=date.today(),
                 end_date=date.today()
             )
+            
+            if raw_df.empty:
+                return raw_df
+            
+            # 2. Рассчитываем YTM
+            return self.ytm_processor.add_ytm_to_candles(raw_df, bond)
+            
         except Exception as e:
             logger.warning(f"Ошибка загрузки сегодняшних свечей: {e}")
             return pd.DataFrame()
@@ -155,15 +177,22 @@ class CandleService:
         interval: str,
         start_date: date
     ) -> pd.DataFrame:
-        """Загрузить исторические свечи"""
+        """Загрузить исторические свечи с расчётом YTM"""
         try:
-            return self.fetcher.fetch_candles(
+            # 1. Получаем сырые свечи
+            raw_df = self.fetcher.fetch_candles(
                 bond.isin,
-                bond_config=bond,
                 interval=self.get_interval_enum(interval),
                 start_date=start_date,
                 end_date=date.today() - timedelta(days=1)
             )
+            
+            if raw_df.empty:
+                return raw_df
+            
+            # 2. Рассчитываем YTM
+            return self.ytm_processor.add_ytm_to_candles(raw_df, bond)
+            
         except Exception as e:
             logger.warning(f"Ошибка загрузки исторических свечей: {e}")
             return pd.DataFrame()
@@ -216,15 +245,22 @@ class CandleService:
         start_date: date,
         end_date: date
     ) -> pd.DataFrame:
-        """Загрузить свечи за диапазон дат"""
+        """Загрузить свечи за диапазон дат с расчётом YTM"""
         try:
-            return self.fetcher.fetch_candles(
+            # 1. Получаем сырые свечи
+            raw_df = self.fetcher.fetch_candles(
                 bond.isin,
-                bond_config=bond,
                 interval=self.get_interval_enum(interval),
                 start_date=start_date,
                 end_date=end_date
             )
+            
+            if raw_df.empty:
+                return raw_df
+            
+            # 2. Рассчитываем YTM
+            return self.ytm_processor.add_ytm_to_candles(raw_df, bond)
+            
         except Exception as e:
             logger.warning(f"Ошибка загрузки диапазона {start_date}-{end_date}: {e}")
             return pd.DataFrame()
