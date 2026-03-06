@@ -110,26 +110,32 @@ class TestYTMHistoricalCandles:
         """
         YTM для свечи должен рассчитываться на дату свечи, а не на сегодня
 
-        После исправления _safe_calculate_ytm принимает settlement_date.
+        После рефакторинга используем BondYTMProcessor для расчёта YTM.
         """
-        from api.moex_candles import CandleFetcher
+        from services.candle_processor_ytm_for_bonds import BondYTMProcessor
+        from dataclasses import dataclass
 
-        fetcher = CandleFetcher()
+        # Создаём мок bond_config
+        @dataclass
+        class MockBondConfig:
+            isin: str = "SU26207RMFS9"
+            name: str = "ОФЗ-ПД 26207"
+            face_value: float = 1000.0
+            coupon_rate: float = 8.15
+            coupon_frequency: int = 2
+            maturity_date: str = "2027-02-03"
 
-        # Получаем НКД
-        accrued = fetcher._get_accrued_interest("SU26207RMFS9")
+        processor = BondYTMProcessor()
 
         # Цена на 2025-02-27
         price = 86.579
         candle_date = date(2025, 2, 27)
         expected_ytm = 17.22
 
-        # Теперь _safe_calculate_ytm принимает settlement_date
-        ytm_with_date = fetcher._safe_calculate_ytm(
-            price, ofz_26207_params, accrued, settlement_date=candle_date
+        # Рассчитываем YTM через процессор
+        ytm_with_date = processor.calculate_ytm_for_price(
+            price, MockBondConfig(), candle_date
         )
-
-        fetcher.close()
 
         # Результат должен быть близок к MOEX
         assert ytm_with_date is not None
@@ -173,11 +179,12 @@ def test_ytm_calculation_accuracy():
 
 def test_fetch_candles_ytm_accuracy():
     """
-    Интеграционный тест: fetch_candles должен возвращать правильный YTM
+    Интеграционный тест: fetch_candles + BondYTMProcessor должен возвращать правильный YTM
 
     Проверяем весь пайплайн: свечи → расчёт YTM → сравнение с MOEX.
     """
     from api.moex_candles import CandleFetcher, CandleInterval
+    from services.candle_processor_ytm_for_bonds import BondYTMProcessor
     from config import BondConfig
 
     bond_config = BondConfig(
@@ -193,11 +200,10 @@ def test_fetch_candles_ytm_accuracy():
 
     fetcher = CandleFetcher()
 
-    # Получаем дневные свечи
+    # Получаем дневные свечи (сырые, без YTM)
     df = fetcher.fetch_candles(
         bond_config.isin,
-        bond_config,
-        CandleInterval.DAY,
+        interval=CandleInterval.DAY,
         start_date=date(2025, 2, 25),
         end_date=date(2025, 2, 28)
     )
@@ -205,6 +211,10 @@ def test_fetch_candles_ytm_accuracy():
     fetcher.close()
 
     assert not df.empty, "DataFrame should not be empty"
+
+    # Рассчитываем YTM через процессор
+    processor = BondYTMProcessor()
+    df = processor.add_ytm_to_candles(df, bond_config)
 
     # Проверяем YTM на конкретную дату
     expected_ytm = {

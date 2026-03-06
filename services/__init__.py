@@ -19,6 +19,11 @@ from .spread_calculator import (
     calculate_rolling_stats,
     calculate_zscore,
 )
+from .candle_processor_ytm_for_bonds import (
+    BondYTMProcessor,
+    calculate_ytm_for_bond_price,
+    get_t1_settlement_date,
+)
 
 __all__ = [
     # CandleService
@@ -37,4 +42,8 @@ __all__ = [
     'prepare_spread_dataframe',
     'calculate_rolling_stats',
     'calculate_zscore',
+    # BondYTMProcessor
+    'BondYTMProcessor',
+    'calculate_ytm_for_bond_price',
+    'get_t1_settlement_date',
 ]

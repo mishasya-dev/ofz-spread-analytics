@@ -1,47 +1,19 @@
 """
-Получение внутридневных свечей с Мосбиржи и расчёт YTM
+Получение внутридневных свечей с Мосбиржи
+
+Только сырые данные OHLCV, без расчёта YTM.
+Для расчёта YTM используйте services.candle_processor_ytm_for_bonds.BondYTMProcessor
 """
 import requests
 import pandas as pd
 from datetime import datetime, date, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
 import logging
 import time as time_module
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from core.ytm_calculator import YTMCalculator, BondParams, calculate_ytm_from_price
 
 logger = logging.getLogger(__name__)
-
-
-def get_t1_settlement_date(trade_date: date) -> date:
-    """
-    Получить дату расчётов (settlement date) для режима Т+1
-    
-    Торги ОФЗ проходят в режиме Т+1:
-    - Понедельник -> Вторник (+1)
-    - Вторник -> Среда (+1)
-    - Среда -> Четверг (+1)
-    - Четверг -> Пятница (+1)
-    - Пятница -> Понедельник (+3)
-    
-    Args:
-        trade_date: Дата сделки (дата свечи)
-        
-    Returns:
-        Дата расчётов (settlement date)
-    """
-    weekday = trade_date.weekday()  # 0=Пн, 4=Пт
-    
-    if weekday == 4:  # Пятница
-        return trade_date + timedelta(days=3)  # -> Понедельник
-    else:
-        return trade_date + timedelta(days=1)  # -> Следующий день
 
 
 class CandleInterval(Enum):
@@ -49,7 +21,7 @@ class CandleInterval(Enum):
     MIN_1 = "1"      # 1 минута
     MIN_10 = "10"    # 10 минут
     MIN_60 = "60"    # 1 час
-    MIN_240 = "240"  # 4 часа (если поддерживается)
+    MIN_240 = "240"  # 4 часа
     DAY = "24"       # 1 день
     WEEK = "7"       # 1 неделя
     MONTH = "31"     # 1 месяц
@@ -57,19 +29,23 @@ class CandleInterval(Enum):
 
 @dataclass
 class Candle:
-    """Данные свечи"""
+    """Данные свечи (сырые, без YTM)"""
     open_time: datetime
     open: float
     high: float
     low: float
     close: float
     volume: float
-    ytm: Optional[float] = None  # YTM закрытия (основной)
-    ytm_close: Optional[float] = None  # Дублирует ytm для совместимости
+    value: Optional[float] = None
 
 
 class CandleFetcher:
-    """Получение внутридневных свечей с расчётом YTM"""
+    """
+    Получение сырых свечей с Мосбиржи
+    
+    Возвращает только OHLCV данные без расчёта YTM.
+    Для расчёта YTM используйте BondYTMProcessor.
+    """
     
     MOEX_BASE_URL = "https://iss.moex.com/iss"
     
@@ -87,33 +63,37 @@ class CandleFetcher:
         self._session.headers.update({
             "User-Agent": "OFZ-Analytics/1.0"
         })
-        self._ytm_calculator = YTMCalculator()
-        self._bond_params_cache: Dict[str, BondParams] = {}
-        self._accrued_interest_cache: Dict[str, float] = {}
     
     def fetch_candles(
         self,
         isin: str,
-        bond_config: Optional[Any] = None,
         interval: CandleInterval = CandleInterval.MIN_60,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
-        board: str = "TQOB"
+        board: str = "TQOB",
+        # Deprecated: bond_config больше не используется
+        bond_config: Optional[Any] = None,
     ) -> pd.DataFrame:
         """
-        Получить свечи по облигации с рассчитанным YTM
+        Получить свечи по инструменту (сырые, без YTM)
         
         Args:
-            isin: ISIN код облигации
-            bond_config: Конфигурация облигации (BondConfig) для расчёта YTM
+            isin: ISIN код инструмента
             interval: Интервал свечей
             start_date: Начальная дата
             end_date: Конечная дата
-            board: Торговая площадка
+            board: Торговая площадка (TQOB для облигаций)
+            bond_config: DEPRECATED - игнорируется, используйте BondYTMProcessor
             
         Returns:
-            DataFrame со свечами и YTM
+            DataFrame с колонками: open, high, low, close, volume, value
         """
+        if bond_config is not None:
+            logger.warning(
+                "bond_config параметр устарел. "
+                "Используйте BondYTMProcessor для расчёта YTM."
+            )
+        
         if start_date is None:
             start_date = date.today() - timedelta(days=7)
         if end_date is None:
@@ -174,283 +154,40 @@ class CandleFetcher:
         df = df.set_index("datetime")
         df = df.sort_index()
         
-        # Рассчитываем YTM если есть параметры облигации
-        if bond_config is not None:
-            df = self._calculate_ytm_for_dataframe(df, bond_config)
-        
         return df
     
-    def fetch_hourly_ytm(
+    def fetch_candles_with_ytm(
         self,
         isin: str,
         bond_config: Any,
-        trading_date: Optional[date] = None,
+        interval: CandleInterval = CandleInterval.MIN_60,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
         board: str = "TQOB"
     ) -> pd.DataFrame:
         """
-        Получить почасовые данные YTM за торговый день
+        Получить свечи с рассчитанным YTM (deprecated wrapper)
         
-        Args:
-            isin: ISIN код облигации
-            bond_config: Конфигурация облигации (BondConfig)
-            trading_date: Дата торгов
-            board: Торговая площадка
-            
-        Returns:
-            DataFrame с почасовыми данными и YTM
+        DEPRECATED: Используйте CandleFetcher.fetch_candles() + BondYTMProcessor
+        
+        Этот метод оставлен для обратной совместимости.
         """
-        if trading_date is None:
-            trading_date = date.today()
+        from services.candle_processor_ytm_for_bonds import BondYTMProcessor
         
-        return self.fetch_candles(
-            isin,
-            bond_config=bond_config,
-            interval=CandleInterval.MIN_60,
-            start_date=trading_date,
-            end_date=trading_date,
-            board=board
-        )
-    
-    def fetch_multi_bonds_hourly(
-        self,
-        bonds_config: Dict[str, Any],
-        trading_date: Optional[date] = None,
-        board: str = "TQOB",
-        delay: float = 0.3
-    ) -> Dict[str, pd.DataFrame]:
-        """
-        Получить почасовые данные для нескольких облигаций
-        
-        Args:
-            bonds_config: Словарь {ISIN: BondConfig}
-            trading_date: Дата торгов
-            board: Торговая площадка
-            delay: Задержка между запросами
-            
-        Returns:
-            Словарь {ISIN: DataFrame}
-        """
-        if trading_date is None:
-            trading_date = date.today()
-        
-        results = {}
-        
-        for isin, bond_config in bonds_config.items():
-            logger.info(f"Загрузка часовых данных для {isin}...")
-            df = self.fetch_hourly_ytm(isin, bond_config, trading_date, board)
-            
-            if not df.empty:
-                results[isin] = df
-            else:
-                logger.warning(f"Нет часовых данных для {isin}")
-            
-            time_module.sleep(delay)
-        
-        return results
-    
-    def get_intraday_spread(
-        self,
-        bond1_config: Any,
-        bond2_config: Any,
-        trading_date: Optional[date] = None,
-        board: str = "TQOB"
-    ) -> pd.DataFrame:
-        """
-        Получить внутридневной спред между двумя облигациями
-        
-        Args:
-            bond1_config: Конфигурация облигации 1
-            bond2_config: Конфигурация облигации 2
-            trading_date: Дата торгов
-            board: Торговая площадка
-            
-        Returns:
-            DataFrame с внутридневными данными и спредом
-        """
-        if trading_date is None:
-            trading_date = date.today()
-        
-        # Получаем данные для обеих облигаций
-        df1 = self.fetch_hourly_ytm(bond1_config.isin, bond1_config, trading_date, board)
-        df2 = self.fetch_hourly_ytm(bond2_config.isin, bond2_config, trading_date, board)
-        
-        if df1.empty or df2.empty:
-            logger.warning("Нет данных для расчёта спреда")
-            return pd.DataFrame()
-        
-        # Объединяем по времени
-        merged = pd.merge(
-            df1[['close', 'ytm_close']].rename(columns={'close': 'price_1', 'ytm_close': 'ytm_1'}),
-            df2[['close', 'ytm_close']].rename(columns={'close': 'price_2', 'ytm_close': 'ytm_2'}),
-            left_index=True,
-            right_index=True,
-            how='inner'
+        # Получаем сырые свечи
+        df = self.fetch_candles(
+            isin, interval, start_date, end_date, board
         )
         
-        # Рассчитываем спред в базисных пунктах
-        if 'ytm_1' in merged.columns and 'ytm_2' in merged.columns:
-            merged['spread_bp'] = (merged['ytm_1'] - merged['ytm_2']) * 100
-        
-        return merged
-    
-    def _calculate_ytm_for_dataframe(
-        self,
-        df: pd.DataFrame,
-        bond_config: Any
-    ) -> pd.DataFrame:
-        """
-        Рассчитать YTM для всех свечей в DataFrame
-        
-        Args:
-            df: DataFrame с ценами свечей (индекс = datetime)
-            bond_config: Конфигурация облигации
-            
-        Returns:
-            DataFrame с добавленными колонками YTM
-        """
-        # Создаём BondParams
-        bond_params = self._get_bond_params(bond_config)
-        
-        if bond_params is None:
-            logger.warning(f"Не удалось создать параметры для {bond_config.isin}")
+        if df.empty:
             return df
         
-        # Рассчитываем только YTM закрытия (close)
-        # open/high/low не используются в текущей функциональности
-        ytm_close_list = []
-        
-        for idx, row in df.iterrows():
-            # Получаем дату сделки из индекса (datetime -> date)
-            if hasattr(idx, 'date'):
-                trade_date = idx.date()
-            else:
-                trade_date = idx if isinstance(idx, date) else None
-            
-            # В режиме Т+1 settlement_date = следующий торговый день
-            settlement_date = get_t1_settlement_date(trade_date)
-            
-            # Рассчитываем НКД на settlement date (дату расчётов)
-            accrued_interest = self._ytm_calculator.calculate_accrued_interest_for_date(
-                bond_params, settlement_date
-            )
-            
-            ytm_close_list.append(
-                self._safe_calculate_ytm(row.get('close'), bond_params, accrued_interest, settlement_date)
-            )
-        
-        df['ytm_close'] = ytm_close_list
-        
-        # Основной YTM = YTM закрытия
-        df['ytm'] = df['ytm_close']
-        
-        return df
-    
-    def _get_accrued_interest(self, isin: str) -> float:
-        """
-        Получить НКД (накопленный купонный доход) с MOEX
-        
-        Args:
-            isin: ISIN код облигации
-            
-        Returns:
-            НКД в рублях (0 если не удалось получить)
-        """
-        if isin in self._accrued_interest_cache:
-            return self._accrued_interest_cache[isin]
-        
-        url = f"{self.MOEX_BASE_URL}/engines/stock/markets/bonds/securities/{isin}.json"
-        params = {'iss.meta': 'off', 'iss.only': 'securities'}
-        
-        try:
-            response = self._make_request(url, params)
-            data = response.json()
-            
-            securities = data.get('securities', {})
-            columns = securities.get('columns', [])
-            rows = securities.get('data', [])
-            
-            # Ищем ACCRUEDINT (НКД)
-            if 'ACCRUEDINT' in columns:
-                accrued_idx = columns.index('ACCRUEDINT')
-                for row in rows:
-                    if row[accrued_idx] is not None:
-                        accrued = float(row[accrued_idx])
-                        self._accrued_interest_cache[isin] = accrued
-                        logger.debug(f"НКД для {isin}: {accrued:.2f} руб.")
-                        return accrued
-            
-            logger.warning(f"Не удалось получить НКД для {isin}")
-            return 0.0
-            
-        except Exception as e:
-            logger.warning(f"Ошибка получения НКД для {isin}: {e}")
-            return 0.0
-    
-    def _get_bond_params(self, bond_config: Any) -> Optional[BondParams]:
-        """
-        Создать BondParams из BondConfig
-        """
-        isin = bond_config.isin
-        
-        if isin in self._bond_params_cache:
-            return self._bond_params_cache[isin]
-        
-        try:
-            maturity = datetime.strptime(bond_config.maturity_date, "%Y-%m-%d").date()
-        except (ValueError, TypeError):
-            logger.warning(f"Неверная дата погашения для {isin}: {bond_config.maturity_date}")
-            return None
-        
-        params = BondParams(
-            isin=isin,
-            name=bond_config.name,
-            face_value=getattr(bond_config, 'face_value', 1000),
-            coupon_rate=bond_config.coupon_rate,
-            coupon_frequency=getattr(bond_config, 'coupon_frequency', 2),
-            maturity_date=maturity,
-            day_count_convention=getattr(bond_config, 'day_count_convention', 'ACT/ACT')
-        )
-        
-        self._bond_params_cache[isin] = params
-        return params
-    
-    def _safe_calculate_ytm(
-        self, 
-        price: float, 
-        bond_params: BondParams, 
-        accrued_interest: float = 0.0,
-        settlement_date: date = None
-    ) -> Optional[float]:
-        """
-        Безопасный расчёт YTM с обработкой ошибок
-        
-        Args:
-            price: Цена в % от номинала
-            bond_params: Параметры облигации
-            accrued_interest: НКД в рублях
-            settlement_date: Дата расчёта (если None - используется дата свечи)
-            
-        Returns:
-            YTM в % годовых
-        """
-        if price is None or price <= 0:
-            return None
-        
-        try:
-            return self._ytm_calculator.calculate_ytm(
-                price, bond_params, 
-                settlement_date=settlement_date,
-                accrued_interest=accrued_interest
-            )
-        except Exception as e:
-            logger.debug(f"Ошибка расчёта YTM: {e}")
-            # Возвращаем упрощённый расчёт
-            return self._ytm_calculator.calculate_ytm_simple(price, bond_params, settlement_date)
+        # Рассчитываем YTM через процессор
+        processor = BondYTMProcessor()
+        return processor.add_ytm_to_candles(df, bond_config)
     
     def _make_request(self, url: str, params: Dict) -> requests.Response:
-        """
-        Выполнить запрос с повторными попытками
-        """
+        """Выполнить запрос с повторными попытками"""
         last_error = None
         
         for attempt in range(self.max_retries):
@@ -470,32 +207,45 @@ class CandleFetcher:
         self._session.close()
 
 
-# Удобные функции
+# Удобные функции для сырых свечей
+def get_raw_candles(
+    isin: str,
+    interval: CandleInterval = CandleInterval.MIN_60,
+    days: int = 7
+) -> pd.DataFrame:
+    """
+    Получить сырые свечи за указанный период
+    
+    Args:
+        isin: ISIN код инструмента
+        interval: Интервал свечей
+        days: Количество дней
+        
+    Returns:
+        DataFrame с OHLCV данными
+    """
+    fetcher = CandleFetcher()
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days)
+    return fetcher.fetch_candles(isin, interval, start_date, end_date)
+
+
+# Deprecated: используйте get_raw_candles + BondYTMProcessor
 def get_hourly_candles_with_ytm(
     isin: str,
     bond_config: Any,
     days: int = 1
 ) -> pd.DataFrame:
     """
-    Получить часовые свечи с YTM за указанный период
-    
-    Args:
-        isin: ISIN код облигации
-        bond_config: Конфигурация облигации (BondConfig)
-        days: Количество дней
-        
-    Returns:
-        DataFrame со свечами и YTM
+    DEPRECATED: Используйте get_raw_candles() + BondYTMProcessor
     """
     fetcher = CandleFetcher()
-    end_date = date.today()
-    start_date = end_date - timedelta(days=days)
-    return fetcher.fetch_candles(
+    return fetcher.fetch_candles_with_ytm(
         isin,
         bond_config=bond_config,
         interval=CandleInterval.MIN_60,
-        start_date=start_date,
-        end_date=end_date
+        start_date=date.today() - timedelta(days=days),
+        end_date=date.today()
     )
 
 
@@ -504,14 +254,13 @@ def get_today_hourly_ytm(
     bond_config: Any
 ) -> pd.DataFrame:
     """
-    Получить часовые данные с YTM за сегодня
-    
-    Args:
-        isin: ISIN код облигации
-        bond_config: Конфигурация облигации
-        
-    Returns:
-        DataFrame с часовыми данными
+    DEPRECATED: Используйте get_raw_candles() + BondYTMProcessor
     """
     fetcher = CandleFetcher()
-    return fetcher.fetch_hourly_ytm(isin, bond_config, date.today())
+    return fetcher.fetch_candles_with_ytm(
+        isin,
+        bond_config=bond_config,
+        interval=CandleInterval.MIN_60,
+        start_date=date.today(),
+        end_date=date.today()
+    )
