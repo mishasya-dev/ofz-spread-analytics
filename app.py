@@ -277,36 +277,39 @@ def fetch_trading_data_cached(secid: str) -> Dict:
     return fetcher.get_trading_data(secid)
 
 
+# Максимальный период для кэширования (2 года)
+MAX_CACHE_PERIOD_DAYS = 730
+
+
 @st.cache_data(ttl=300)
-def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
-    """Получить исторические данные с кэшированием"""
+def _fetch_all_historical_data(_secid: str) -> pd.DataFrame:
+    """
+    Загрузить ВСЕ исторические данные для ISIN (максимум 730 дней).
+    
+    Кэшируется без привязки к периоду.
+    Подчёркивание в _secid - чтобы Streamlit не хэшировал аргумент.
+    """
+    secid = _secid  # Локальная переменная для логики
     fetcher = get_history_fetcher()
     db = get_db()
-    start_date = date.today() - timedelta(days=days)
     
-    logger.info(f"fetch_historical_data_cached: secid={secid}, days={days}, start_date={start_date}")
+    # Всегда загружаем на максимум
+    start_date = date.today() - timedelta(days=MAX_CACHE_PERIOD_DAYS)
     
-    # Проверяем наличие данных в БД
-    db_df = db.load_daily_ytm(secid, start_date=start_date)
+    logger.info(f"_fetch_all_historical_data: secid={secid}, start_date={start_date}")
+    
+    # Загружаем ВСЕ данные из БД (без фильтрации по start_date)
+    db_df = db.load_daily_ytm(secid)
     last_db_date = db.get_last_daily_ytm_date(secid)
     
     logger.info(f"Загружено из БД: {len(db_df)} записей, last_db_date={last_db_date}")
     
-    # Проверяем покрытие периода (как в fetch_candle_data_cached)
-    need_reload = False
-    if not db_df.empty:
-        db_min_date = db_df.index.min().date() if hasattr(db_df.index.min(), 'date') else db_df.index.min()
-        if db_min_date > start_date:
-            need_reload = True
-            logger.info(f"Данные в БД начинаются с {db_min_date}, нужно с {start_date} - перезагружаем")
-    
-    if not db_df.empty and last_db_date and not need_reload:
+    # Проверяем нужно ли обновление
+    if not db_df.empty and last_db_date:
         days_since_update = (date.today() - last_db_date).days
         
         if days_since_update <= 1:
-            logger.info(f"Загружены дневные YTM из БД для {secid}: {len(db_df)} записей")
-            # Фильтруем по запрошенному периоду
-            db_df = db_df[db_df.index.date >= start_date]
+            logger.info(f"Данные актуальны для {secid}: {len(db_df)} записей")
             return db_df
         else:
             # Дозагружаем только новые данные
@@ -318,126 +321,138 @@ def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
                 db_df = pd.concat([db_df, new_df])
                 db_df = db_df[~db_df.index.duplicated(keep='last')]
                 logger.info(f"Дозагружены новые данные: +{len(new_df)} записей")
-    elif need_reload:
-        # Данных недостаточно - дозагружаем недостающий период
-        # db_min_date уже вычислен выше
-        db_min_date = db_df.index.min().date() if hasattr(db_df.index.min(), 'date') else db_df.index.min()
-        
-        # Загружаем только недостающий период (от start_date до db_min_date - 1 день)
-        history_end = db_min_date - timedelta(days=1)
-        logger.info(f"Дозагружаем период с {start_date} по {history_end}")
-        
-        new_df = fetcher.fetch_ytm_history(secid, start_date=start_date, end_date=history_end)
-        
-        logger.info(f"Загружено с MOEX: {len(new_df)} записей")
-        
-        if not new_df.empty:
-            db.save_daily_ytm(secid, new_df)
-            # Объединяем: старые данные + новые
-            db_df = pd.concat([new_df, db_df])
-            db_df = db_df[~db_df.index.duplicated(keep='last')]
-            logger.info(f"Дозагружены дневные YTM для {secid}: +{len(new_df)} записей, всего {len(db_df)}")
-    else:
-        # БД пуста - загружаем весь период
-        db_df = fetcher.fetch_ytm_history(secid, start_date=start_date)
-        
-        if not db_df.empty:
-            db.save_daily_ytm(secid, db_df)
-            logger.info(f"Сохранены дневные YTM в БД для {secid}: {len(db_df)} записей")
+            return db_df
     
-    # Фильтруем по запрошенному периоду перед возвратом
+    # БД пуста или устарела - загружаем весь период
+    db_df = fetcher.fetch_ytm_history(secid, start_date=start_date)
+    
     if not db_df.empty:
-        db_df = db_df[db_df.index.date >= start_date]
-    
-    logger.info(f"Возвращаем: {len(db_df)} записей для периода {days} дней")
+        db.save_daily_ytm(secid, db_df)
+        logger.info(f"Сохранены дневные YTM в БД для {secid}: {len(db_df)} записей")
     
     return db_df
 
 
+def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
+    """
+    Получить исторические данные за указанный период.
+    
+    Использует кэшированные данные и фильтрует по периоду.
+    """
+    # Получаем все данные (из кэша или загружаем)
+    all_df = _fetch_all_historical_data(secid)
+    
+    if all_df.empty:
+        return all_df
+    
+    # Фильтруем по запрошенному периоду (без кэширования)
+    start_date = date.today() - timedelta(days=days)
+    result_df = all_df[all_df.index.date >= start_date]
+    
+    logger.info(f"fetch_historical_data_cached: secid={secid}, days={days}, возвращаем {len(result_df)} записей")
+    
+    return result_df
+
+
+# Максимальные периоды для свечей по интервалам
+MAX_CANDLE_DAYS = {
+    "1": 3,    # 1 минута - 3 дня
+    "10": 30,  # 10 минут - 30 дней
+    "60": 365  # 1 час - 365 дней
+}
+
+
 @st.cache_data(ttl=60)
-def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, days: int) -> pd.DataFrame:
-    """Получить данные свечей с YTM с кэшированием"""
+def _fetch_all_candle_data(_isin: str, _interval: str) -> pd.DataFrame:
+    """
+    Загрузить ВСЕ свечи с YTM для ISIN и интервала.
+    
+    Кэшируется по (isin, interval) без привязки к периоду.
+    """
+    from services.candle_processor_ytm_for_bonds import BondYTMProcessor
+    
+    isin = _isin
+    interval = _interval
     fetcher = get_candle_fetcher()
     db = get_db()
+    ytm_processor = BondYTMProcessor()
     
-    bond_config = BondConfig(**bond_config_dict)
+    # Максимальный период для данного интервала
+    max_days = MAX_CANDLE_DAYS.get(interval, 30)
     
     interval_map = {
         "1": CandleInterval.MIN_1,
         "10": CandleInterval.MIN_10,
         "60": CandleInterval.MIN_60,
     }
-    
     candle_interval = interval_map.get(interval, CandleInterval.MIN_60)
-    start_date = date.today() - timedelta(days=days)
     
-    # Загружаем из БД
-    db_ytm_df = db.load_intraday_ytm(isin, interval, start_date=start_date, end_date=date.today() - timedelta(days=1))
+    logger.info(f"_fetch_all_candle_data: isin={isin}, interval={interval}, max_days={max_days}")
     
-    # Запрашиваем текущий день
-    today_df = fetcher.fetch_candles(
+    # Загружаем ВСЕ данные из БД (история)
+    db_ytm_df = db.load_intraday_ytm(isin, interval)
+    
+    # Получаем параметры облигации из БД для расчёта YTM
+    bond_data = db.load_bond(isin)
+    if not bond_data:
+        logger.warning(f"Облигация {isin} не найдена в БД")
+        return pd.DataFrame()
+    
+    # Создаём объект для YTM процессора
+    class BondConfigAdapter:
+        def __init__(self, data):
+            self.isin = data.get('isin')
+            self.name = data.get('name')
+            self.maturity_date = data.get('maturity_date')
+            self.coupon_rate = data.get('coupon_rate')
+            self.face_value = data.get('face_value', 1000)
+            self.coupon_frequency = data.get('coupon_frequency', 2)
+            self.issue_date = data.get('issue_date')
+            self.day_count_convention = data.get('day_count', 'ACT/ACT')
+    
+    bond_config = BondConfigAdapter(bond_data)
+    
+    # Запрашиваем текущий день (сырые свечи)
+    raw_today_df = fetcher.fetch_candles(
         isin,
-        bond_config=bond_config,
         interval=candle_interval,
         start_date=date.today(),
         end_date=date.today()
     )
     
-    # Проверяем нужно ли обновить историю
-    # Условия: 1) БД пуста ИЛИ 2) данных меньше чем нужно (по датам)
-    need_history = False
-    history_start = start_date  # По умолчанию загружаем весь период
+    # Рассчитываем YTM для текущего дня
+    today_df = pd.DataFrame()
+    if not raw_today_df.empty:
+        today_df = ytm_processor.add_ytm_to_candles(raw_today_df, bond_config)
     
-    if days > 1:
-        if db_ytm_df.empty:
-            need_history = True
-        else:
-            # Проверяем покрытие периода
-            db_min_date = db_ytm_df.index.min().date() if hasattr(db_ytm_df.index.min(), 'date') else db_ytm_df.index.min()
-            if db_min_date > start_date:
-                need_history = True
-                # ОПТИМИЗАЦИЯ: загружаем только недостающий период
-                history_start = start_date
-                history_end = db_min_date - timedelta(days=1)
-                logger.info(f"Данные в БД с {db_min_date}, нужно с {start_date} - дозагружаем")
+    # Проверяем нужны ли исторические данные
+    last_db_datetime = db.get_last_intraday_ytm_datetime(isin, interval)
     
-    if need_history:
-        # Если БД не пуста, дозагружаем только недостающий период
-        if not db_ytm_df.empty:
-            history_df = fetcher.fetch_candles(
-                isin,
-                bond_config=bond_config,
-                interval=candle_interval,
-                start_date=history_start,
-                end_date=history_end
-            )
-            
-            if not history_df.empty and 'ytm_close' in history_df.columns:
-                # Добавляем к существующим данным (не удаляем!)
-                db.save_intraday_ytm(isin, interval, history_df)
-                db_ytm_df = pd.concat([history_df, db_ytm_df])
-                db_ytm_df = db_ytm_df[~db_ytm_df.index.duplicated(keep='last')]
-                logger.info(f"Дозагружены intraday YTM для {isin}: {len(history_df)} записей")
-        else:
-            # БД пуста - загружаем весь период
-            history_df = fetcher.fetch_candles(
-                isin,
-                bond_config=bond_config,
-                interval=candle_interval,
-                start_date=start_date,
-                end_date=date.today() - timedelta(days=1)
-            )
-            
+    if db_ytm_df.empty and date.today() > date.today() - timedelta(days=1):
+        # БД пуста - загружаем историю
+        raw_history_df = fetcher.fetch_candles(
+            isin,
+            interval=candle_interval,
+            start_date=date.today() - timedelta(days=max_days),
+            end_date=date.today() - timedelta(days=1)
+        )
+        
+        if not raw_history_df.empty:
+            history_df = ytm_processor.add_ytm_to_candles(raw_history_df, bond_config)
             if not history_df.empty and 'ytm_close' in history_df.columns:
                 db.save_intraday_ytm(isin, interval, history_df)
                 db_ytm_df = history_df
-                logger.info(f"Сохранены intraday YTM в БД для {isin}: {len(history_df)} записей")
+                logger.info(f"Сохранены intraday YTM для {isin}: {len(history_df)} записей")
+    
+    elif db_ytm_df.empty:
+        # БД пуста, но сегодня выходной - возвращаем пустой
+        pass
     
     # Сохраняем текущие данные
     if not today_df.empty and 'ytm_close' in today_df.columns:
         db.save_intraday_ytm(isin, interval, today_df)
     
-    # Объединяем
+    # Объединяем историю + сегодня
     if not db_ytm_df.empty and not today_df.empty:
         result_df = pd.concat([db_ytm_df, today_df])
         result_df = result_df[~result_df.index.duplicated(keep='last')]
@@ -450,6 +465,28 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
     
     if not result_df.empty:
         result_df = result_df.sort_index()
+    
+    return result_df
+
+
+def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, days: int) -> pd.DataFrame:
+    """
+    Получить данные свечей за указанный период.
+    
+    Использует кэшированные данные и фильтрует по периоду.
+    bond_config_dict - оставлен для совместимости, данные берутся из БД.
+    """
+    # Получаем все данные (из кэша или загружаем)
+    all_df = _fetch_all_candle_data(isin, interval)
+    
+    if all_df.empty:
+        return all_df
+    
+    # Фильтруем по запрошенному периоду (без кэширования)
+    start_date = date.today() - timedelta(days=days)
+    result_df = all_df[all_df.index.date >= start_date]
+    
+    logger.info(f"fetch_candle_data_cached: isin={isin}, interval={interval}, days={days}, возвращаем {len(result_df)} записей")
     
     return result_df
 
@@ -561,9 +598,12 @@ def prepare_spread_dataframe(df1: pd.DataFrame, df2: pd.DataFrame, is_intraday: 
 
 def update_database_full(bonds_list: List = None, progress_callback=None) -> Dict:
     """Полное обновление базы данных"""
+    from services.candle_processor_ytm_for_bonds import BondYTMProcessor
+    
     fetcher = get_history_fetcher()
     candle_fetcher = get_candle_fetcher()
     db = get_db()
+    ytm_processor = BondYTMProcessor()
     
     if bonds_list is None:
         bonds_list = get_bonds_list()
@@ -609,13 +649,18 @@ def update_database_full(bonds_list: List = None, progress_callback=None) -> Dic
                 if progress_callback:
                     progress_callback(current_step / total_steps, f"Загрузка {interval_str}мин свечей: {bond.name}")
                 
-                df = candle_fetcher.fetch_candles(
+                # Получаем сырые свечи
+                raw_df = candle_fetcher.fetch_candles(
                     bond.isin,
-                    bond_config=bond,
                     interval=interval_enum,
                     start_date=date.today() - timedelta(days=days),
                     end_date=date.today()
                 )
+                
+                # Рассчитываем YTM
+                df = pd.DataFrame()
+                if not raw_df.empty:
+                    df = ytm_processor.add_ytm_to_candles(raw_df, bond)
                 
                 if not df.empty and 'ytm_close' in df.columns:
                     saved = db.save_intraday_ytm(bond.isin, interval_str, df)
