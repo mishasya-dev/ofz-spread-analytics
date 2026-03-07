@@ -275,4 +275,4 @@ curl "https://iss.moex.com/iss/engines/stock/markets/bonds/boards/TQOB/securitie
 
 ---
 
-*Обновлено: 01.03.2026*
+*Обновлено: 07.03.2026*
