@@ -9,7 +9,7 @@ from pathlib import Path
 
 # Основные данные версии
 VERSION = "0.7.0"
-RELEASE_NAME = "Cointegration Analysis"
+RELEASE_NAME = "Architecture Refactor"
 
 def get_git_info():
     """Получить информацию из git"""

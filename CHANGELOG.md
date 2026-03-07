@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.7.0] - 2026-03-06
+
+### Architecture
+- **YTM Calculation Separation**: Split YTM calculation from MOEX API layer
+  - `api/moex_candles.py` → only raw OHLCV data (no YTM calculation)
+  - `services/candle_processor_ytm_for_bonds.py` → new `BondYTMProcessor` class
+  - Single Responsibility Principle: API fetches, service calculates
+
+### Changed
+- **CandleFetcher.fetch_candles()**: Returns only raw candles (open, high, low, close, volume)
+- **BondYTMProcessor**: New service for YTM calculation from candle prices
+  - `add_ytm_to_candles(df, bond_config)` - add YTM column to DataFrame
+  - `calculate_ytm_for_price(price, bond_config, trade_date)` - single price YTM
+  - T+1 settlement date handling for OFZ bonds
+
+### Improved
+- **Cache Optimization**: Decoupled cache from period slider
+  - `_fetch_all_historical_data(isin)` - caches by ISIN only (730 days)
+  - `fetch_historical_data_cached(isin, days)` - filters by period (no cache miss)
+  - Same pattern for candle data: cache by (ISIN, interval)
+  - No unnecessary MOEX requests when changing period slider
+
+### Tests
+- **+14 New Tests**: `test_bond_ytm_processor.py` for BondYTMProcessor
+- All 398 tests passing
+
 ## [v0.6.0] - 2026-03-04
 
 ### Changed
