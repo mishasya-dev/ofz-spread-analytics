@@ -1652,3 +1652,106 @@ Push:   origin/experiments
 ---
 
 *Рефакторинг завершён: 2026-03-01*
+
+---
+
+## v0.7.0 — Architecture Refactor (06.03.2026)
+
+### Цель
+
+Разделить расчёт YTM от API слоя (Single Responsibility Principle).
+
+### Выполненная работа
+
+#### 1. Рефакторинг api/moex_candles.py
+
+**До:**
+```python
+def fetch_candles(isin, bond_config, ...):
+    # Получал свечи И рассчитывал YTM
+    return df_with_ytm
+```
+
+**После:**
+```python
+def fetch_candles(isin, ...):
+    # Только сырые свечи OHLCV
+    return raw_df  # open, high, low, close, volume
+```
+
+#### 2. Новый сервис BondYTMProcessor
+
+```python
+# services/candle_processor_ytm_for_bonds.py
+class BondYTMProcessor:
+    def add_ytm_to_candles(df, bond_config) -> pd.DataFrame:
+        """Добавить колонку ytm_close к DataFrame"""
+        
+    def calculate_ytm_for_price(price, bond_config, trade_date) -> float:
+        """Рассчитать YTM для одной цены"""
+```
+
+#### 3. Оптимизация кэширования
+
+**Проблема:** Кэш инвалидируется при изменении периода слайдера.
+
+**Решение:** Разделить кэширование:
+```python
+# Кэш по ISIN (730 дней)
+@st.cache_data(ttl=300)
+def _fetch_all_historical_data(isin) -> pd.DataFrame
+
+# Фильтрация без кэша
+def fetch_historical_data_cached(isin, days):
+    all_df = _fetch_all_historical_data(isin)
+    return all_df[date >= today - days]
+```
+
+**Результат:**
+| Сценарий | До | После |
+|----------|-----|-------|
+| Период 365 → 180 | Cache miss, DB query | Filter from cache |
+| Период 180 → 365 | Cache miss, DB query | Filter from cache |
+
+#### 4. Обновлённые файлы
+
+| Файл | Изменение |
+|------|-----------|
+| `api/moex_candles.py` | Только сырые свечи (-200 строк) |
+| `services/candle_processor_ytm_for_bonds.py` | **Новый** (+270 строк) |
+| `services/candle_service.py` | +BondYTMProcessor |
+| `services/data_loader.py` | +BondYTMProcessor |
+| `app.py` | +BondYTMProcessor, оптимизация кэша |
+| `tests/test_bond_ytm_processor.py` | **Новый** (+293 строки) |
+
+### Архитектура
+
+```
+API Layer (moex_candles.py)
+    ↓ сырые свечи (OHLCV)
+Business Logic (BondYTMProcessor)
+    ↓ свечи + YTM
+Service Layer (candle_service.py, data_loader.py)
+    ↓ кэширование, дозагрузка
+Database (ytm_repo.py)
+```
+
+### Тесты
+
+```
+Всего:  398 тестов
+Прошли: 398 ✅
+Новых:  +14 (test_bond_ytm_processor.py)
+```
+
+### Git
+
+```
+Branch:  refactor/separate-ytm-calculation
+Commits: 00da0cf → 7e41d2b
+Merged:  experiments (3e7c610)
+```
+
+---
+
+*Рефакторинг завершён: 2026-03-06*

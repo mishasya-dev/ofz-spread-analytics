@@ -8,7 +8,7 @@ OFZ Spread Analytics — приложение для анализа yield spread
 
 ## Features
 
-### 3-Chart Layout (v0.6.0)
+### 3-Chart Layout (v0.7.0)
 
 Приложение отображает 3 синхронизированных графика:
 
@@ -26,6 +26,7 @@ OFZ Spread Analytics — приложение для анализа yield spread
 - **Z-Score Signals**: BUY/SELL сигналы на основе Z-Score анализа
 - **Database Storage**: SQLite для исторических данных
 - **Bond Management**: Динамическое добавление/удаление отслеживаемых облигаций
+- **Smart Caching**: Оптимизированное кэширование без лишних запросов к API
 
 ## Installation
 
@@ -68,30 +69,60 @@ bonds["SU26255RMFS1"] = BondConfig(
 3. Выберите интервал свечей (1min/10min/1hour)
 4. Графики обновятся автоматически
 
+## Architecture (v0.7.0)
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    API Layer                            │
+│  api/moex_candles.py → только сырые свечи (OHLCV)      │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│                 Business Logic                          │
+│  services/candle_processor_ytm_for_bonds.py            │
+│  → BondYTMProcessor: расчёт YTM из цен                 │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│                  Service Layer                          │
+│  services/candle_service.py, data_loader.py            │
+│  → Кэширование, дозагрузка данных                      │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│                    Database                             │
+│  core/db/ytm_repo.py → SQLite storage                  │
+└─────────────────────────────────────────────────────────┘
+```
+
 ## Project Structure
 
 ```
 streamlit-app/
-├── app.py                 # Main Streamlit application
-├── config.py              # Bond configuration
+├── app.py                      # Main Streamlit application
+├── config.py                   # Bond configuration
 ├── api/
-│   ├── moex_bonds.py      # Bond list from MOEX
-│   ├── moex_candles.py    # Candle data + YTM calculation
-│   ├── moex_history.py    # Historical YTM data
-│   └── moex_trading.py    # Trading status
+│   ├── moex_bonds.py           # Bond list from MOEX
+│   ├── moex_candles.py         # Raw candle data (OHLCV only)
+│   ├── moex_history.py         # Historical YTM data
+│   └── moex_trading.py         # Trading status
+├── services/
+│   ├── candle_processor_ytm_for_bonds.py  # YTM calculation from prices
+│   ├── candle_service.py       # Candle data management
+│   └── data_loader.py          # Data loading with caching
 ├── core/
-│   ├── database.py        # SQLite database manager
-│   ├── ytm_calculator.py  # YTM calculation engine
-│   ├── spread.py           # Spread calculations
-│   ├── signals.py          # Trading signal generation
-│   └── cointegration.py    # Cointegration analysis
+│   ├── database.py             # SQLite database manager
+│   ├── ytm_calculator.py       # YTM calculation engine
+│   ├── spread.py               # Spread calculations
+│   ├── signals.py              # Trading signal generation
+│   └── cointegration.py        # Cointegration analysis
 ├── components/
-│   ├── charts.py           # Plotly chart builders (4 functions)
-│   ├── sidebar.py          # Sidebar components
-│   └── bond_manager.py     # Bond selection modal
+│   ├── charts.py               # Plotly chart builders (4 functions)
+│   ├── sidebar.py              # Sidebar components
+│   └── bond_manager.py         # Bond selection modal
 ├── models/
-│   └── bond.py              # Bond dataclass model
-└── tests/                  # Test suite
+│   └── bond.py                 # Bond dataclass model
+└── tests/                      # Test suite (398 tests)
 ```
 
 ## Testing
@@ -109,12 +140,16 @@ python -m pytest tests/test_spread_analytics_chart.py -v
 
 | File | Tests | Description |
 |------|-------|-------------|
+| test_bond_ytm_processor.py | 14 | BondYTMProcessor service |
 | test_spread_analytics_chart.py | 15 | Spread Analytics chart |
 | test_hover_label.py | 8 | Hover label structure |
 | test_cointegration.py | 12 | Cointegration analysis |
 | test_sidebar_v030.py | 36 | Sidebar components |
 | test_database.py | ~100 | Database operations |
 | test_ytm_calculation.py | 6 | YTM calculation accuracy |
+| test_candle_service.py | 33 | Candle service tests |
+
+**Total: 398 tests**
 
 ## Charts API
 
@@ -160,15 +195,29 @@ fig = apply_zoom_range(fig, x_range)
 Приложение рассчитывает YTM методом Ньютона-Рафсона:
 
 ```python
-from core.ytm_calculator import YTMCalculator
+from services.candle_processor_ytm_for_bonds import BondYTMProcessor
 
-calculator = YTMCalculator()
-ytm = calculator.calculate_ytm(
-    price_percent=95.5,  # Price as % of face value
-    bond_params=bond_params,
-    settlement_date=date(2025, 2, 28),
-    accrued_interest=13.43  # Current NKD
+processor = BondYTMProcessor()
+
+# Add YTM to candles DataFrame
+df_with_ytm = processor.add_ytm_to_candles(raw_candles_df, bond_config)
+
+# Calculate YTM for single price
+ytm = processor.calculate_ytm_for_price(
+    price=95.5,              # Price as % of face value
+    bond_config=bond_config,
+    trade_date=date(2025, 3, 6)
 )
+```
+
+### Caching Strategy
+
+```python
+# Cache by ISIN (no period dependency)
+_fetch_all_historical_data(isin)  # Returns 730 days, cached by ISIN
+
+# Filter by period (no cache invalidation)
+fetch_historical_data_cached(isin, days=365)  # Filters from cache
 ```
 
 ## License
