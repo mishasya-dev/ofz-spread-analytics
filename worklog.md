@@ -1,5 +1,74 @@
 # OFZ Spread Analytics - Журнал работы
 
+## v0.4.0 — G-spread Implementation (08.03.2026)
+
+### Новая функциональность
+
+Реализован расчёт G-spread через модель Nelson-Siegel:
+
+```
+G-spread = YTM_облигации - YTM_КБД(duration)
+```
+
+### Созданные файлы
+
+| Файл | Назначение |
+|------|------------|
+| `api/moex_zcyc.py` | Загрузка параметров NS и clcyield с MOEX ZCYC |
+| `services/g_spread_calculator.py` | Функция Nelson-Siegel и расчёт G-spread |
+| `core/db/g_spread_repo.py` | Репозиторий для хранения NS params и G-spreads |
+| `test_g_spread.py` | Тестовый скрипт |
+
+### Новые таблицы БД
+
+```sql
+-- Параметры Nelson-Siegel (КБД)
+ns_params (
+    date TEXT PRIMARY KEY,
+    b1 REAL,  -- долгосрочный уровень
+    b2 REAL,  -- краткосрочный наклон
+    b3 REAL,  -- кривизна
+    t1 REAL   -- масштаб времени (tau)
+)
+
+-- Рассчитанный G-spread
+g_spreads (
+    isin TEXT,
+    date TEXT,
+    ytm_bond REAL,       -- реальный YTM облигации
+    duration_years REAL, -- дюрация в годах
+    ytm_kbd REAL,        -- теоретический YTM по КБД
+    g_spread_bp REAL,    -- G-spread (б.п.)
+    UNIQUE(isin, date)
+)
+```
+
+### Источники данных MOEX
+
+| Данные | Endpoint | Периодичность |
+|--------|----------|---------------|
+| Текущий YTM | `/engines/stock/markets/bonds/securities/{ISIN}` | Real-time |
+| Текущий YTM_КБД | `/engines/stock/zcyc/securities` → clcyield | Daily |
+| История NS | `/history/engines/stock/zcyc` | 16,528 записей |
+| История YTM | `/history/.../securities/{ISIN}` | Daily |
+
+### Проверка на реальных данных
+
+```
+SU26221RMFS0 (ОФЗ 26221):
+  YTM облигации: 14.71%
+  Duration:       5.01 лет
+  YTM КБД:        14.72%
+  G-spread:       ~0 б.п.
+```
+
+### Git
+
+- Ветка: `feature/g-spread-implementation`
+- Pull Request: https://github.com/mishasya-dev/ofz-spread-analytics/pull/new/feature/g-spread-implementation
+
+---
+
 ## v0.2.1-patch1 — Исправление тестов (27.02.2026)
 
 ### Найденные и исправленные проблемы
