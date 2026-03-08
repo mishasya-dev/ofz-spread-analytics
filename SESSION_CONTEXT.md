@@ -4,12 +4,12 @@
 
 ### Git Information
 - **Repository**: https://github.com/mishasya-dev/ofz-spread-analytics
-- **Branch**: `experiments`
-- **Last Commit**: `0487eac` - docs: add NS implementation for G-spread
+- **Branch**: `feature/g-spread-implementation`
+- **Last Commit**: `1747c2f` - feat: add G-spread UI with dashboard charts and metrics
 
 ### Database Status
 - **Location**: `streamlit-app/data/ofz_data.db`
-- **Tables**: bonds, daily_ytm, intraday_ytm, spreads
+- **Tables**: bonds, daily_ytm, intraday_ytm, spreads, ns_params, g_spreads
 - **Bonds Tracked**: 16+
 
 ## Research Summary: G-spread Calculation
@@ -109,8 +109,11 @@ for date in dates:
 ### Core Files
 ```
 api/moex_candles.py                      - Raw candle data only
+api/moex_zcyc.py                         - NS params & clcyield from MOEX (NEW)
 services/candle_processor_ytm_for_bonds.py - BondYTMProcessor
-components/charts.py                     - 4 functions (~650 lines)
+services/g_spread_calculator.py          - Nelson-Siegel & G-spread (NEW)
+core/db/g_spread_repo.py                 - Repository for NS & G-spread (NEW)
+components/charts.py                     - 6 functions (~970 lines)
 app.py                                   - Main Streamlit application
 ```
 
@@ -136,10 +139,13 @@ Total: 398 tests
 
 ### TODO for G-spread Implementation
 
-- [ ] Create `services/g_spread_calculator.py`
-- [ ] Add `yearyields_snapshots` table to DB
-- [ ] Create daily snapshot job for yearyields
-- [ ] Add G-spread chart to UI
+- [x] Create `services/g_spread_calculator.py`
+- [x] Add `ns_params` and `g_spreads` tables to DB
+- [x] Create `api/moex_zcyc.py` for fetching NS params
+- [x] Create `core/db/g_spread_repo.py` for storage
+- [x] Add G-spread dashboard chart to UI
+- [x] Add G-spread metrics and signals to UI
+- [ ] Create daily snapshot job for yearyields (optional)
 - [ ] Test historical G-spread accuracy
 
 ---
