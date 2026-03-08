@@ -1838,3 +1838,120 @@ g_spread = ytm_bond - ytm_kbd
 ---
 
 *Исследование history API: 07.03.2026*
+
+---
+
+## Исследование moexalgo (08.03.2026)
+
+### Цель
+
+Проверить возможность получения исторических данных через библиотеку moexalgo вместо прямых HTTP запросов к MOEX ISS API.
+
+### Установка
+
+```bash
+cd /home/z/my-project
+python3 -m venv venv
+source venv/bin/activate
+pip install moexalgo pandas numpy
+```
+
+### Результаты исследования
+
+#### 1. Формат тикеров
+
+**Важно**: Тикеры должны быть полными с суффиксом (ISIN-based):
+```
+✅ SU26221RMFS0  - работает
+❌ SU26221RMFS   - НЕ работает
+❌ SU26221       - НЕ работает
+❌ RU000A0JXFM1  - ISIN НЕ работает
+```
+
+#### 2. candles() - Исторические свечи
+
+```python
+from moexalgo import Ticker
+from datetime import datetime, timedelta
+
+ofz = Ticker('SU26221RMFS0')
+end = datetime.now()
+start = end - timedelta(days=60)
+
+candles = ofz.candles(start=start, end=end, period='1d')
+# ✅ Работает!
+# Колонки: open, close, high, low, volume, value, begin, end
+```
+
+**НО**: Нет колонки yield/YTM! Только цены.
+
+#### 3. marketdata() - Текущие данные
+
+```python
+from moexalgo import Market
+
+bonds = Market('bonds')
+md = bonds.marketdata()
+
+# Фильтруем по тикеру
+ofz = md[md['ticker'] == 'SU26221RMFS0']
+
+# Доступные поля:
+# yield: 14.71
+# duration: 1830 дней
+# zspread: 1.09 (G-спред!)
+# yieldatwaprice: 14.73
+```
+
+**Ключевое**: `zspread` уже рассчитан биржей!
+
+#### 4. tickers() - Информация о бумагах
+
+```python
+tickers = bonds.tickers()
+# Колонки: ticker, shortname, matdate, couponpercent,
+#          facevalue, couponperiod, accruedint, isin
+```
+
+### Сравнительная таблица
+
+| Функция | moexalgo | MOEX ISS API |
+|---------|----------|--------------|
+| Текущий YTM | ✅ marketdata.yield | ✅ marketdata.yield |
+| Текущий duration | ✅ marketdata.duration | ✅ marketdata.duration |
+| Текущий zspread | ✅ marketdata.zspread | ✅ marketdata.zspread |
+| Исторические YTM | ❌ Нет | ✅ history/yields |
+| Исторические duration | ❌ Нет | ✅ history/yields |
+| Исторические цены | ✅ candles.close | ✅ history/yields.close |
+| Исторический zspread | ❌ Нет | ⚠️ Частично (None) |
+| Параметры КБД | ❌ Нет | ✅ zcyc.json |
+
+### Выводы
+
+**moexalgo подходит для**:
+- Текущие данные (yield, duration, zspread)
+- Исторические цены свечей
+- Информация о параметрах облигаций
+
+**moexalgo НЕ подходит для**:
+- Исторический YTM (нужно рассчитывать из цен)
+- Исторический duration (нужно рассчитывать)
+- Исторический G-spread (нужна КБД)
+
+### Рекомендация
+
+**Гибридный подход**:
+1. **Текущие данные**: moexalgo.marketdata() → yield, duration, zspread
+2. **Исторические данные**: MOEX ISS /history/ → YIELDCLOSE, DURATION
+3. **Расчёт G-spread**: интерполяция по yearyields
+
+### Следующие шаги
+
+- [ ] Добавить метод получения yearyields через MOEX ISS
+- [ ] Сохранять снапшоты yearyields в БД ежедневно
+- [ ] Реализовать расчёт исторического G-spread
+- [ ] Добавить график G-spread в UI
+
+---
+
+*Исследование moexalgo: 08.03.2026*
