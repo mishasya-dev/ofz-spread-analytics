@@ -1,82 +1,107 @@
-# Session Context - 07.03.2026
+# Session Context - 08.03.2026
 
 ## Project State
 
 ### Git Information
 - **Repository**: https://github.com/mishasya-dev/ofz-spread-analytics
 - **Branch**: `experiments`
-- **Last Commit**: `3e7c610` - docs: update CHANGELOG for v0.7.0
+- **Last Commit**: `0487eac` - docs: add NS implementation for G-spread
 
 ### Database Status
 - **Location**: `streamlit-app/data/ofz_data.db`
 - **Tables**: bonds, daily_ytm, intraday_ytm, spreads
 - **Bonds Tracked**: 16+
 
-## Recent Changes (v0.7.0)
+## Research Summary: G-spread Calculation
 
-### Architecture Refactor
-**YTM Calculation Separation**:
-- `api/moex_candles.py` → только сырые свечи (OHLCV)
-- `services/candle_processor_ytm_for_bonds.py` → новый `BondYTMProcessor`
-- Single Responsibility Principle: API fetches, service calculates
+### Problem
+Historical G-spread is NOT available directly from MOEX:
+- ZSPREAD in history/yields = always None
+- clcyield (YTM by KBD) = only current data
+- yearyields (KBD points) = only current data
 
-### Cache Optimization
-**Decoupled from period slider**:
-- `_fetch_all_historical_data(isin)` → кэш по ISIN (730 дней)
-- `fetch_historical_data_cached(isin, days)` → фильтрация без cache miss
-- Аналогично для свечей: кэш по (ISIN, interval)
+### Solution: Nelson-Siegel Model
 
-### BondYTMProcessor Service
+```
+G-spread = YTM_bond - YTM_KBD(duration)
+
+YTM_KBD(t) = β₀ + β₁·f₁(t) + β₂·f₂(t)
+
+where:
+  f₁(t) = (1 - e^(-t/τ)) / (t/τ)
+  f₂(t) = f₁(t) - e^(-t/τ)
+```
+
+### Data Sources
+
+| Data | Endpoint | History |
+|------|----------|---------|
+| NS params (B1,B2,B3,T1) | `/history/engines/stock/zcyc` | ✅ 16528 records |
+| Bond YTM, Duration | `/history/.../securities/{ISIN}` | ✅ 2+ years |
+| yearyields (KBD points) | `/engines/stock/zcyc` | ❌ Current only |
+| clcyield | `/engines/stock/zcyc/securities` | ❌ Current only |
+
+### Algorithm
+
 ```python
-# Add YTM to candles DataFrame
-df_with_ytm = processor.add_ytm_to_candles(raw_candles_df, bond_config)
+# Step 1: Get historical NS params
+ns_params = fetch_history_zcyc(date_from, date_to)
+# Returns: {date: {B1, B2, B3, T1}}
 
-# Calculate YTM for single price
-ytm = processor.calculate_ytm_for_price(
-    price=95.5,
-    bond_config=bond_config,
-    trade_date=date(2025, 3, 6)
-)
+# Step 2: Get bond data
+bond_data = fetch_history_securities(isin, date_from, date_to)
+# Returns: {date: {YIELDCLOSE, DURATION}}
+
+# Step 3: Calibrate NS to current yearyields
+beta0, beta1, beta2, tau = fit_ns_to_yearyields(yearyields, B1_hint)
+
+# Step 4: Calculate G-spread
+for date in dates:
+    duration_years = bond_data[date]['DURATION'] / 365.25
+    ytm_kbd = nelson_siegel(duration_years, beta0, beta1, beta2, tau)
+    g_spread = bond_data[date]['YIELDCLOSE'] - ytm_kbd
 ```
 
-## Current Chart Layout (3 Charts)
+### Accuracy
 
-```
-📊 Chart 1: Spread Analytics (Z-Score)
-  - Panel 1: YTM both bonds (daily)
-  - Panel 2: Spread + Rolling Mean + ±Zσ
+| Method | Error (bps) |
+|--------|-------------|
+| API clcyield (current) | 0 (exact) |
+| NS calibrated to current yearyields | 2-20 |
+| NS with daily yearyields snapshots | 0-2 |
 
-📊 Chart 2: Combined YTM (history + candles)
-  - Bond 1 & 2 yields with volume bars
+### Recommendation for Mean-Reversion Strategy
 
-📊 Chart 3: Intraday Spread
-  - Intraday spread with daily percentiles
-```
+1. **Current signals**: Use `clcyield` or `zspread` from API (exact)
+2. **Historical analysis**: Use NS calibration (acceptable error)
+3. **Production**: Save yearyields daily to DB for future accuracy
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    API Layer                            │
-│  api/moex_candles.py → только сырые свечи (OHLCV)      │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    API Layer                                    │
+│  api/moex_candles.py → только сырые свечи (OHLCV)              │
+└─────────────────────────────────────────────────────────────────┘
                           ↓
-┌─────────────────────────────────────────────────────────┐
-│                 Business Logic                          │
-│  services/candle_processor_ytm_for_bonds.py            │
-│  → BondYTMProcessor: расчёт YTM из цен                 │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                 Business Logic                                  │
+│  services/candle_processor_ytm_for_bonds.py                    │
+│  → BondYTMProcessor: расчёт YTM из цен                         │
+│  → GSpreadCalculator: расчёт G-spread через NS (NEW)           │
+└─────────────────────────────────────────────────────────────────┘
                           ↓
-┌─────────────────────────────────────────────────────────┐
-│                  Service Layer                          │
-│  services/candle_service.py, data_loader.py            │
-│  → Кэширование, дозагрузка данных                      │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                  Service Layer                                  │
+│  services/candle_service.py, data_loader.py                    │
+│  → Кэширование, дозагрузка данных                              │
+└─────────────────────────────────────────────────────────────────┘
                           ↓
-┌─────────────────────────────────────────────────────────┐
-│                    Database                             │
-│  core/db/ytm_repo.py → SQLite storage                  │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    Database                                     │
+│  core/db/ytm_repo.py → SQLite storage                          │
+│  → NEW TABLE: yearyields_snapshots (для истории КБД)           │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## Key Files Reference
@@ -102,31 +127,6 @@ tests/test_candle_service.py             - 33 tests for candle service
 Total: 398 tests
 ```
 
-## Technical Details
-
-### Z-Score Calculation
-```
-Z-Score = (spread - rolling_mean) / rolling_std
-
-Signals:
-- Z > +threshold → SELL (spread too high)
-- Z < -threshold → BUY (spread too low)
-- Otherwise → NEUTRAL
-```
-
-### Chart Configuration (Sidebar)
-| Parameter | Range | Default |
-|-----------|-------|---------|
-| Rolling Window | 5-90 days | 30 |
-| Z-Score Threshold | 1.0-3.0σ | 2.0 |
-
-### Caching Behavior
-| Scenario | Before | After |
-|----------|--------|-------|
-| Period 365 → 180 days | Cache miss, DB query | Filter from cache |
-| Period 180 → 365 days | Cache miss, DB query | Filter from cache |
-| Change bond pair | Load new ISIN | Load new ISIN |
-
 ## Notes for Next Session
 
 - Working directory: `/home/z/my-project/streamlit-app/`
@@ -134,5 +134,13 @@ Signals:
 - Start app: `streamlit run app.py`
 - Database: `data/ofz_data.db`
 
+### TODO for G-spread Implementation
+
+- [ ] Create `services/g_spread_calculator.py`
+- [ ] Add `yearyields_snapshots` table to DB
+- [ ] Create daily snapshot job for yearyields
+- [ ] Add G-spread chart to UI
+- [ ] Test historical G-spread accuracy
+
 ---
-*Session saved: 2026-03-07 UTC*
+*Session saved: 2026-03-08 UTC*
