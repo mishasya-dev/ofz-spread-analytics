@@ -298,6 +298,52 @@ def init_database():
         ON cointegration_cache(checked_at)
     ''')
     
+    # ==========================================
+    # ТАБЛИЦА ПАРАМЕТРОВ NELSON-SIEGEL (КБД)
+    # ==========================================
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ns_params (
+            date TEXT PRIMARY KEY,
+            b1 REAL,
+            b2 REAL,
+            b3 REAL,
+            t1 REAL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_ns_params_date 
+        ON ns_params(date)
+    ''')
+    
+    # ==========================================
+    # ТАБЛИЦА G-SPREAD (рассчитанный)
+    # ==========================================
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS g_spreads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            isin TEXT NOT NULL,
+            date TEXT NOT NULL,
+            ytm_bond REAL,
+            duration_years REAL,
+            ytm_kbd REAL,
+            g_spread_bp REAL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(isin, date)
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_g_spreads_isin 
+        ON g_spreads(isin)
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_g_spreads_date 
+        ON g_spreads(date)
+    ''')
+    
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована")
