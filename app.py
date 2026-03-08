@@ -25,8 +25,17 @@ from components.charts import (
     create_combined_ytm_chart,
     create_intraday_spread_chart,
     create_spread_analytics_chart,
-    apply_zoom_range
+    apply_zoom_range,
+    create_g_spread_dashboard,
+    create_g_spread_chart_single
 )
+from api.moex_zcyc import ZCYCFetcher
+from services.g_spread_calculator import (
+    calculate_g_spread_history,
+    calculate_g_spread_stats,
+    generate_g_spread_signal
+)
+from core.db import get_g_spread_repo
 from version import format_version_badge
 from core.cointegration import CointegrationAnalyzer, format_cointegration_report
 from core.cointegration_service import get_cointegration_service
@@ -486,6 +495,110 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
     logger.info(f"fetch_candle_data_cached: isin={isin}, interval={interval}, days={days}, возвращаем {len(result_df)} записей")
     
     return result_df
+
+
+# ==========================================
+# G-SPREAD: NELSON-SIEGEL PARAMS
+# ==========================================
+
+@st.cache_resource
+def get_zcyc_fetcher():
+    """Получить экземпляр ZCYCFetcher (кэшируется)"""
+    return ZCYCFetcher()
+
+
+@st.cache_data(ttl=3600)  # Кэш на 1 час
+def fetch_ns_params_cached(days: int = 365) -> pd.DataFrame:
+    """
+    Загрузить параметры Nelson-Siegel из БД или MOEX
+    
+    Args:
+        days: Количество дней для загрузки
+        
+    Returns:
+        DataFrame с колонками: b1, b2, b3, t1 (индекс = date)
+    """
+    g_spread_repo = get_g_spread_repo()
+    
+    # Проверяем что есть в БД
+    ns_count = g_spread_repo.count_ns_params()
+    
+    if ns_count > 0:
+        # Загружаем из БД
+        start_date = date.today() - timedelta(days=days)
+        ns_df = g_spread_repo.load_ns_params(start_date=start_date)
+        
+        # Проверяем актуальность
+        last_date = g_spread_repo.get_last_ns_params_date()
+        if last_date and (date.today() - last_date).days <= 1:
+            logger.info(f"NS params из БД: {len(ns_df)} записей")
+            return ns_df
+    
+    # Загружаем с MOEX
+    fetcher = get_zcyc_fetcher()
+    start_date = date.today() - timedelta(days=days)
+    ns_df = fetcher.fetch_ns_params_history(start_date=start_date)
+    
+    if not ns_df.empty:
+        # Сохраняем в БД
+        saved = g_spread_repo.save_ns_params(ns_df)
+        logger.info(f"Сохранено {saved} NS params в БД")
+    
+    return ns_df
+
+
+def calculate_bond_g_spread(
+    isin: str,
+    daily_df: pd.DataFrame,
+    ns_params_df: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Рассчитать G-spread для облигации
+    
+    Args:
+        isin: ISIN облигации
+        daily_df: DataFrame с YTM облигации
+        ns_params_df: DataFrame с параметрами Nelson-Siegel
+        
+    Returns:
+        DataFrame с G-spread данными
+    """
+    g_spread_repo = get_g_spread_repo()
+    
+    # Проверяем есть ли в БД
+    g_spread_df = g_spread_repo.load_g_spreads(isin)
+    
+    if not g_spread_df.empty:
+        # Проверяем актуальность
+        last_date = g_spread_repo.get_last_g_spread_date(isin)
+        if last_date and (date.today() - last_date).days <= 1:
+            logger.info(f"G-spread из БД для {isin}: {len(g_spread_df)} записей")
+            return g_spread_df
+    
+    # Рассчитываем
+    if daily_df.empty or ns_params_df.empty:
+        return pd.DataFrame()
+    
+    # Подготовка данных для расчёта
+    # Нужно: ytm, duration_days
+    if 'ytm' not in daily_df.columns:
+        return pd.DataFrame()
+    
+    # Если duration нет, используем примерное значение (лет до погашения)
+    bond_data = daily_df.copy()
+    if 'duration_days' not in bond_data.columns:
+        # Примерная дюрация ≈ срок до погашения (можно уточнить)
+        bond_data['duration_days'] = 365.25 * 5  # По умолчанию 5 лет
+    
+    # Объединяем с NS params
+    g_spread_df = calculate_g_spread_history(bond_data, ns_params_df)
+    
+    if not g_spread_df.empty:
+        # Сохраняем в БД
+        saved = g_spread_repo.save_g_spreads(isin, g_spread_df)
+        logger.info(f"Сохранено {saved} G-spread для {isin}")
+    
+    return g_spread_df
 
 
 def calculate_spread_stats(spread_series: pd.Series) -> Dict:
@@ -1195,6 +1308,131 @@ def main():
             st.warning(f"⚠️ Недостаточно данных для анализа (нужно ≥30, есть: {len(ytm1_series)}, {len(ytm2_series)})")
         else:
             st.info("Нажмите 'Обновить' для запуска анализа")
+    
+    # ==========================================
+    # G-SPREAD АНАЛИЗ (КБД - Кривая Безкупонной Доходности)
+    # ==========================================
+    with st.expander("📈 G-Spread анализ (YTM vs КБД)", expanded=False):
+        st.markdown("""
+        **G-Spread** — разница между реальной YTM облигации и теоретической YTM по кривой КБД.
+        
+        **Интерпретация:**
+        - G-spread < 0: Облигация дешевле кривой → ПОКУПКА
+        - G-spread > 0: Облигация дороже кривой → ПРОДАЖА
+        
+        **Модель Nelson-Siegel:**
+        Y(t) = b₁ + b₂·f₁(t) + b₃·f₂(t)
+        """)
+        
+        # Кнопка загрузки NS параметров
+        col_ns_refresh, col_ns_status = st.columns([1, 3])
+        with col_ns_refresh:
+            ns_refresh_clicked = st.button("🔄 Загрузить КБД", key="refresh_ns_params")
+        
+        try:
+            # Загружаем параметры NS
+            ns_params_df = fetch_ns_params_cached(period)
+            
+            if ns_params_df.empty:
+                st.warning("⚠️ Не удалось загрузить параметры КБД. Попробуйте обновить.")
+            else:
+                with col_ns_status:
+                    st.caption(f"✅ Загружено {len(ns_params_df)} точек КБД")
+                
+                # Рассчитываем G-spread для обеих облигаций
+                g_spread_df1 = calculate_bond_g_spread(bond1.isin, daily_df1, ns_params_df)
+                g_spread_df2 = calculate_bond_g_spread(bond2.isin, daily_df2, ns_params_df)
+                
+                # Метрики G-spread
+                if not g_spread_df1.empty or not g_spread_df2.empty:
+                    col_gs1, col_gs2 = st.columns(2)
+                    
+                    with col_gs1:
+                        if not g_spread_df1.empty:
+                            stats1 = calculate_g_spread_stats(g_spread_df1['g_spread_bp'])
+                            current_gs1 = stats1.get('current', 0)
+                            signal1 = generate_g_spread_signal(
+                                current_gs1, 
+                                stats1.get('p10', -50), 
+                                stats1.get('p25', -25), 
+                                stats1.get('p75', 25), 
+                                stats1.get('p90', 50)
+                            )
+                            st.metric(
+                                f"G-Spread {bond1.name}", 
+                                f"{current_gs1:.1f} б.п.",
+                                delta=f"Mean: {stats1.get('mean', 0):.1f}"
+                            )
+                            st.markdown(f"<span style='color:{signal1['color']}'>{signal1['signal']}: {signal1['action']}</span>", unsafe_allow_html=True)
+                    
+                    with col_gs2:
+                        if not g_spread_df2.empty:
+                            stats2 = calculate_g_spread_stats(g_spread_df2['g_spread_bp'])
+                            current_gs2 = stats2.get('current', 0)
+                            signal2 = generate_g_spread_signal(
+                                current_gs2, 
+                                stats2.get('p10', -50), 
+                                stats2.get('p25', -25), 
+                                stats2.get('p75', 25), 
+                                stats2.get('p90', 50)
+                            )
+                            st.metric(
+                                f"G-Spread {bond2.name}", 
+                                f"{current_gs2:.1f} б.п.",
+                                delta=f"Mean: {stats2.get('mean', 0):.1f}"
+                            )
+                            st.markdown(f"<span style='color:{signal2['color']}'>{signal2['signal']}: {signal2['action']}</span>", unsafe_allow_html=True)
+                    
+                    # Подготовка данных для дашборда
+                    if not g_spread_df1.empty and not g_spread_df2.empty:
+                        # Создаём DataFrame для дашборда
+                        df_res = pd.DataFrame()
+                        
+                        # Облигация 1
+                        df1_data = g_spread_df1.reset_index()
+                        df1_data['ticker'] = bond1.name
+                        df1_data['ytm'] = df1_data['ytm_bond']
+                        df1_data['ytm_theor'] = df1_data['ytm_kbd']
+                        df1_data['g_spread'] = df1_data['g_spread_bp']
+                        
+                        # Z-score
+                        mean_gs1 = stats1.get('mean', 0)
+                        std_gs1 = stats1.get('std', 1)
+                        df1_data['zscore'] = (df1_data['g_spread_bp'] - mean_gs1) / std_gs1
+                        
+                        # Облигация 2
+                        df2_data = g_spread_df2.reset_index()
+                        df2_data['ticker'] = bond2.name
+                        df2_data['ytm'] = df2_data['ytm_bond']
+                        df2_data['ytm_theor'] = df2_data['ytm_kbd']
+                        df2_data['g_spread'] = df2_data['g_spread_bp']
+                        
+                        # Z-score
+                        mean_gs2 = stats2.get('mean', 0)
+                        std_gs2 = stats2.get('std', 1)
+                        df2_data['zscore'] = (df2_data['g_spread_bp'] - mean_gs2) / std_gs2
+                        
+                        df_res = pd.concat([df1_data, df2_data], ignore_index=True)
+                        
+                        # График G-spread дашборд
+                        fig_g_spread = create_g_spread_dashboard(df_res)
+                        st.plotly_chart(fig_g_spread, use_container_width=True)
+                        
+                        # Дополнительно: график отдельных G-spread
+                        col_chart1, col_chart2 = st.columns(2)
+                        with col_chart1:
+                            fig_gs1 = create_g_spread_chart_single(g_spread_df1, bond1.name, stats1)
+                            st.plotly_chart(fig_gs1, use_container_width=True)
+                        with col_chart2:
+                            fig_gs2 = create_g_spread_chart_single(g_spread_df2, bond2.name, stats2)
+                            st.plotly_chart(fig_gs2, use_container_width=True)
+                
+                elif not ns_params_df.empty:
+                    st.info("Рассчитываем G-spread...")
+                
+        except Exception as e:
+            st.error(f"Ошибка при загрузке КБД: {e}")
+            logger.error(f"G-spread calculation error: {e}", exc_info=True)
     
     st.divider()
     
