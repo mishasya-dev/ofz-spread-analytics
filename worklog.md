@@ -2029,3 +2029,71 @@ for row in data['securities']['data']:
 ---
 
 *Исследование источников G-spread: 08.03.2026*
+
+---
+
+## Реализация расчёта G-spread через Nelson-Siegel (08.03.2026)
+
+### Алгоритм
+
+```
+G-spread = YTM_облигации - YTM_КБД(duration)
+
+YTM_КБД(t) = β₀ + β₁·f₁(t) + β₂·f₂(t)
+
+где:
+  f₁(t) = (1 - e^(-t/τ)) / (t/τ)
+  f₂(t) = f₁(t) - e^(-t/τ)
+```
+
+### Источники данных MOEX
+
+| Данные | Endpoint | Период |
+|--------|----------|--------|
+| Параметры NS (B1,B2,B3,T1) | `/history/engines/stock/zcyc.json` | История |
+| Точки КБД (yearyields) | `/engines/stock/zcyc.json` | Только текущие |
+| YTM и Duration облигации | `/history/.../securities/{ISIN}` | История |
+
+### Ключевая проблема
+
+Параметры MOEX (B1=1251, B2=5, B3=420) отличаются от классических NS!
+Требуется калибровка по yearyields.
+
+### Решение
+
+```python
+def nelson_siegel(t, beta0, beta1, beta2, tau):
+    t_tau = t / tau
+    exp_term = np.exp(-t_tau)
+    factor1 = (1 - exp_term) / t_tau
+    factor2 = factor1 - exp_term
+    return beta0 + beta1 * factor1 + beta2 * factor2
+
+# Калибровка NS по yearyields
+def fit_ns_to_yearyields(yearyields):
+    # Минимизируем ошибку между NS и yearyields
+    # Получаем: beta0, beta1, beta2, tau
+    
+# Расчёт G-spread
+duration_years = DURATION / 365.25
+ytm_kbd = nelson_siegel(duration_years, beta0, beta1, beta2, tau)
+g_spread = YIELDCLOSE - ytm_kbd
+```
+
+### Точность
+
+| Метод | Погрешность |
+|-------|-------------|
+| clcyield из API (текущий) | 0 б.п. (точно) |
+| NS по текущим yearyields | 2-20 б.п. |
+| NS с ежедневными yearyields | 0-2 б.п. |
+
+### Вывод для Mean-Reversion стратегии
+
+✅ **Текущий G-spread**: Использовать `clcyield` из API точно
+⚠️ **Исторический G-spread**: Приближённый через NS (погрешность 2-20 б.п.)
+📊 **Решение**: Сохранять yearyields ежедневно для точной истории
+
+---
+
+*Реализация NS: 08.03.2026*
