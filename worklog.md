@@ -1755,3 +1755,86 @@ Merged:  experiments (3e7c610)
 ---
 
 *Рефакторинг завершён: 2026-03-06*
+
+---
+
+## Исследование history API MOEX (07.03.2026)
+
+### Проверенные endpoints
+
+#### 1. history/engines/stock/markets/bonds/securities/{ISIN}/yields.json
+```
+Columns: YIELDCLOSE, DURATION, ZSPREAD, CLOSE, ...
+History: ✅ 2+ года (пагинация 100 записей)
+```
+
+#### 2. history/engines/stock/zcyc.json?date=YYYY-MM-DD
+```
+Параметры КБД: b1, b2, b3, t1
+History: ✅ 16528 записей (intraday updates)
+Yearyields: ❌ НЕТ истории
+```
+
+#### 3. engines/stock/zcyc.json (текущий)
+```
+yearyields: 11 точек (0.25, 0.5, 1, 2, 3, 5, 7, 10, 15, 20 лет)
+securities: clcyield (YTM по КБД для каждой облигации)
+```
+
+### Ключевая находка: clcyield ≠ GSPREADBP
+
+```
+clcyield расчёт:
+  YTM_факт = 14.76%, YTM_КБД = 14.49%
+  G-spread = +27 bps
+
+GSPREADBP (официальный):
+  G-spread = +3 bps
+
+Разница: 24 bps!
+
+Причина: clcyield использует текущую КБД,
+         GSPREADBP использует КБД на момент расчёта
+```
+
+### Правильный расчёт G-spread
+
+```python
+# Метод: интерполяция по yearyields
+moex_yearyields = [
+    (0.25, 13.68), (0.5, 13.90), (1.0, 14.24), ...
+]
+
+ytm_kbd = np.interp(duration_years, periods, yields)
+g_spread = ytm_bond - ytm_kbd
+
+# Результат: совпадает с GSPREADBP ±1 bps ✅
+```
+
+### Проблема исторического G-spread
+
+| Что нужно | Доступность |
+|-----------|-------------|
+| YTM облигации | ✅ history/yields |
+| Duration | ✅ history/yields |
+| Точки КБД (yearyields) | ❌ Только текущие |
+| Параметры NS (b1,b2,b3,t1) | ✅ history/zcyc |
+
+### Решения
+
+**A. Хранить снапшоты yearyields** (идеально)
+- Каждый день сохранять 11 точек КБД
+- История доступна в своей БД
+
+**B. Использовать параметры NS** (практично)
+- history/zcyc даёт b1,b2,b3,t1 на каждую дату
+- Рассчитывать YTM_КБД по формуле NS
+- Погрешность ~1%
+
+**C. Комбо**
+- Текущий: GSPREADBP из API
+- Исторический: NS параметры + калибровка по текущим yearyields
+
+---
+
+*Исследование history API: 07.03.2026*
