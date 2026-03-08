@@ -1955,3 +1955,77 @@ tickers = bonds.tickers()
 ---
 
 *Исследование moexalgo: 08.03.2026*
+
+---
+
+## Глубокое исследование источников G-spread (08.03.2026)
+
+### Проблема
+
+Для Mean-Reversion стратегии нужен **исторический G-spread**:
+```
+G-spread = YTM_облигации - YTM_КБД(duration)
+```
+
+### Результаты исследования MOEX ISS API
+
+| Endpoint | Данные | История | Статус |
+|----------|--------|---------|--------|
+| `/history/.../securities/{ISIN}` | YIELDCLOSE, DURATION | ✅ 2+ года | Работает |
+| `/history/.../securities/{ISIN}` | ZSPREAD | ❌ Всегда None | НЕ работает |
+| `/history/engines/stock/zcyc/yearyields` | Точки КБД | ❌ Нет! | Только params |
+| `/history/engines/stock/zcyc` | Параметры NS (b1,b2,b3,t1) | ✅ 16528 записей | Работает |
+| `/engines/stock/zcyc` | yearyields (11 точек) | ❌ Только текущие | Работает |
+| `/engines/stock/zcyc/securities` | clcyield, crtyield | ❌ Только текущие | Работает |
+
+### Ключевые находки
+
+1. **ZSPREAD в history ВСЕГДА None** для обычных ОФЗ
+2. **Исторические yearyields НЕ доступны** через API
+3. **Параметры NS доступны**, но с погрешностью ~100 б.п.
+4. **clcyield** = YTM по КБД (уже рассчитанный MOEX)
+
+### Рабочее решение для текущих данных
+
+```python
+# Из moexalgo или MOEX ISS:
+# securities с clcyield в zcyc.json
+
+url = "https://iss.moex.com/iss/engines/stock/zcyc.json"
+data = requests.get(url).json()
+
+# G-spread уже рассчитан:
+for row in data['securities']['data']:
+    trdyield = row[...]  # Фактический YTM
+    clcyield = row[...]  # YTM по КБД
+    
+    g_spread = (trdyield - clcyield) * 100  # в б.п.
+```
+
+### Решение для исторических данных
+
+**ВАРИАНТ 1: Самостоятельный сбор (рекомендуется)**
+```
+1. Ежедневно сохранять yearyields в БД
+2. Интерполировать YTM_КБД по duration
+3. G-spread = YIELDCLOSE - YTM_КБД
+```
+
+**ВАРИАНТ 2: Использовать параметры NS**
+```
+1. Получить b1,b2,b3,t1 на дату из /history/engines/stock/zcyc
+2. Рассчитать YTM_КБД по формуле NS
+3. ПОГРЕШНОСТЬ: ~100 б.п. (неприемлемо для спред-стратегий!)
+```
+
+### Вывод
+
+❌ **moexalgo НЕ подходит** для исторического G-spread (нет данных)
+✅ **MOEX ISS /history/** даёт YTM и Duration, но НЕ G-spread
+✅ **Текущий G-spread** доступен через clcyield/zspread
+
+📋 **Рекомендация**: Организовать ежедневное сохранение yearyields в БД для будущего исторического анализа.
+
+---
+
+*Исследование источников G-spread: 08.03.2026*
