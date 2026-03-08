@@ -145,8 +145,10 @@ Total: 398 tests
 - [x] Create `core/db/g_spread_repo.py` for storage
 - [x] Add G-spread dashboard chart to UI
 - [x] Add G-spread metrics and signals to UI
+- [x] Add `enrich_bond_data()` with Z-score and ADF test
+- [x] Auto-detect duration units (days vs years)
 - [ ] Create daily snapshot job for yearyields (optional)
-- [ ] Test historical G-spread accuracy
+- [ ] Test historical G-spread accuracy with real data
 
 ---
 *Session saved: 2026-03-08 UTC*
