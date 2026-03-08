@@ -748,3 +748,222 @@ def apply_zoom_range(fig: go.Figure, x_range: Optional[Tuple]) -> go.Figure:
     if x_range and x_range[0] and x_range[1]:
         fig.update_xaxes(range=[x_range[0], x_range[1]])
     return fig
+
+
+# ============================================
+# G-SPREAD ДАШБОРД
+# ============================================
+
+def create_g_spread_dashboard(
+    df_res: pd.DataFrame,
+    title: str = "YTM ОФЗ vs Теоретическая КБД"
+) -> go.Figure:
+    """
+    Создать дашборд G-spread с двумя графиками:
+    1. Верхний: YTM облигации vs YTM_КБД (теоретическая)
+    2. Нижний: Z-Score G-spread с сигналами
+    
+    Args:
+        df_res: DataFrame с колонками:
+            - date: дата
+            - ticker: идентификатор облигации
+            - ytm: реальная доходность облигации (%)
+            - ytm_theor: теоретическая YTM по КБД (%)
+            - zscore: Z-Score G-spread
+            - g_spread: G-spread (б.п.)
+            
+    Returns:
+        Plotly Figure
+    """
+    tickers = df_res['ticker'].unique()
+    
+    fig = make_subplots(
+        rows=2, cols=1, 
+        shared_xaxes=True, 
+        vertical_spacing=0.05, 
+        row_heights=[0.7, 0.3],
+        subplot_titles=(title, "Z-Score G-Spread (Сигналы)")
+    )
+
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+
+    for i, ticker in enumerate(tickers):
+        data = df_res[df_res['ticker'] == ticker].copy()
+        color = colors[i % len(colors)]
+
+        # ВЕРХНИЙ ГРАФИК: Реальная доходность
+        fig.add_trace(
+            go.Scatter(
+                x=data['date'], 
+                y=data['ytm'], 
+                name=f"ОФЗ {ticker} (Рынок)", 
+                line=dict(color=color, width=2),
+                legendgroup=ticker
+            ), 
+            row=1, col=1
+        )
+        
+        # ВЕРХНИЙ ГРАФИК: Персональная КБД (пунктир)
+        if 'ytm_theor' in data.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=data['date'], 
+                    y=data['ytm_theor'], 
+                    name=f"КБД для {ticker}", 
+                    line=dict(color=color, dash='dot', width=1), 
+                    opacity=0.6,
+                    legendgroup=ticker,
+                    showlegend=True
+                ), 
+                row=1, col=1
+            )
+
+        # НИЖНИЙ ГРАФИК: Z-Score
+        if 'zscore' in data.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=data['date'], 
+                    y=data['zscore'], 
+                    name=f"Z-Score {ticker}", 
+                    line=dict(color=color, width=1.5),
+                    showlegend=False,
+                    legendgroup=ticker
+                ), 
+                row=2, col=1
+            )
+
+    # Линии сигналов на нижнем графике
+    fig.add_hline(
+        y=2, 
+        line_dash="dash", 
+        line_color="red", 
+        row=2, col=1, 
+        annotation_text="SELL",
+        annotation_position="right",
+        annotation_font_color="red"
+    )
+    fig.add_hline(
+        y=-2, 
+        line_dash="dash", 
+        line_color="green", 
+        row=2, col=1, 
+        annotation_text="BUY",
+        annotation_position="right",
+        annotation_font_color="green"
+    )
+    
+    # Нулевая линия
+    fig.add_hline(
+        y=0, 
+        line_dash="dot", 
+        line_color="gray", 
+        row=2, col=1,
+        opacity=0.5
+    )
+    
+    fig.update_layout(
+        height=700, 
+        hovermode="x unified", 
+        template="plotly_white",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
+    )
+    
+    # Оформление осей
+    fig.update_yaxes(title_text="YTM (%)", row=1, col=1)
+    fig.update_yaxes(title_text="Z-Score", row=2, col=1)
+    fig.update_xaxes(title_text="Дата", row=2, col=1)
+    
+    return fig
+
+
+def create_g_spread_chart_single(
+    g_spread_df: pd.DataFrame,
+    bond_name: str,
+    stats: Optional[Dict] = None
+) -> go.Figure:
+    """
+    Создать график G-spread для одной облигации с перцентилями
+    
+    Args:
+        g_spread_df: DataFrame с колонками:
+            - date (индекс или колонка)
+            - ytm_bond: YTM облигации (%)
+            - ytm_kbd: YTM по КБД (%)
+            - g_spread_bp: G-spread (б.п.)
+        bond_name: Название облигации
+        stats: Статистика {p25, p75, mean, current}
+        
+    Returns:
+        Plotly Figure
+    """
+    fig = go.Figure()
+    
+    # Сброс индекса если нужно
+    if 'date' not in g_spread_df.columns:
+        g_spread_df = g_spread_df.reset_index()
+    
+    # G-spread
+    fig.add_trace(go.Scatter(
+        x=g_spread_df['date'],
+        y=g_spread_df['g_spread_bp'],
+        name='G-spread',
+        line=dict(color='#9B59B6', width=2),
+        fill='tozeroy',
+        fillcolor='rgba(155, 89, 182, 0.1)'
+    ))
+    
+    # Перцентили
+    if stats:
+        if 'p25' in stats:
+            fig.add_hline(
+                y=stats['p25'],
+                line_dash='dot',
+                line_color='green',
+                annotation_text=f"P25: {stats['p25']:.0f}",
+                annotation_position='left'
+            )
+        if 'p75' in stats:
+            fig.add_hline(
+                y=stats['p75'],
+                line_dash='dot',
+                line_color='red',
+                annotation_text=f"P75: {stats['p75']:.0f}",
+                annotation_position='left'
+            )
+        if 'mean' in stats:
+            fig.add_hline(
+                y=stats['mean'],
+                line_dash='dash',
+                line_color='gray',
+                annotation_text=f"Mean: {stats['mean']:.0f}",
+                annotation_position='left'
+            )
+        
+        # Текущая точка
+        if 'current' in stats:
+            last_date = g_spread_df['date'].iloc[-1]
+            fig.add_trace(go.Scatter(
+                x=[last_date],
+                y=[stats['current']],
+                mode='markers',
+                marker=dict(size=12, color='yellow', line=dict(width=2, color='black')),
+                name='Текущий',
+                showlegend=False
+            ))
+    
+    fig.update_layout(
+        title=f"G-spread: {bond_name}",
+        xaxis_title="Дата",
+        yaxis_title="G-spread (б.п.)",
+        hovermode='x unified',
+        template="plotly_white",
+        height=400
+    )
+    
+    return fig
