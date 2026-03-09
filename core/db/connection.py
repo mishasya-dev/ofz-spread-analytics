@@ -288,6 +288,35 @@ def init_database():
         )
     ''')
     
+    # Миграция: проверяем наличие колонок cointegration_cache
+    cursor.execute("PRAGMA table_info(cointegration_cache)")
+    coint_columns = {row[1] for row in cursor.fetchall()}
+    
+    # Если нет pair_key - пересоздаём таблицу (она могла быть создана в старой версии)
+    if 'pair_key' not in coint_columns and len(coint_columns) > 0:
+        logger.info("Миграция: пересоздание cointegration_cache с новой структурой")
+        cursor.execute('DROP TABLE IF EXISTS cointegration_cache')
+        cursor.execute('''
+            CREATE TABLE cointegration_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bond1_isin TEXT NOT NULL,
+                bond2_isin TEXT NOT NULL,
+                pair_key TEXT NOT NULL UNIQUE,
+                is_cointegrated INTEGER DEFAULT 0,
+                pvalue REAL,
+                half_life REAL,
+                hedge_ratio REAL,
+                data_days INTEGER DEFAULT 0,
+                adf_bond1_pvalue REAL,
+                adf_bond2_pvalue REAL,
+                both_nonstationary INTEGER DEFAULT 0,
+                low_data INTEGER DEFAULT 0,
+                error TEXT,
+                checked_at TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+    
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_cointegration_pair_key 
         ON cointegration_cache(pair_key)
