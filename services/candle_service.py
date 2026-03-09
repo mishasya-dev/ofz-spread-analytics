@@ -3,7 +3,12 @@
 
 Инкапсулирует логику загрузки свечей с MOEX, расчёта YTM и кэширования.
 """
-import streamlit as st
+# Lazy import to avoid dependency when not in Streamlit context
+try:
+    import streamlit as st
+except ImportError:
+    st = None
+
 import pandas as pd
 from datetime import date, timedelta, datetime
 from typing import Optional, Dict, Any
@@ -94,7 +99,6 @@ class CandleService:
         """Получить количество дней по умолчанию для интервала"""
         return self.INTERVAL_LIMITS.get(interval, {"default": 7})["default"]
     
-    @st.cache_data(ttl=60)
     def get_candles_with_ytm(
         self,
         bond: Bond,
@@ -302,7 +306,6 @@ class CandleService:
 
 
 # Фабрика для удобства
-@st.cache_resource
 def get_candle_service() -> CandleService:
     """Получить CandleService (кэшируется)"""
     return CandleService()

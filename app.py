@@ -1435,8 +1435,8 @@ def main():
                 st.info("👆 Нажмите 'Загрузить КБД' для начала работы с G-Spread анализом.")
             else:
                 # Рассчитываем G-spread для обеих облигаций
-                g_spread_df1 = calculate_bond_g_spread(bond1.isin, daily_df1, ns_params_df)
-                g_spread_df2 = calculate_bond_g_spread(bond2.isin, daily_df2, ns_params_df)
+                g_spread_df1, p_value1 = calculate_bond_g_spread(bond1.isin, daily_df1, ns_params_df)
+                g_spread_df2, p_value2 = calculate_bond_g_spread(bond2.isin, daily_df2, ns_params_df)
                 
                 # Метрики G-spread
                 if not g_spread_df1.empty or not g_spread_df2.empty:

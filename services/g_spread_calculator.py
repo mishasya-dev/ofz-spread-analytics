@@ -398,6 +398,10 @@ def enrich_bond_data(
     
     # 5. Вычисляем G-спред в базисных пунктах (1% = 100 б.п.)
     df['g_spread'] = (df['ytm'] - df['ytm_theoretical']) * 100
+    df['g_spread_bp'] = df['g_spread']  # Дублируем для совместимости
+    
+    # 5.1 Добавляем duration_years для сохранения в БД
+    df['duration_years'] = df['duration'] / 365.25
     
     # 6. Считаем скользящий Z-Score для торговых сигналов
     roll = df['g_spread'].rolling(window=window)
@@ -420,7 +424,7 @@ def enrich_bond_data(
             logger.warning(f"ADF тест не удался: {e}")
     
     # Возвращаем только нужные колонки
-    result_cols = ['date', 'ytm', 'duration', 'ytm_theoretical', 'g_spread', 'z_score']
+    result_cols = ['date', 'ytm', 'duration', 'ytm_theoretical', 'g_spread', 'g_spread_bp', 'z_score', 'duration_years']
     result = df[[c for c in result_cols if c in df.columns]].copy()
     
     logger.info(f"Рассчитано {len(result)} значений G-spread, p-value ADF: {p_value:.4f}")
