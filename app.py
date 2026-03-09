@@ -35,7 +35,7 @@ from services.g_spread_calculator import (
     calculate_g_spread_stats,
     generate_g_spread_signal
 )
-from core.db import get_g_spread_repo
+from core.db import get_g_spread_repo, init_database
 from version import format_version_badge
 from core.cointegration import CointegrationAnalyzer, format_cointegration_report
 from core.cointegration_service import get_cointegration_service
@@ -165,6 +165,9 @@ def format_bond_label(bond, ytm: float = None, duration_years: float = None) -> 
 
 def init_session_state():
     """Инициализация состояния сессии"""
+    # Инициализация БД (создание таблиц при необходимости)
+    init_database()
+    
     if 'config' not in st.session_state:
         st.session_state.config = AppConfig()
     
