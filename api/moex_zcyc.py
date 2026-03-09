@@ -63,141 +63,99 @@ class ZCYCFetcher:
         self,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
-        save_callback=None,
-        batch_save_size: int = 1000
+        save_callback=None
     ) -> pd.DataFrame:
         """
         Получить исторические параметры Nelson-Siegel
         
         Endpoint: /history/engines/stock/zcyc
         
+        ВАЖНО: MOEX API для zcyc ИГНОРИРУЕТ параметры:
+        - from/till (фильтрация по датам)
+        - start (пагинация)
+        
+        Поэтому загрузка происходит ОДНИМ запросом (вся история).
+        
         MOEX возвращает параметры NS во внутреннем формате:
         - B1, B2, B3 — параметры кривой (НЕ проценты!)
         - T1 — параметр масштаба времени (tau)
         
-        Для расчёта YTM_КБД нужно интерполировать по yearyields
-        или использовать clcyield из securities.
-        
         Args:
-            start_date: Начальная дата
-            end_date: Конечная дата
-            save_callback: Функция для инкрементального сохранения (df -> int)
-            batch_save_size: Сохранять каждые N записей
+            start_date: Игнорируется API (для совместимости)
+            end_date: Игнорируется API (для совместимости)
+            save_callback: Функция для сохранения (df -> int)
             
         Returns:
             DataFrame с колонками: date, b1, b2, b3, t1
         """
-        if start_date is None:
-            start_date = date.today() - timedelta(days=365)
-        if end_date is None:
-            end_date = date.today()
+        url = f"{self.MOEX_BASE_URL}/history/engines/stock/zcyc.json"
+        params = {"iss.meta": "off"}
         
-        all_data = []
-        start = 0
-        batch_size = 500
-        total_saved = 0
-        
-        while True:
-            url = f"{self.MOEX_BASE_URL}/history/engines/stock/zcyc.json"
-            params = {
-                "from": start_date.isoformat(),
-                "till": end_date.isoformat(),
-                "iss.meta": "off",
-                "start": start
-            }
+        try:
+            response = self._make_request(url, params)
+            data = response.json()
             
+            # Данные приходят в ключе 'params'
+            params_data = data.get("params", {})
+            columns = params_data.get("columns", [])
+            rows = params_data.get("data", [])
+            
+            if not rows:
+                return pd.DataFrame()
+            
+            # Находим индексы нужных колонок
             try:
-                response = self._make_request(url, params)
-                data = response.json()
+                date_idx = columns.index('tradedate')
+                b1_idx = columns.index('b1')
+                b2_idx = columns.index('b2')
+                b3_idx = columns.index('b3')
+                t1_idx = columns.index('t1')
+            except ValueError as e:
+                logger.warning(f"Required columns not found: {e}")
+                logger.warning(f"Available columns: {columns}")
+                return pd.DataFrame()
+            
+            # Преобразуем в нужный формат
+            all_data = []
+            for row in rows:
+                if row[b1_idx] is None or row[t1_idx] is None:
+                    continue
                 
-                # Данные приходят в ключе 'params' (не 'zcyc'!)
-                params_data = data.get("params", {})
-                columns = params_data.get("columns", [])
-                rows = params_data.get("data", [])
-                
-                if not rows:
-                    break
-                
-                # Находим индексы нужных колонок
-                # MOEX возвращает в нижнем регистре: b1, b2, b3, t1
-                try:
-                    date_idx = columns.index('tradedate')
-                    b1_idx = columns.index('b1')
-                    b2_idx = columns.index('b2')
-                    b3_idx = columns.index('b3')
-                    t1_idx = columns.index('t1')
-                except ValueError as e:
-                    logger.warning(f"Required columns not found in params: {e}")
-                    logger.warning(f"Available columns: {columns}")
-                    break
-                
-                # Преобразуем в нужный формат
-                for row in rows:
-                    # Пропускаем строки с None значениями
-                    if row[b1_idx] is None or row[t1_idx] is None:
-                        continue
-                    
-                    all_data.append({
-                        "date": row[date_idx],
-                        "b1": row[b1_idx],
-                        "b2": row[b2_idx],
-                        "b3": row[b3_idx],
-                        "t1": row[t1_idx]
-                    })
-                
-                # Инкрементальное сохранение
-                if save_callback and len(all_data) >= batch_save_size:
-                    df_batch = pd.DataFrame(all_data)
-                    df_batch["date"] = pd.to_datetime(df_batch["date"])
-                    df_batch = df_batch.set_index("date")
-                    saved = save_callback(df_batch)
-                    total_saved += saved
-                    logger.info(f"Инкрементально сохранено {saved} записей (всего {total_saved})")
-                    all_data = []  # Очищаем буфер
-                
-                if len(rows) < batch_size:
-                    break
-                    
-                start += batch_size
-                
-            except Exception as e:
-                logger.error(f"Ошибка при получении параметров NS: {e}")
-                # Сохраняем то, что успели загрузить
-                if save_callback and all_data:
-                    df_batch = pd.DataFrame(all_data)
-                    df_batch["date"] = pd.to_datetime(df_batch["date"])
-                    df_batch = df_batch.set_index("date")
-                    saved = save_callback(df_batch)
-                    total_saved += saved
-                    logger.info(f"При разрыве сохранено {saved} записей (всего {total_saved})")
-                break
-        
-        # Сохраняем остаток
-        if save_callback and all_data:
-            df_batch = pd.DataFrame(all_data)
-            df_batch["date"] = pd.to_datetime(df_batch["date"])
-            df_batch = df_batch.set_index("date")
-            saved = save_callback(df_batch)
-            total_saved += saved
-            logger.info(f"Финальное сохранение: {saved} записей (всего {total_saved})")
-            return pd.DataFrame()  # Возвращаем пустой, т.к. уже сохранили
-        
-        if not all_data:
+                all_data.append({
+                    "date": row[date_idx],
+                    "b1": row[b1_idx],
+                    "b2": row[b2_idx],
+                    "b3": row[b3_idx],
+                    "t1": row[t1_idx]
+                })
+            
+            if not all_data:
+                return pd.DataFrame()
+            
+            df = pd.DataFrame(all_data)
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.set_index("date")
+            df = df.sort_index()
+            
+            # Удаляем дубликаты дат
+            duplicates = df.index.duplicated().sum()
+            if duplicates > 0:
+                logger.warning(f"Удалено {duplicates} дубликатов дат в параметрах NS")
+                df = df[~df.index.duplicated(keep='last')]
+            
+            logger.info(f"Загружено {len(df)} параметров Nelson-Siegel")
+            
+            # Сохраняем через callback
+            if save_callback:
+                saved = save_callback(df)
+                logger.info(f"Сохранено {saved} параметров NS в БД")
+                return pd.DataFrame()  # Уже сохранили
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"Ошибка при получении параметров NS: {e}")
             return pd.DataFrame()
-        
-        df = pd.DataFrame(all_data)
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.set_index("date")
-        df = df.sort_index()
-        
-        # Удаляем дубликаты дат (оставляем последнюю запись за день)
-        duplicates = df.index.duplicated().sum()
-        if duplicates > 0:
-            logger.warning(f"Удалено {duplicates} дубликатов дат в параметрах NS")
-            df = df[~df.index.duplicated(keep='last')]
-        
-        logger.info(f"Загружено {len(df)} записей параметров Nelson-Siegel")
-        return df
     
     def fetch_current_zcyc(self) -> Dict[str, Any]:
         """

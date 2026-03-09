@@ -516,9 +516,12 @@ def fetch_ns_params_cached(days: int = 365, force_load: bool = False) -> pd.Data
     """
     Загрузить параметры Nelson-Siegel из БД или MOEX
     
+    ВАЖНО: MOEX zcyc API игнорирует from/till параметры и всегда возвращает
+    всю историю. Поэтому загружаем один раз полностью, потом берём из БД.
+    
     Args:
-        days: Количество дней для загрузки
-        force_load: Принудительная загрузка с MOEX (если БД пуста)
+        days: Количество дней для фильтрации при загрузке из БД
+        force_load: Принудительная загрузка с MOEX
         
     Returns:
         DataFrame с колонками: b1, b2, b3, t1 (индекс = date)
@@ -528,7 +531,7 @@ def fetch_ns_params_cached(days: int = 365, force_load: bool = False) -> pd.Data
     # Проверяем что есть в БД
     ns_count = g_spread_repo.count_ns_params()
     
-    if ns_count > 0:
+    if ns_count > 0 and not force_load:
         # Загружаем из БД
         start_date = date.today() - timedelta(days=days)
         ns_df = g_spread_repo.load_ns_params(start_date=start_date)
@@ -538,28 +541,31 @@ def fetch_ns_params_cached(days: int = 365, force_load: bool = False) -> pd.Data
         if last_date and (date.today() - last_date).days <= 1:
             logger.info(f"NS params из БД: {len(ns_df)} записей")
             return ns_df
+        
+        # Данные есть, но не актуальны - покажем что есть
+        # (обновление будет по кнопке)
+        logger.info(f"NS params из БД (не свежие): {len(ns_df)} записей, последняя {last_date}")
+        return ns_df
     
     # Если БД пуста и не принудительная загрузка - возвращаем пустой
     if ns_count == 0 and not force_load:
         logger.warning("NS params БД пуста. Требуется загрузка с MOEX (~5-10 мин)")
         return pd.DataFrame()
     
-    # Определяем начальную дату для загрузки
-    # Если в БД есть данные - дозагружаем с последней даты
-    last_date = g_spread_repo.get_last_ns_params_date()
-    if last_date:
-        start_date = last_date + timedelta(days=1)
-        logger.info(f"Дозагрузка NS params с {start_date}")
-    else:
-        start_date = date.today() - timedelta(days=days)
-    
-    # Загружаем с MOEX с инкрементальным сохранением
+    # Загружаем с MOEX (всю историю, API не поддерживает фильтрацию!)
     fetcher = get_zcyc_fetcher()
-    ns_df = fetcher.fetch_ns_params_history(
-        start_date=start_date,
-        save_callback=g_spread_repo.save_ns_params,
-        batch_save_size=1000
-    )
+    
+    # Сначала очищаем БД перед полной перезагрузкой
+    if ns_count > 0:
+        logger.info("Очистка старых NS params перед перезагрузкой...")
+        from core.db.connection import get_connection
+        conn = get_connection()
+        conn.execute('DELETE FROM ns_params')
+        conn.commit()
+        conn.close()
+    
+    # Загружаем ОДНИМ запросом (API игнорирует пагинацию)
+    ns_df = fetcher.fetch_ns_params_history(save_callback=g_spread_repo.save_ns_params)
     
     # Если save_callback использовался, ns_df будет пустым
     # Загружаем из БД то, что сохранили
