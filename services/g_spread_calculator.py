@@ -243,18 +243,19 @@ def calculate_g_spread_stats(g_spread_series: pd.Series) -> Dict:
     if clean.empty:
         return {}
     
+    # Используем .item() для гарантии возврата скаляров
     return {
-        'mean': clean.mean(),
-        'median': clean.median(),
-        'std': clean.std(),
-        'min': clean.min(),
-        'max': clean.max(),
-        'p10': clean.quantile(0.10),
-        'p25': clean.quantile(0.25),
-        'p75': clean.quantile(0.75),
-        'p90': clean.quantile(0.90),
-        'current': clean.iloc[-1] if len(clean) > 0 else 0,
-        'count': len(clean)
+        'mean': float(clean.mean()),
+        'median': float(clean.median()),
+        'std': float(clean.std()),
+        'min': float(clean.min()),
+        'max': float(clean.max()),
+        'p10': float(clean.quantile(0.10)),
+        'p25': float(clean.quantile(0.25)),
+        'p75': float(clean.quantile(0.75)),
+        'p90': float(clean.quantile(0.90)),
+        'current': float(clean.iloc[-1]) if len(clean) > 0 else 0.0,
+        'count': int(len(clean))
     }
 
 

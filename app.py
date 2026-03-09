@@ -640,12 +640,20 @@ def calculate_bond_g_spread(
         if 'date' in result_df.columns:
             result_df = result_df.set_index('date')
         
-        # Переименовываем колонки в стандартный формат
+        # Выбираем только нужные колонки и переименовываем
+        # Важно: g_spread_bp уже есть в enrich_bond_data, дублируем через g_spread
         result_df = result_df.rename(columns={
             'ytm': 'ytm_bond',
-            'ytm_theoretical': 'ytm_kbd',
-            'g_spread': 'g_spread_bp'
+            'ytm_theoretical': 'ytm_kbd'
         })
+        
+        # Убираем дубликат g_spread если есть обе колонки
+        if 'g_spread' in result_df.columns and 'g_spread_bp' in result_df.columns:
+            result_df = result_df.drop(columns=['g_spread'])
+        
+        # Оставляем только нужные колонки
+        keep_cols = ['ytm_bond', 'ytm_kbd', 'g_spread_bp', 'duration_years', 'z_score']
+        result_df = result_df[[c for c in keep_cols if c in result_df.columns]]
         
         # Сохраняем в БД
         saved = g_spread_repo.save_g_spreads(isin, result_df)
@@ -1450,7 +1458,11 @@ def main():
                     
                     with col_gs1:
                         if not g_spread_df1.empty:
-                            stats1 = calculate_g_spread_stats(g_spread_df1['g_spread_bp'])
+                            # Гарантируем что g_spread_bp - это Series
+                            gs1_series = g_spread_df1['g_spread_bp']
+                            if isinstance(gs1_series, pd.DataFrame):
+                                gs1_series = gs1_series.iloc[:, 0]
+                            stats1 = calculate_g_spread_stats(gs1_series)
                             current_gs1 = stats1.get('current', 0)
                             signal1 = generate_g_spread_signal(
                                 current_gs1, 
@@ -1468,7 +1480,11 @@ def main():
                     
                     with col_gs2:
                         if not g_spread_df2.empty:
-                            stats2 = calculate_g_spread_stats(g_spread_df2['g_spread_bp'])
+                            # Гарантируем что g_spread_bp - это Series
+                            gs2_series = g_spread_df2['g_spread_bp']
+                            if isinstance(gs2_series, pd.DataFrame):
+                                gs2_series = gs2_series.iloc[:, 0]
+                            stats2 = calculate_g_spread_stats(gs2_series)
                             current_gs2 = stats2.get('current', 0)
                             signal2 = generate_g_spread_signal(
                                 current_gs2, 
