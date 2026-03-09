@@ -169,6 +169,7 @@ def calculate_g_spread_history(
                      индекс = date
         ns_params_df: DataFrame с колонками ['b1', 'b2', 'b3', 't1']
                       индекс = date
+                      ВАЖНО: b1, b2, b3 в базисных пунктах от MOEX!
                       
     Returns:
         DataFrame с колонками:
@@ -204,12 +205,18 @@ def calculate_g_spread_history(
     # Рассчитываем duration в годах
     merged['duration_years'] = merged['duration_days'] / 365.25
     
+    # Конвертируем параметры NS из базисных пунктов в проценты
+    # MOEX возвращает b1, b2, b3 в базисных пунктах
+    b1_pct = merged['b1'] / 100.0
+    b2_pct = merged['b2'] / 100.0
+    b3_pct = merged['b3'] / 100.0
+    
     # Рассчитываем YTM по КБД
     merged['ytm_kbd'] = nelson_siegel_vectorized(
         merged['duration_years'].values,
-        merged['b1'].values,
-        merged['b2'].values,
-        merged['b3'].values,
+        b1_pct.values,
+        b2_pct.values,
+        b3_pct.values,
         merged['t1'].values
     )
     
@@ -220,7 +227,7 @@ def calculate_g_spread_history(
     # Возвращаем только нужные колонки
     result = merged[['ytm_bond', 'duration_years', 'ytm_kbd', 'g_spread_bp']].copy()
     
-    logger.info(f"Рассчитано {len(result)} значений G-spread")
+    logger.info(f"Рассчитано {len(result)} значений G-sread")
     
     return result
 
@@ -371,12 +378,18 @@ def enrich_bond_data(
     if 'b1' in df_kbd_params.columns and 'b2' in df_kbd_params.columns:
         if 'b3' in df_kbd_params.columns and 't1' in df_kbd_params.columns:
             # MOEX format: b1=b0, b2=b1, b3=b2, t1=tau
+            # ВАЖНО: MOEX возвращает параметры в базисных пунктах!
+            # Нужно конвертировать в проценты (делим на 100)
             df_kbd_params = df_kbd_params.rename(columns={
                 'b1': 'b0',
                 'b2': 'b1', 
                 'b3': 'b2',
                 't1': 'tau'
             })
+            # Конвертируем из базисных пунктов в проценты
+            for col in ['b0', 'b1', 'b2']:
+                if col in df_kbd_params.columns:
+                    df_kbd_params[col] = df_kbd_params[col] / 100.0
     
     # 3. Синхронизируем данные по дате
     df = pd.merge(df_bond, df_kbd_params, on='date', how='inner').sort_values('date')

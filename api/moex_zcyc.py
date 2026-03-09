@@ -53,8 +53,8 @@ class ZCYCFetcher:
     
     MOEX_BASE_URL = "https://iss.moex.com/iss"
     
-    # Дата начала истории КБД на MOEX
-    ZCYC_HISTORY_START = date(2014, 1, 6)
+    # По умолчанию загружаем 2 года истории
+    DEFAULT_HISTORY_DAYS = 730  # ~500 торговых дней
     
     def __init__(self, timeout: int = 30, max_retries: int = 3, request_delay: float = 0.1):
         """
@@ -145,6 +145,7 @@ class ZCYCFetcher:
         self,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
+        days: Optional[int] = None,
         save_callback=None,
         progress_callback=None,
         batch_size: int = 100
@@ -158,8 +159,9 @@ class ZCYCFetcher:
         Сохраняет инкрементально батчами (по умолчанию каждые 100 дней).
         
         Args:
-            start_date: Начальная дата (по умолчанию 2014-01-06)
+            start_date: Начальная дата (по умолчанию 2 года назад)
             end_date: Конечная дата (по умолчанию сегодня)
+            days: Количество дней для загрузки (альтернатива start_date, по умолчанию 730)
             save_callback: Функция для сохранения (df -> int)
             progress_callback: Функция для прогресса (current, total, date)
             batch_size: Размер батча для инкрементального сохранения
@@ -167,10 +169,15 @@ class ZCYCFetcher:
         Returns:
             DataFrame с колонками: date, b1, b2, b3, t1
         """
-        if start_date is None:
-            start_date = self.ZCYC_HISTORY_START
         if end_date is None:
             end_date = date.today()
+        
+        if start_date is None:
+            # Используем days или значение по умолчанию (2 года)
+            history_days = days or self.DEFAULT_HISTORY_DAYS
+            start_date = end_date - timedelta(days=history_days)
+        
+        logger.info(f"Период загрузки: {start_date} -- {end_date}")
         
         # Генерируем список торговых дней (без выходных)
         trading_days = []

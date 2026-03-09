@@ -537,15 +537,16 @@ def fetch_ns_params_cached(days: int = 365, force_load: bool = False) -> pd.Data
     return ns_df
 
 
-def fetch_ns_params_from_moex(progress_callback=None) -> int:
+def fetch_ns_params_from_moex(progress_callback=None, days: int = 730) -> int:
     """
     Загрузить параметры Nelson-Siegel с MOEX в БД
     
-    Загружает данные ПО ДНЯМ с 2014-01-06 по текущую дату.
-    Занимает ~5-10 минут для полной истории (~2900 дней).
+    Загружает данные ПО ДНЯМ за указанный период (по умолчанию 2 года).
+    Занимает ~1 минуту для 2 лет (~500 торговых дней).
     
     Args:
         progress_callback: Функция для отображения прогресса (current, total, date)
+        days: Количество дней для загрузки (по умолчанию 730 = 2 года)
         
     Returns:
         Количество загруженных записей
@@ -561,15 +562,16 @@ def fetch_ns_params_from_moex(progress_callback=None) -> int:
         start_date = last_date + timedelta(days=1)
         logger.info(f"Возобновление загрузки с {start_date} (последняя дата в БД: {last_date})")
     else:
-        # Загружаем с начала истории
-        start_date = None  # Используется ZCYC_HISTORY_START (2014-01-06)
-        logger.info("Начало полной загрузки с 2014-01-06")
+        # Загружаем последние N дней
+        start_date = None  # Будет использоваться days параметр
+        logger.info(f"Начало загрузки за последние {days} дней")
     
     # Загружаем с MOEX по дням
     ns_df = fetcher.fetch_ns_params_history(
         start_date=start_date,
         save_callback=g_spread_repo.save_ns_params,
-        progress_callback=progress_callback
+        progress_callback=progress_callback,
+        days=days
     )
     
     return g_spread_repo.count_ns_params()
