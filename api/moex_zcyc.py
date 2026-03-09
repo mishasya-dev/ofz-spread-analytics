@@ -62,7 +62,9 @@ class ZCYCFetcher:
     def fetch_ns_params_history(
         self,
         start_date: Optional[date] = None,
-        end_date: Optional[date] = None
+        end_date: Optional[date] = None,
+        save_callback=None,
+        batch_save_size: int = 1000
     ) -> pd.DataFrame:
         """
         Получить исторические параметры Nelson-Siegel
@@ -79,6 +81,8 @@ class ZCYCFetcher:
         Args:
             start_date: Начальная дата
             end_date: Конечная дата
+            save_callback: Функция для инкрементального сохранения (df -> int)
+            batch_save_size: Сохранять каждые N записей
             
         Returns:
             DataFrame с колонками: date, b1, b2, b3, t1
@@ -91,6 +95,7 @@ class ZCYCFetcher:
         all_data = []
         start = 0
         batch_size = 500
+        total_saved = 0
         
         while True:
             url = f"{self.MOEX_BASE_URL}/history/engines/stock/zcyc.json"
@@ -140,6 +145,16 @@ class ZCYCFetcher:
                         "t1": row[t1_idx]
                     })
                 
+                # Инкрементальное сохранение
+                if save_callback and len(all_data) >= batch_save_size:
+                    df_batch = pd.DataFrame(all_data)
+                    df_batch["date"] = pd.to_datetime(df_batch["date"])
+                    df_batch = df_batch.set_index("date")
+                    saved = save_callback(df_batch)
+                    total_saved += saved
+                    logger.info(f"Инкрементально сохранено {saved} записей (всего {total_saved})")
+                    all_data = []  # Очищаем буфер
+                
                 if len(rows) < batch_size:
                     break
                     
@@ -147,7 +162,25 @@ class ZCYCFetcher:
                 
             except Exception as e:
                 logger.error(f"Ошибка при получении параметров NS: {e}")
+                # Сохраняем то, что успели загрузить
+                if save_callback and all_data:
+                    df_batch = pd.DataFrame(all_data)
+                    df_batch["date"] = pd.to_datetime(df_batch["date"])
+                    df_batch = df_batch.set_index("date")
+                    saved = save_callback(df_batch)
+                    total_saved += saved
+                    logger.info(f"При разрыве сохранено {saved} записей (всего {total_saved})")
                 break
+        
+        # Сохраняем остаток
+        if save_callback and all_data:
+            df_batch = pd.DataFrame(all_data)
+            df_batch["date"] = pd.to_datetime(df_batch["date"])
+            df_batch = df_batch.set_index("date")
+            saved = save_callback(df_batch)
+            total_saved += saved
+            logger.info(f"Финальное сохранение: {saved} записей (всего {total_saved})")
+            return pd.DataFrame()  # Возвращаем пустой, т.к. уже сохранили
         
         if not all_data:
             return pd.DataFrame()

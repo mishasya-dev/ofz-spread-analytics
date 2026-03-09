@@ -543,15 +543,28 @@ def fetch_ns_params_cached(days: int = 365, force_load: bool = False) -> pd.Data
         logger.warning("NS params БД пуста. Требуется загрузка с MOEX (~5-10 мин)")
         return pd.DataFrame()
     
-    # Загружаем с MOEX (медленно!)
-    fetcher = get_zcyc_fetcher()
-    start_date = date.today() - timedelta(days=days)
-    ns_df = fetcher.fetch_ns_params_history(start_date=start_date)
+    # Определяем начальную дату для загрузки
+    # Если в БД есть данные - дозагружаем с последней даты
+    last_date = g_spread_repo.get_last_ns_params_date()
+    if last_date:
+        start_date = last_date + timedelta(days=1)
+        logger.info(f"Дозагрузка NS params с {start_date}")
+    else:
+        start_date = date.today() - timedelta(days=days)
     
-    if not ns_df.empty:
-        # Сохраняем в БД
-        saved = g_spread_repo.save_ns_params(ns_df)
-        logger.info(f"Сохранено {saved} NS params в БД")
+    # Загружаем с MOEX с инкрементальным сохранением
+    fetcher = get_zcyc_fetcher()
+    ns_df = fetcher.fetch_ns_params_history(
+        start_date=start_date,
+        save_callback=g_spread_repo.save_ns_params,
+        batch_save_size=1000
+    )
+    
+    # Если save_callback использовался, ns_df будет пустым
+    # Загружаем из БД то, что сохранили
+    if ns_df.empty and g_spread_repo.count_ns_params() > 0:
+        start_date = date.today() - timedelta(days=days)
+        ns_df = g_spread_repo.load_ns_params(start_date=start_date)
     
     return ns_df
 
