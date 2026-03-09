@@ -146,7 +146,8 @@ class ZCYCFetcher:
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
         save_callback=None,
-        progress_callback=None
+        progress_callback=None,
+        batch_size: int = 100
     ) -> pd.DataFrame:
         """
         Получить исторические параметры Nelson-Siegel
@@ -154,11 +155,14 @@ class ZCYCFetcher:
         Загружает данные ПО ДНЯМ через отдельные запросы к API.
         MOEX API для /history/engines/stock/zcyc ИГНОРИРУЕТ from/till.
         
+        Сохраняет инкрементально батчами (по умолчанию каждые 100 дней).
+        
         Args:
             start_date: Начальная дата (по умолчанию 2014-01-06)
             end_date: Конечная дата (по умолчанию сегодня)
             save_callback: Функция для сохранения (df -> int)
             progress_callback: Функция для прогресса (current, total, date)
+            batch_size: Размер батча для инкрементального сохранения
             
         Returns:
             DataFrame с колонками: date, b1, b2, b3, t1
@@ -180,44 +184,64 @@ class ZCYCFetcher:
         logger.info(f"Загрузка NS параметров за {len(trading_days)} дней")
         
         all_params = []
+        batch_params = []  # Буфер для батча
         total = len(trading_days)
+        total_saved = 0
         
         for i, day in enumerate(trading_days):
             ns = self.fetch_ns_params_by_date(day)
             if ns:
-                all_params.append({
+                row = {
                     "date": ns.date,
                     "b1": ns.b1,
                     "b2": ns.b2,
                     "b3": ns.b3,
                     "t1": ns.t1
-                })
+                }
+                all_params.append(row)
+                batch_params.append(row)
             
-            # Прогресс
-            if progress_callback and (i % 10 == 0 or i == total - 1):
+            # Инкрементальное сохранение батчами
+            if save_callback and len(batch_params) >= batch_size:
+                df_batch = pd.DataFrame(batch_params)
+                df_batch["date"] = pd.to_datetime(df_batch["date"])
+                df_batch = df_batch.set_index("date")
+                saved = save_callback(df_batch)
+                total_saved += saved
+                logger.info(f"Сохранено батч: {saved} записей (всего: {total_saved})")
+                batch_params = []  # Сбрасываем буфер
+            
+            # Прогресс (каждые 50 дней или в конце)
+            if progress_callback and (i % 50 == 0 or i == total - 1):
                 progress_callback(i + 1, total, day)
             
             # Задержка для не DDOS
             if i < total - 1:
                 time_module.sleep(self.request_delay)
         
+        # Сохраняем остаток
+        if save_callback and batch_params:
+            df_batch = pd.DataFrame(batch_params)
+            df_batch["date"] = pd.to_datetime(df_batch["date"])
+            df_batch = df_batch.set_index("date")
+            saved = save_callback(df_batch)
+            total_saved += saved
+            logger.info(f"Сохранен последний батч: {saved} записей (всего: {total_saved})")
+        
         if not all_params:
             logger.warning("Не удалось загрузить ни одного параметра NS")
             return pd.DataFrame()
+        
+        logger.info(f"Загружено {len(all_params)} параметров Nelson-Siegel, сохранено: {total_saved}")
+        
+        # Возвращаем полный DataFrame только если нет save_callback
+        if save_callback:
+            return pd.DataFrame()  # Уже сохранили
         
         df = pd.DataFrame(all_params)
         df["date"] = pd.to_datetime(df["date"])
         df = df.set_index("date")
         df = df.sort_index()
-        
-        logger.info(f"Загружено {len(df)} параметров Nelson-Siegel")
-        
-        # Сохраняем через callback
-        if save_callback:
-            saved = save_callback(df)
-            logger.info(f"Сохранено {saved} параметров NS в БД")
-            return pd.DataFrame()  # Уже сохранили
-        
         return df
     
     def fetch_ns_params_incremental(
