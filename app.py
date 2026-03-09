@@ -33,7 +33,8 @@ from api.moex_zcyc import ZCYCFetcher
 from services.g_spread_calculator import (
     calculate_g_spread_history,
     calculate_g_spread_stats,
-    generate_g_spread_signal
+    generate_g_spread_signal,
+    enrich_bond_data  # С Z-Score и ADF тестом
 )
 from core.db import get_g_spread_repo, init_database
 from version import format_version_badge
@@ -572,18 +573,20 @@ def fetch_ns_params_cached(days: int = 365, force_load: bool = False) -> pd.Data
 def calculate_bond_g_spread(
     isin: str,
     daily_df: pd.DataFrame,
-    ns_params_df: pd.DataFrame
-) -> pd.DataFrame:
+    ns_params_df: pd.DataFrame,
+    window: int = 30
+) -> Tuple[pd.DataFrame, float]:
     """
-    Рассчитать G-spread для облигации
+    Рассчитать G-spread для облигации с Z-Score и ADF тестом
     
     Args:
         isin: ISIN облигации
-        daily_df: DataFrame с YTM облигации
+        daily_df: DataFrame с YTM облигации (колонки: ytm, duration_days)
         ns_params_df: DataFrame с параметрами Nelson-Siegel
+        window: Окно для rolling Z-Score
         
     Returns:
-        DataFrame с G-spread данными
+        (DataFrame с G-spread, p_value ADF теста)
     """
     g_spread_repo = get_g_spread_repo()
     
@@ -595,32 +598,54 @@ def calculate_bond_g_spread(
         last_date = g_spread_repo.get_last_g_spread_date(isin)
         if last_date and (date.today() - last_date).days <= 1:
             logger.info(f"G-spread из БД для {isin}: {len(g_spread_df)} записей")
-            return g_spread_df
+            return g_spread_df, 0.0  # p-value из кэша не храним
     
     # Рассчитываем
     if daily_df.empty or ns_params_df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(), 1.0
     
-    # Подготовка данных для расчёта
-    # Нужно: ytm, duration_days
-    if 'ytm' not in daily_df.columns:
-        return pd.DataFrame()
-    
-    # Если duration нет, используем примерное значение (лет до погашения)
+    # Подготовка данных для enrich_bond_data
+    # Нужно: date (колонка или индекс), ytm, duration
     bond_data = daily_df.copy()
+    
+    # Если duration нет, используем примерное значение
     if 'duration_days' not in bond_data.columns:
-        # Примерная дюрация ≈ срок до погашения (можно уточнить)
         bond_data['duration_days'] = 365.25 * 5  # По умолчанию 5 лет
     
-    # Объединяем с NS params
-    g_spread_df = calculate_g_spread_history(bond_data, ns_params_df)
+    bond_data['duration'] = bond_data['duration_days']
+    
+    # Сбрасываем индекс если нужно
+    if bond_data.index.name == 'date' or bond_data.index.name is None:
+        bond_data = bond_data.reset_index()
+        if 'index' in bond_data.columns:
+            bond_data = bond_data.rename(columns={'index': 'date'})
+    
+    # NS params: переименовываем для enrich_bond_data
+    ns_data = ns_params_df.copy()
+    if ns_data.index.name == 'date' or ns_data.index.name is None:
+        ns_data = ns_data.reset_index()
+        if 'index' in ns_data.columns:
+            ns_data = ns_data.rename(columns={'index': 'date'})
+    
+    # Вызываем enrich_bond_data с Z-Score и ADF тестом
+    g_spread_df, p_value = enrich_bond_data(bond_data, ns_data, window=window)
     
     if not g_spread_df.empty:
+        # Преобразуем в формат для сохранения
+        save_df = g_spread_df.copy()
+        if 'date' in save_df.columns:
+            save_df = save_df.set_index('date')
+        save_df = save_df.rename(columns={
+            'ytm': 'ytm_bond',
+            'ytm_theoretical': 'ytm_kbd',
+            'g_spread': 'g_spread_bp'
+        })
+        
         # Сохраняем в БД
-        saved = g_spread_repo.save_g_spreads(isin, g_spread_df)
-        logger.info(f"Сохранено {saved} G-spread для {isin}")
+        saved = g_spread_repo.save_g_spreads(isin, save_df)
+        logger.info(f"Сохранено {saved} G-spread для {isin}, ADF p-value: {p_value:.4f}")
     
-    return g_spread_df
+    return g_spread_df, p_value
 
 
 def calculate_spread_stats(spread_series: pd.Series) -> Dict:
