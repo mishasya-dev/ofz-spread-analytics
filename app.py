@@ -633,21 +633,27 @@ def calculate_bond_g_spread(
     g_spread_df, p_value = enrich_bond_data(bond_data, ns_data, window=window)
     
     if not g_spread_df.empty:
-        # Преобразуем в формат для сохранения
-        save_df = g_spread_df.copy()
-        if 'date' in save_df.columns:
-            save_df = save_df.set_index('date')
-        save_df = save_df.rename(columns={
+        # Преобразуем в формат для сохранения и UI
+        result_df = g_spread_df.copy()
+        
+        # Устанавливаем date как индекс если это колонка
+        if 'date' in result_df.columns:
+            result_df = result_df.set_index('date')
+        
+        # Переименовываем колонки в стандартный формат
+        result_df = result_df.rename(columns={
             'ytm': 'ytm_bond',
             'ytm_theoretical': 'ytm_kbd',
             'g_spread': 'g_spread_bp'
         })
         
         # Сохраняем в БД
-        saved = g_spread_repo.save_g_spreads(isin, save_df)
+        saved = g_spread_repo.save_g_spreads(isin, result_df)
         logger.info(f"Сохранено {saved} G-spread для {isin}, ADF p-value: {p_value:.4f}")
+        
+        return result_df, p_value
     
-    return g_spread_df, p_value
+    return pd.DataFrame(), 1.0
 
 
 def calculate_spread_stats(spread_series: pd.Series) -> Dict:
