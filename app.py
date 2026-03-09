@@ -511,12 +511,13 @@ def get_zcyc_fetcher():
 
 
 @st.cache_data(ttl=3600)  # Кэш на 1 час
-def fetch_ns_params_cached(days: int = 365) -> pd.DataFrame:
+def fetch_ns_params_cached(days: int = 365, force_load: bool = False) -> pd.DataFrame:
     """
     Загрузить параметры Nelson-Siegel из БД или MOEX
     
     Args:
         days: Количество дней для загрузки
+        force_load: Принудительная загрузка с MOEX (если БД пуста)
         
     Returns:
         DataFrame с колонками: b1, b2, b3, t1 (индекс = date)
@@ -537,7 +538,12 @@ def fetch_ns_params_cached(days: int = 365) -> pd.DataFrame:
             logger.info(f"NS params из БД: {len(ns_df)} записей")
             return ns_df
     
-    # Загружаем с MOEX
+    # Если БД пуста и не принудительная загрузка - возвращаем пустой
+    if ns_count == 0 and not force_load:
+        logger.warning("NS params БД пуста. Требуется загрузка с MOEX (~5-10 мин)")
+        return pd.DataFrame()
+    
+    # Загружаем с MOEX (медленно!)
     fetcher = get_zcyc_fetcher()
     start_date = date.today() - timedelta(days=days)
     ns_df = fetcher.fetch_ns_params_history(start_date=start_date)
@@ -1327,21 +1333,53 @@ def main():
         Y(t) = b₁ + b₂·f₁(t) + b₃·f₂(t)
         """)
         
-        # Кнопка загрузки NS параметров
+        # Проверяем наличие данных NS в БД
+        g_spread_repo = get_g_spread_repo()
+        ns_count = g_spread_repo.count_ns_params()
+        
+        # UI для загрузки
         col_ns_refresh, col_ns_status = st.columns([1, 3])
-        with col_ns_refresh:
-            ns_refresh_clicked = st.button("🔄 Загрузить КБД", key="refresh_ns_params")
+        
+        if ns_count == 0:
+            # Данных нет - предупреждение и кнопка загрузки
+            st.warning("⚠️ **Параметры КБД не загружены.** Первая загрузка займёт ~5-10 минут.")
+            
+            with col_ns_refresh:
+                if st.button("📥 Загрузить КБД (~5-10 мин)", key="load_ns_params", type="primary"):
+                    st.session_state.loading_ns = True
+                    st.rerun()
+            
+            # Если нажали кнопку - загружаем
+            if st.session_state.get('loading_ns', False):
+                with st.spinner("Загрузка параметров Nelson-Siegel с MOEX... Это займет 5-10 минут."):
+                    ns_params_df = fetch_ns_params_cached(period, force_load=True)
+                    if not ns_params_df.empty:
+                        st.success(f"✅ Загружено {len(ns_params_df)} точек КБД")
+                        st.session_state.loading_ns = False
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.error("Ошибка загрузки КБД")
+                        st.session_state.loading_ns = False
+            
+            ns_params_df = pd.DataFrame()  # Пустой, чтобы не блокировать UI
+        else:
+            # Данные есть - показываем статус
+            with col_ns_status:
+                last_ns_date = g_spread_repo.get_last_ns_params_date()
+                st.caption(f"✅ КБД: {ns_count} записей, последняя: {last_ns_date}")
+            
+            with col_ns_refresh:
+                ns_refresh_clicked = st.button("🔄 Обновить КБД", key="refresh_ns_params")
+            
+            # Загружаем из БД (быстро)
+            ns_params_df = fetch_ns_params_cached(period)
         
         try:
-            # Загружаем параметры NS
-            ns_params_df = fetch_ns_params_cached(period)
-            
-            if ns_params_df.empty:
-                st.warning("⚠️ Не удалось загрузить параметры КБД. Попробуйте обновить.")
+            if ns_params_df.empty and ns_count == 0:
+                # Не показываем ошибку если данные просто не загружены
+                st.info("👆 Нажмите 'Загрузить КБД' для начала работы с G-Spread анализом.")
             else:
-                with col_ns_status:
-                    st.caption(f"✅ Загружено {len(ns_params_df)} точек КБД")
-                
                 # Рассчитываем G-spread для обеих облигаций
                 g_spread_df1 = calculate_bond_g_spread(bond1.isin, daily_df1, ns_params_df)
                 g_spread_df2 = calculate_bond_g_spread(bond2.isin, daily_df2, ns_params_df)
