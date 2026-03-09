@@ -2,21 +2,30 @@
 Получение параметров Nelson-Siegel (КБД) с Мосбиржи
 
 MOEX ISS API endpoints:
-- /history/engines/stock/zcyc — исторические параметры NS
-- /engines/stock/zcyc — текущие параметры КБД
+- /engines/stock/zcyc?date=YYYY-MM-DD — параметры NS за конкретную дату (ОДНА строка)
+- /history/engines/stock/zcyc — тиковые данные за текущий день (НЕ исторические!)
 - /engines/stock/zcyc/securities — текущие YTM по КБД для облигаций
+
+ВАЖНО: MOEX API для zcyc:
+- ИГНОРИРУЕТ параметры from/till (фильтрация по датам)
+- ИГНОРИРУЕТ параметр start (пагинация)
+- ПРИНИМАЕТ параметр date=YYYY-MM-DD для получения данных за конкретный день
+
+Поэтому исторические данные загружаются ПО ДНЯМ через отдельные запросы.
 
 Формула Nelson-Siegel:
 Y(t) = b1 + b2 * f1(t) + b3 * f2(t)
 
 где:
 - t = duration (срок до погашения в годах)
-- b1 = долгосрочный уровень ставки (base level)
-- b2 = краткосрочный наклон (short-term slope)
-- b3 = кривизна (curvature)
-- tau (t1) = масштаб времени
+- b1 (B1) = долгосрочный уровень ставки (base level) — в базисных пунктах!
+- b2 (B2) = краткосрочный наклон (short-term slope)
+- b3 (B3) = кривизна (curvature)
+- tau (T1) = масштаб времени
 - f1(t) = (1 - exp(-t/tau)) / (t/tau)
 - f2(t) = f1(t) - exp(-t/tau)
+
+ПРИМЕЧАНИЕ: B1 возвращается в базисных пунктах, нужно делить на 100 для расчетов!
 """
 import requests
 import pandas as pd
@@ -44,118 +53,205 @@ class ZCYCFetcher:
     
     MOEX_BASE_URL = "https://iss.moex.com/iss"
     
-    def __init__(self, timeout: int = 30, max_retries: int = 3):
+    # Дата начала истории КБД на MOEX
+    ZCYC_HISTORY_START = date(2014, 1, 6)
+    
+    def __init__(self, timeout: int = 30, max_retries: int = 3, request_delay: float = 0.1):
         """
         Инициализация
         
         Args:
             timeout: Таймаут запроса в секундах
             max_retries: Максимальное количество повторных попыток
+            request_delay: Задержка между запросами (для batch загрузки)
         """
         self.timeout = timeout
         self.max_retries = max_retries
+        self.request_delay = request_delay
         self._session = requests.Session()
         self._session.headers.update({
             "User-Agent": "OFZ-Analytics/1.0"
         })
     
-    def fetch_ns_params_history(
-        self,
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None,
-        save_callback=None
-    ) -> pd.DataFrame:
+    def fetch_ns_params_by_date(self, target_date: date) -> Optional[NSParams]:
         """
-        Получить исторические параметры Nelson-Siegel
+        Получить параметры Nelson-Siegel за конкретную дату
         
-        Endpoint: /history/engines/stock/zcyc
+        Endpoint: /engines/stock/zcyc?date=YYYY-MM-DD
         
-        ВАЖНО: MOEX API для zcyc ИГНОРИРУЕТ параметры:
-        - from/till (фильтрация по датам)
-        - start (пагинация)
-        
-        Поэтому загрузка происходит ОДНИМ запросом (вся история).
-        
-        MOEX возвращает параметры NS во внутреннем формате:
-        - B1, B2, B3 — параметры кривой (НЕ проценты!)
-        - T1 — параметр масштаба времени (tau)
+        Возвращает ОДНУ строку с параметрами NS на конец дня.
         
         Args:
-            start_date: Игнорируется API (для совместимости)
-            end_date: Игнорируется API (для совместимости)
-            save_callback: Функция для сохранения (df -> int)
+            target_date: Дата для получения параметров
             
         Returns:
-            DataFrame с колонками: date, b1, b2, b3, t1
+            NSParams или None если нет данных
         """
-        url = f"{self.MOEX_BASE_URL}/history/engines/stock/zcyc.json"
-        params = {"iss.meta": "off"}
+        url = f"{self.MOEX_BASE_URL}/engines/stock/zcyc.json"
+        params = {
+            "iss.meta": "off",
+            "date": target_date.strftime("%Y-%m-%d")
+        }
         
         try:
             response = self._make_request(url, params)
             data = response.json()
             
-            # Данные приходят в ключе 'params'
             params_data = data.get("params", {})
             columns = params_data.get("columns", [])
             rows = params_data.get("data", [])
             
             if not rows:
-                return pd.DataFrame()
+                logger.debug(f"Нет данных NS за {target_date}")
+                return None
             
-            # Находим индексы нужных колонок
+            # Берем последнюю строку (конец дня)
+            row = rows[-1]
+            
+            # Находим индексы колонок
             try:
                 date_idx = columns.index('tradedate')
-                b1_idx = columns.index('b1')
-                b2_idx = columns.index('b2')
-                b3_idx = columns.index('b3')
-                t1_idx = columns.index('t1')
+                b1_idx = columns.index('B1')  # Важно: B1 (заглавные!)
+                b2_idx = columns.index('B2')
+                b3_idx = columns.index('B3')
+                t1_idx = columns.index('T1')
             except ValueError as e:
-                logger.warning(f"Required columns not found: {e}")
-                logger.warning(f"Available columns: {columns}")
-                return pd.DataFrame()
+                # Пробуем строчные
+                try:
+                    b1_idx = columns.index('b1')
+                    b2_idx = columns.index('b2')
+                    b3_idx = columns.index('b3')
+                    t1_idx = columns.index('t1')
+                except ValueError:
+                    logger.warning(f"Колонки NS не найдены. Available: {columns}")
+                    return None
             
-            # Преобразуем в нужный формат
-            all_data = []
-            for row in rows:
-                if row[b1_idx] is None or row[t1_idx] is None:
-                    continue
-                
-                all_data.append({
-                    "date": row[date_idx],
-                    "b1": row[b1_idx],
-                    "b2": row[b2_idx],
-                    "b3": row[b3_idx],
-                    "t1": row[t1_idx]
-                })
+            if row[b1_idx] is None or row[t1_idx] is None:
+                return None
             
-            if not all_data:
-                return pd.DataFrame()
-            
-            df = pd.DataFrame(all_data)
-            df["date"] = pd.to_datetime(df["date"])
-            df = df.set_index("date")
-            df = df.sort_index()
-            
-            # Удаляем дубликаты дат
-            duplicates = df.index.duplicated().sum()
-            if duplicates > 0:
-                logger.warning(f"Удалено {duplicates} дубликатов дат в параметрах NS")
-                df = df[~df.index.duplicated(keep='last')]
-            
-            logger.info(f"Загружено {len(df)} параметров Nelson-Siegel")
-            
-            # Сохраняем через callback
-            if save_callback:
-                saved = save_callback(df)
-                logger.info(f"Сохранено {saved} параметров NS в БД")
-                return pd.DataFrame()  # Уже сохранили
-            
-            return df
+            return NSParams(
+                date=target_date,
+                b1=row[b1_idx],
+                b2=row[b2_idx],
+                b3=row[b3_idx],
+                t1=row[t1_idx]
+            )
             
         except Exception as e:
-            logger.error(f"Ошибка при получении параметров NS: {e}")
+            logger.error(f"Ошибка при получении NS за {target_date}: {e}")
+            return None
+    
+    def fetch_ns_params_history(
+        self,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        save_callback=None,
+        progress_callback=None
+    ) -> pd.DataFrame:
+        """
+        Получить исторические параметры Nelson-Siegel
+        
+        Загружает данные ПО ДНЯМ через отдельные запросы к API.
+        MOEX API для /history/engines/stock/zcyc ИГНОРИРУЕТ from/till.
+        
+        Args:
+            start_date: Начальная дата (по умолчанию 2014-01-06)
+            end_date: Конечная дата (по умолчанию сегодня)
+            save_callback: Функция для сохранения (df -> int)
+            progress_callback: Функция для прогресса (current, total, date)
+            
+        Returns:
+            DataFrame с колонками: date, b1, b2, b3, t1
+        """
+        if start_date is None:
+            start_date = self.ZCYC_HISTORY_START
+        if end_date is None:
+            end_date = date.today()
+        
+        # Генерируем список торговых дней (без выходных)
+        trading_days = []
+        current = start_date
+        while current <= end_date:
+            # Пропускаем выходные
+            if current.weekday() < 5:  # 0-4 = пн-пт
+                trading_days.append(current)
+            current += timedelta(days=1)
+        
+        logger.info(f"Загрузка NS параметров за {len(trading_days)} дней")
+        
+        all_params = []
+        total = len(trading_days)
+        
+        for i, day in enumerate(trading_days):
+            ns = self.fetch_ns_params_by_date(day)
+            if ns:
+                all_params.append({
+                    "date": ns.date,
+                    "b1": ns.b1,
+                    "b2": ns.b2,
+                    "b3": ns.b3,
+                    "t1": ns.t1
+                })
+            
+            # Прогресс
+            if progress_callback and (i % 10 == 0 or i == total - 1):
+                progress_callback(i + 1, total, day)
+            
+            # Задержка для не DDOS
+            if i < total - 1:
+                time_module.sleep(self.request_delay)
+        
+        if not all_params:
+            logger.warning("Не удалось загрузить ни одного параметра NS")
             return pd.DataFrame()
+        
+        df = pd.DataFrame(all_params)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date")
+        df = df.sort_index()
+        
+        logger.info(f"Загружено {len(df)} параметров Nelson-Siegel")
+        
+        # Сохраняем через callback
+        if save_callback:
+            saved = save_callback(df)
+            logger.info(f"Сохранено {saved} параметров NS в БД")
+            return pd.DataFrame()  # Уже сохранили
+        
+        return df
+    
+    def fetch_ns_params_incremental(
+        self,
+        last_date: date,
+        save_callback=None,
+        progress_callback=None
+    ) -> pd.DataFrame:
+        """
+        Получить параметры NS инкрементально (с last_date + 1 до сегодня)
+        
+        Используется для ежедневного обновления БД.
+        
+        Args:
+            last_date: Последняя дата в БД
+            save_callback: Функция для сохранения
+            progress_callback: Функция для прогресса
+            
+        Returns:
+            DataFrame с новыми параметрами NS
+        """
+        start_date = last_date + timedelta(days=1)
+        end_date = date.today()
+        
+        if start_date > end_date:
+            logger.info("Данные уже актуальны")
+            return pd.DataFrame()
+        
+        return self.fetch_ns_params_history(
+            start_date=start_date,
+            end_date=end_date,
+            save_callback=save_callback,
+            progress_callback=progress_callback
+        )
     
     def fetch_current_zcyc(self) -> Dict[str, Any]:
         """

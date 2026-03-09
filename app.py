@@ -514,48 +514,47 @@ def get_zcyc_fetcher():
 @st.cache_data(ttl=3600)  # Кэш на 1 час
 def fetch_ns_params_cached(days: int = 365, force_load: bool = False) -> pd.DataFrame:
     """
-    Загрузить параметры Nelson-Siegel из БД или MOEX
+    Загрузить параметры Nelson-Siegel из БД (БЕЗ MOEX загрузки!)
     
-    ВАЖНО: MOEX zcyc API игнорирует from/till параметры и всегда возвращает
-    всю историю. Поэтому загружаем один раз полностью, потом берём из БД.
+    Для загрузки с MOEX используйте fetch_ns_params_from_moex()
     
     Args:
         days: Количество дней для фильтрации при загрузке из БД
-        force_load: Принудительная загрузка с MOEX
+        force_load: Игнорируется (для совместимости)
         
     Returns:
         DataFrame с колонками: b1, b2, b3, t1 (индекс = date)
     """
     g_spread_repo = get_g_spread_repo()
     
-    # Проверяем что есть в БД
-    ns_count = g_spread_repo.count_ns_params()
+    # Загружаем из БД
+    start_date = date.today() - timedelta(days=days)
+    ns_df = g_spread_repo.load_ns_params(start_date=start_date)
     
-    if ns_count > 0 and not force_load:
-        # Загружаем из БД
-        start_date = date.today() - timedelta(days=days)
-        ns_df = g_spread_repo.load_ns_params(start_date=start_date)
+    if not ns_df.empty:
+        logger.info(f"NS params из БД: {len(ns_df)} записей")
+    
+    return ns_df
+
+
+def fetch_ns_params_from_moex(progress_callback=None) -> int:
+    """
+    Загрузить параметры Nelson-Siegel с MOEX в БД
+    
+    Загружает данные ПО ДНЯМ с 2014-01-06 по текущую дату.
+    Занимает ~5-10 минут для полной истории (~2900 дней).
+    
+    Args:
+        progress_callback: Функция для отображения прогресса (current, total, date)
         
-        # Проверяем актуальность
-        last_date = g_spread_repo.get_last_ns_params_date()
-        if last_date and (date.today() - last_date).days <= 1:
-            logger.info(f"NS params из БД: {len(ns_df)} записей")
-            return ns_df
-        
-        # Данные есть, но не актуальны - покажем что есть
-        # (обновление будет по кнопке)
-        logger.info(f"NS params из БД (не свежие): {len(ns_df)} записей, последняя {last_date}")
-        return ns_df
-    
-    # Если БД пуста и не принудительная загрузка - возвращаем пустой
-    if ns_count == 0 and not force_load:
-        logger.warning("NS params БД пуста. Требуется загрузка с MOEX (~5-10 мин)")
-        return pd.DataFrame()
-    
-    # Загружаем с MOEX (всю историю, API не поддерживает фильтрацию!)
+    Returns:
+        Количество загруженных записей
+    """
+    g_spread_repo = get_g_spread_repo()
     fetcher = get_zcyc_fetcher()
     
-    # Сначала очищаем БД перед полной перезагрузкой
+    # Очищаем БД перед загрузкой
+    ns_count = g_spread_repo.count_ns_params()
     if ns_count > 0:
         logger.info("Очистка старых NS params перед перезагрузкой...")
         from core.db.connection import get_connection
@@ -564,16 +563,13 @@ def fetch_ns_params_cached(days: int = 365, force_load: bool = False) -> pd.Data
         conn.commit()
         conn.close()
     
-    # Загружаем ОДНИМ запросом (API игнорирует пагинацию)
-    ns_df = fetcher.fetch_ns_params_history(save_callback=g_spread_repo.save_ns_params)
+    # Загружаем с MOEX по дням
+    ns_df = fetcher.fetch_ns_params_history(
+        save_callback=g_spread_repo.save_ns_params,
+        progress_callback=progress_callback
+    )
     
-    # Если save_callback использовался, ns_df будет пустым
-    # Загружаем из БД то, что сохранили
-    if ns_df.empty and g_spread_repo.count_ns_params() > 0:
-        start_date = date.today() - timedelta(days=days)
-        ns_df = g_spread_repo.load_ns_params(start_date=start_date)
-    
-    return ns_df
+    return g_spread_repo.count_ns_params()
 
 
 def calculate_bond_g_spread(
@@ -1386,25 +1382,39 @@ def main():
         
         if ns_count == 0:
             # Данных нет - предупреждение и кнопка загрузки
-            st.warning("⚠️ **Параметры КБД не загружены.** Первая загрузка займёт ~5-10 минут.")
+            st.warning("⚠️ **Параметры КБД не загружены.** Первая загрузка займёт ~5-10 минут (~2900 дней с 2014 года).")
             
             with col_ns_refresh:
                 if st.button("📥 Загрузить КБД (~5-10 мин)", key="load_ns_params", type="primary"):
                     st.session_state.loading_ns = True
                     st.rerun()
             
-            # Если нажали кнопку - загружаем
+            # Если нажали кнопку - загружаем с прогрессом
             if st.session_state.get('loading_ns', False):
-                with st.spinner("Загрузка параметров Nelson-Siegel с MOEX... Это займет 5-10 минут."):
-                    ns_params_df = fetch_ns_params_cached(period, force_load=True)
-                    if not ns_params_df.empty:
-                        st.success(f"✅ Загружено {len(ns_params_df)} точек КБД")
-                        st.session_state.loading_ns = False
-                        st.cache_data.clear()
-                        st.rerun()
-                    else:
-                        st.error("Ошибка загрузки КБД")
-                        st.session_state.loading_ns = False
+                st.info("🔄 Загрузка параметров Nelson-Siegel с MOEX по дням...")
+                
+                # Прогресс бар
+                progress_bar = st.progress(0)
+                progress_text = st.empty()
+                
+                def update_progress(current, total, day):
+                    pct = int(100 * current / total)
+                    progress_bar.progress(pct)
+                    progress_text.text(f"{current}/{total} дней ({pct}%) — текущая дата: {day}")
+                
+                try:
+                    loaded = fetch_ns_params_from_moex(progress_callback=update_progress)
+                    progress_bar.progress(100)
+                    progress_text.text(f"✅ Загружено {loaded} записей")
+                    
+                    st.success(f"✅ Загружено {loaded} точек КБД с 2014 года")
+                    st.session_state.loading_ns = False
+                    st.cache_data.clear()
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Ошибка загрузки КБД: {e}")
+                    st.session_state.loading_ns = False
             
             ns_params_df = pd.DataFrame()  # Пустой, чтобы не блокировать UI
         else:
