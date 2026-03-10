@@ -1,19 +1,21 @@
 """
-Расчёт G-spread через модель Nelson-Siegel
+Расчёт G-spread через кривую КБД (G-Curve)
 
-G-spread = YTM_облигации - YTM_КБД(duration)
+G-spread = YTM_облигации - YTM_КБД(maturity)
 
-Модель Nelson-Siegel:
-Y(t) = b0 + b1 * f1(t) + b2 * f2(t)
+ВАЖНО: MOEX использует MATURITY (срок до погашения), а не DURATION!
 
-где:
-- t = duration (срок до погашения)
-- b0 = долгосрочный уровень ставки (base level)
-- b1 = краткосрочный наклон (short-term slope)  
-- b2 = кривизна (curvature)
-- tau = масштаб времени
-- f1(t) = (tau/t) * (1 - exp(-t/tau))
-- f2(t) = f1(t) - exp(-t/tau)
+Методы расчёта КБД:
+1. Интерполяция по yearyields (ПРЕДПОЧТИТЕЛЬНО)
+   - MOEX предоставляет готовые точки КБД: 0.25, 0.5, 0.75, 1, 2, 3, 5, 7, 10, 15, 20 лет
+   - Для облигации с данной maturity интерполируем КБД
+
+2. Формула Nelson-Siegel (для справки)
+   Y(t) = b0 + b1 * f1(t) + b2 * f2(t)
+   где b0, b1, b2 в базисных пунктах от MOEX
+   
+   ПРИМЕЧАНИЕ: Формула NS даёт смещение ~90-100 bp относительно реальных данных!
+   MOEX использует NS только для параметризации, а КБД строится напрямую по yearyields.
 
 Примечание по naming:
 - MOEX использует: b1, b2, b3, t1 (где b1=b0, b2=b1, b3=b2, t1=tau)
@@ -22,10 +24,47 @@ Y(t) = b0 + b1 * f1(t) + b2 * f2(t)
 import numpy as np
 import pandas as pd
 from datetime import date, datetime
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, List
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def interpolate_kbd(
+    maturity_years: float,
+    periods: List[float],
+    values: List[float]
+) -> float:
+    """
+    Интерполяция КБД по точкам yearyields
+    
+    Args:
+        maturity_years: Срок до погашения (годы)
+        periods: Список периодов КБД [0.25, 0.5, 0.75, 1, 2, 3, 5, 7, 10, 15, 20]
+        values: Список YTM КБД для каждого периода (%)
+        
+    Returns:
+        Интерполированное значение YTM КБД (%)
+    """
+    if not periods or not values:
+        return 0.0
+    
+    periods = np.array(periods)
+    values = np.array(values)
+    
+    # Граничные случаи
+    if maturity_years <= periods[0]:
+        return float(values[0])
+    if maturity_years >= periods[-1]:
+        return float(values[-1])
+    
+    # Линейная интерполяция
+    for i in range(len(periods) - 1):
+        if periods[i] <= maturity_years <= periods[i+1]:
+            frac = (maturity_years - periods[i]) / (periods[i+1] - periods[i])
+            return float(values[i] + frac * (values[i+1] - values[i]))
+    
+    return float(values[-1])
 
 
 def nelson_siegel(
@@ -444,6 +483,147 @@ def enrich_bond_data(
     logger.info(f"Рассчитано {len(result)} значений G-spread, p-value ADF: {p_value:.4f}")
     
     return result, p_value
+
+
+def enrich_bond_data_with_yearyields(
+    df_bond: pd.DataFrame,
+    df_yearyields: pd.DataFrame,
+    window: int = 30
+) -> Tuple[pd.DataFrame, float]:
+    """
+    Расчёт G-spread через интерполяцию по yearyields (ПРАВИЛЬНЫЙ МЕТОД!)
+    
+    ВАЖНО: Использует MATURITY (срок до погашения), а не DURATION!
+    
+    G-spread = YTM_облигации - YTM_КБД(maturity)
+    
+    Args:
+        df_bond: DataFrame с колонками:
+            - date: datetime или строка YYYY-MM-DD
+            - ytm: доходность к погашению (%)
+            - maturity_date: дата погашения (для расчёта maturity)
+            или
+            - maturity_years: срок до погашения в годах
+        df_yearyields: DataFrame с колонками:
+            - date: datetime
+            - period: срок КБД (годы): 0.25, 0.5, 0.75, 1, 2, 3, 5, 7, 10, 15, 20
+            - value: YTM КБД (%)
+        window: Окно для rolling Z-Score (дней)
+        
+    Returns:
+        (df_result, p_value):
+            df_result: DataFrame с G-spread
+            p_value: P-value ADF теста
+    """
+    try:
+        from statsmodels.tsa.stattools import adfuller
+        has_adfuller = True
+    except ImportError:
+        has_adfuller = False
+    
+    # 1. Подготовка данных облигации
+    df_bond = df_bond.copy()
+    
+    if 'date' not in df_bond.columns:
+        if df_bond.index.name == 'date' or df_bond.index.name is None:
+            df_bond = df_bond.reset_index()
+            df_bond = df_bond.rename(columns={'index': 'date'})
+    
+    df_bond['date'] = pd.to_datetime(df_bond['date'])
+    
+    # 2. Расчёт maturity_years если нет
+    if 'maturity_years' not in df_bond.columns:
+        if 'maturity_date' in df_bond.columns:
+            df_bond['maturity_date'] = pd.to_datetime(df_bond['maturity_date'])
+            df_bond['maturity_years'] = df_bond.apply(
+                lambda r: (r['maturity_date'] - r['date']).days / 365.25 
+                if pd.notna(r['maturity_date']) and pd.notna(r['date']) else 0,
+                axis=1
+            )
+        else:
+            logger.warning("Нет maturity_date или maturity_years, используем duration")
+            if 'duration' in df_bond.columns:
+                # Конвертируем duration в годы если в днях
+                df_bond['maturity_years'] = df_bond['duration'].apply(
+                    lambda x: x / 365.25 if x > 30 else x
+                )
+            else:
+                logger.error("Нет данных для расчёта maturity")
+                return pd.DataFrame(), 1.0
+    
+    # 3. Подготовка yearyields
+    df_yy = df_yearyields.copy()
+    
+    if 'date' not in df_yy.columns:
+        if df_yy.index.name == 'date' or df_yy.index.name is None:
+            df_yy = df_yy.reset_index()
+            df_yy = df_yy.rename(columns={'index': 'date'})
+    
+    df_yy['date'] = pd.to_datetime(df_yy['date'])
+    
+    # 4. Для каждой даты облигации находим КБД через интерполяцию
+    results = []
+    
+    for _, bond_row in df_bond.iterrows():
+        bond_date = bond_row['date']
+        ytm = bond_row['ytm']
+        maturity_years = bond_row['maturity_years']
+        
+        # Находим yearyields на эту дату
+        yy_for_date = df_yy[df_yy['date'] == bond_date]
+        
+        if yy_for_date.empty:
+            # Пробуем ближайшую дату
+            dates_diff = abs(df_yy['date'] - bond_date)
+            nearest_idx = dates_diff.idxmin()
+            if dates_diff[nearest_idx].days <= 3:  # Допускаем разницу до 3 дней
+                yy_for_date = df_yy.loc[[nearest_idx]]
+            else:
+                continue
+        
+        if len(yy_for_date) > 0:
+            periods = yy_for_date['period'].astype(float).tolist()
+            values = yy_for_date['value'].astype(float).tolist()
+            
+            # Интерполируем КБД
+            ytm_kbd = interpolate_kbd(maturity_years, periods, values)
+            
+            # G-spread
+            g_spread_bp = (ytm - ytm_kbd) * 100
+            
+            results.append({
+                'date': bond_date,
+                'ytm': ytm,
+                'maturity_years': maturity_years,
+                'ytm_kbd': ytm_kbd,
+                'g_spread_bp': g_spread_bp
+            })
+    
+    if not results:
+        logger.warning("Нет совпадающих дат между облигацией и yearyields")
+        return pd.DataFrame(), 1.0
+    
+    df_result = pd.DataFrame(results)
+    df_result = df_result.sort_values('date').reset_index(drop=True)
+    
+    # 5. Rolling Z-Score
+    roll = df_result['g_spread_bp'].rolling(window=window)
+    df_result['z_score'] = (df_result['g_spread_bp'] - roll.mean()) / roll.std()
+    
+    # 6. ADF тест
+    p_value = 1.0
+    if has_adfuller:
+        try:
+            g_spread_clean = df_result['g_spread_bp'].dropna()
+            if len(g_spread_clean) >= 20:
+                adf_result = adfuller(g_spread_clean)
+                p_value = adf_result[1]
+        except Exception as e:
+            logger.warning(f"ADF тест не удался: {e}")
+    
+    logger.info(f"Рассчитано {len(df_result)} значений G-spread (интерполяция), p-value: {p_value:.4f}")
+    
+    return df_result, p_value
 
 
 class GSpreadCalculator:

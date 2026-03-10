@@ -386,6 +386,13 @@ class GSpreadRepository:
         cursor.execute('SELECT MIN(date) as min_d, MAX(date) as max_d FROM ns_params')
         ns_range = cursor.fetchone()
         
+        # Yearyields
+        cursor.execute('SELECT COUNT(*) as cnt FROM yearyields')
+        yy_count = cursor.fetchone()['cnt']
+        
+        cursor.execute('SELECT MIN(date) as min_d, MAX(date) as max_d FROM yearyields')
+        yy_range = cursor.fetchone()
+        
         conn.close()
         
         return {
@@ -395,5 +402,131 @@ class GSpreadRepository:
             'ns_params_date_range': (
                 ns_range['min_d'] if ns_range else None,
                 ns_range['max_d'] if ns_range else None
+            ),
+            'yearyields_count': yy_count,
+            'yearyields_date_range': (
+                yy_range['min_d'] if yy_range else None,
+                yy_range['max_d'] if yy_range else None
             )
         }
+    
+    # ==========================================
+    # YEARYIELDS (точки КБД)
+    # ==========================================
+    
+    def save_yearyields(self, df: pd.DataFrame) -> int:
+        """
+        Сохранить точки КБД (yearyields) в БД
+        
+        Args:
+            df: DataFrame с колонками: date, period, value
+                
+        Returns:
+            Количество сохранённых записей
+        """
+        if df.empty:
+            return 0
+        
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        saved_count = 0
+        
+        for _, row in df.iterrows():
+            try:
+                if isinstance(row['date'], pd.Timestamp):
+                    date_str = row['date'].strftime('%Y-%m-%d')
+                else:
+                    date_str = str(row['date'])[:10]
+                
+                cursor.execute('''
+                    INSERT OR REPLACE INTO yearyields 
+                    (date, period, value)
+                    VALUES (?, ?, ?)
+                ''', (
+                    date_str,
+                    float(row['period']) if pd.notna(row['period']) else None,
+                    float(row['value']) if pd.notna(row['value']) else None
+                ))
+                saved_count += 1
+                
+            except Exception as e:
+                logger.warning(f"Ошибка сохранения yearyields: {e}")
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"Сохранено {saved_count} точек yearyields")
+        return saved_count
+    
+    def load_yearyields(
+        self,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> pd.DataFrame:
+        """
+        Загрузить точки КБД (yearyields) из БД
+        
+        Args:
+            start_date: Начальная дата
+            end_date: Конечная дата
+            
+        Returns:
+            DataFrame с колонками: date, period, value
+        """
+        conn = get_connection()
+        
+        query = '''
+            SELECT date, period, value
+            FROM yearyields
+            WHERE 1=1
+        '''
+        params = []
+        
+        if start_date:
+            query += ' AND date >= ?'
+            params.append(start_date.strftime('%Y-%m-%d'))
+        
+        if end_date:
+            query += ' AND date <= ?'
+            params.append(end_date.strftime('%Y-%m-%d'))
+        
+        query += ' ORDER BY date, period'
+        
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        
+        if df.empty:
+            return pd.DataFrame()
+        
+        df['date'] = pd.to_datetime(df['date'])
+        
+        return df
+    
+    def get_last_yearyields_date(self) -> Optional[date]:
+        """Получить дату последних yearyields в БД"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT MAX(date) as last_date
+            FROM yearyields
+        ''')
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row and row['last_date']:
+            return datetime.strptime(row['last_date'], '%Y-%m-%d').date()
+        return None
+    
+    def count_yearyields(self) -> int:
+        """Количество записей yearyields"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT COUNT(*) as cnt FROM yearyields')
+        row = cursor.fetchone()
+        conn.close()
+        
+        return row['cnt'] if row else 0

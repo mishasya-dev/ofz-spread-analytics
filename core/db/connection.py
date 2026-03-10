@@ -350,6 +350,25 @@ def init_database():
         ON g_spreads(date)
     ''')
     
+    # ==========================================
+    # ТАБЛИЦА YEARYIELDS (точки КБД)
+    # ==========================================
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS yearyields (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            period REAL NOT NULL,
+            value REAL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(date, period)
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_yearyields_date 
+        ON yearyields(date)
+    ''')
+    
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована")

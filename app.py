@@ -581,16 +581,21 @@ def calculate_bond_g_spread(
     isin: str,
     daily_df: pd.DataFrame,
     ns_params_df: pd.DataFrame,
-    window: int = 30
+    window: int = 30,
+    maturity_date: date = None
 ) -> Tuple[pd.DataFrame, float]:
     """
     Рассчитать G-spread для облигации с Z-Score и ADF тестом
     
+    ВАЖНО: Использует MATURITY (срок до погашения), а не DURATION!
+    КБД интерполируется по yearyields с MOEX G-Curve API.
+    
     Args:
         isin: ISIN облигации
         daily_df: DataFrame с YTM облигации (колонки: ytm, duration_days)
-        ns_params_df: DataFrame с параметрами Nelson-Siegel
+        ns_params_df: DataFrame с параметрами Nelson-Siegel (НЕ ИСПОЛЬЗУЕТСЯ, оставлено для совместимости)
         window: Окно для rolling Z-Score
+        maturity_date: Дата погашения облигации
         
     Returns:
         (DataFrame с G-spread, p_value ADF теста)
@@ -608,18 +613,11 @@ def calculate_bond_g_spread(
             return g_spread_df, 0.0  # p-value из кэша не храним
     
     # Рассчитываем
-    if daily_df.empty or ns_params_df.empty:
+    if daily_df.empty:
         return pd.DataFrame(), 1.0
     
-    # Подготовка данных для enrich_bond_data
-    # Нужно: date (колонка или индекс), ytm, duration
+    # Подготовка данных облигации
     bond_data = daily_df.copy()
-    
-    # Если duration нет, используем примерное значение
-    if 'duration_days' not in bond_data.columns:
-        bond_data['duration_days'] = 365.25 * 5  # По умолчанию 5 лет
-    
-    bond_data['duration'] = bond_data['duration_days']
     
     # Сбрасываем индекс если нужно
     if bond_data.index.name == 'date' or bond_data.index.name is None:
@@ -627,15 +625,31 @@ def calculate_bond_g_spread(
         if 'index' in bond_data.columns:
             bond_data = bond_data.rename(columns={'index': 'date'})
     
-    # NS params: переименовываем для enrich_bond_data
-    ns_data = ns_params_df.copy()
-    if ns_data.index.name == 'date' or ns_data.index.name is None:
-        ns_data = ns_data.reset_index()
-        if 'index' in ns_data.columns:
-            ns_data = ns_data.rename(columns={'index': 'date'})
+    # Если есть maturity_date, добавляем колонку
+    if maturity_date:
+        bond_data['maturity_date'] = pd.to_datetime(maturity_date)
     
-    # Вызываем enrich_bond_data с Z-Score и ADF тестом
-    g_spread_df, p_value = enrich_bond_data(bond_data, ns_data, window=window)
+    # Загружаем yearyields из БД
+    yearyields_df = g_spread_repo.load_yearyields()
+    
+    # Если yearyields нет в БД, загружаем с MOEX
+    if yearyields_df.empty:
+        from api.moex_zcyc import get_yearyields_history
+        logger.info("Загрузка yearyields с MOEX...")
+        start_date = date.today() - timedelta(days=365)
+        yearyields_df = get_yearyields_history(start_date, date.today())
+        
+        if not yearyields_df.empty:
+            g_spread_repo.save_yearyields(yearyields_df)
+            logger.info(f"Сохранено {len(yearyields_df)} точек yearyields")
+    
+    if yearyields_df.empty:
+        logger.warning("Нет yearyields для расчёта G-spread")
+        return pd.DataFrame(), 1.0
+    
+    # Вызываем новый метод с yearyields
+    from services.g_spread_calculator import enrich_bond_data_with_yearyields
+    g_spread_df, p_value = enrich_bond_data_with_yearyields(bond_data, yearyields_df, window=window)
     
     if not g_spread_df.empty:
         # Преобразуем в формат для сохранения и UI
@@ -645,11 +659,10 @@ def calculate_bond_g_spread(
         if 'date' in result_df.columns:
             result_df = result_df.set_index('date')
         
-        # Выбираем только нужные колонки и переименовываем
-        # Важно: g_spread_bp уже есть в enrich_bond_data, дублируем через g_spread
+        # Переименовываем колонки для совместимости
         result_df = result_df.rename(columns={
             'ytm': 'ytm_bond',
-            'ytm_theoretical': 'ytm_kbd'
+            'ytm_kbd': 'ytm_kbd'
         })
         
         # Убираем дубликат g_spread если есть обе колонки
@@ -657,7 +670,7 @@ def calculate_bond_g_spread(
             result_df = result_df.drop(columns=['g_spread'])
         
         # Оставляем только нужные колонки
-        keep_cols = ['ytm_bond', 'ytm_kbd', 'g_spread_bp', 'duration_years', 'z_score']
+        keep_cols = ['ytm_bond', 'ytm_kbd', 'g_spread_bp', 'maturity_years', 'z_score']
         result_df = result_df[[c for c in keep_cols if c in result_df.columns]]
         
         # Сохраняем в БД

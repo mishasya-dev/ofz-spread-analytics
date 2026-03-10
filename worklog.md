@@ -2235,3 +2235,59 @@ def fetch_ns_params_incremental(last_date, save_callback, progress_callback):
 ---
 
 *Обновление: 09.03.2026*
+
+---
+
+## v0.4.1-patch1 — Исправление ошибок G-spread (09.03.2026)
+
+### Проблемы
+
+1. **`'duration_years'` KeyError** — колонка отсутствует при сохранении G-spread
+2. **`'tuple' object has no attribute 'empty'`** — неправильная распаковка tuple
+3. **Streamlit import error** — candle_service.py импортировал streamlit на уровне модуля
+
+### Решения
+
+#### 1. Добавлена колонка `duration_years` в `enrich_bond_data()`
+
+```python
+# services/g_spread_calculator.py:403-404
+df['duration_years'] = df['duration'] / 365.25
+```
+
+#### 2. Добавлена колонка `g_spread_bp` для совместимости с БД
+
+```python
+# services/g_spread_calculator.py:400-401
+df['g_spread'] = (df['ytm'] - df['ytm_theoretical']) * 100
+df['g_spread_bp'] = df['g_spread']  # Дублируем для совместимости
+```
+
+#### 3. Lazy import streamlit в candle_service.py
+
+```python
+# services/candle_service.py:6-10
+try:
+    import streamlit as st
+except ImportError:
+    st = None
+```
+
+### Результаты теста
+
+```
+Result columns: ['date', 'ytm', 'duration', 'ytm_theoretical', 
+                 'g_spread', 'g_spread_bp', 'z_score', 'duration_years']
+Result shape: (5, 8)
+Has duration_years: True
+Has g_spread_bp: True
+```
+
+### Git
+
+- Коммит: `3f447f9`
+- Ветка: `experiments`
+
+---
+
+*Обновление: 09.03.2026*
