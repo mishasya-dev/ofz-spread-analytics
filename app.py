@@ -244,6 +244,9 @@ def init_session_state():
     if 'spread_window' not in st.session_state:
         st.session_state.spread_window = 30
     
+    if 'use_duration' not in st.session_state:
+        st.session_state.use_duration = False
+    
     if 'z_threshold' not in st.session_state:
         st.session_state.z_threshold = 2.0
 
@@ -582,20 +585,24 @@ def calculate_bond_g_spread(
     daily_df: pd.DataFrame,
     ns_params_df: pd.DataFrame,
     window: int = 30,
-    maturity_date: date = None
+    maturity_date: date = None,
+    use_duration: bool = False
 ) -> Tuple[pd.DataFrame, float]:
     """
     Рассчитать G-spread для облигации с Z-Score и ADF тестом
     
-    ВАЖНО: Использует MATURITY (срок до погашения), а не DURATION!
+    По умолчанию использует MATURITY (срок до погашения).
+    Если use_duration=True, использует DURATION.
+    
     КБД интерполируется по yearyields с MOEX G-Curve API.
     
     Args:
         isin: ISIN облигации
-        daily_df: DataFrame с YTM облигации (колонки: ytm, duration_days)
-        ns_params_df: DataFrame с параметрами Nelson-Siegel (НЕ ИСПОЛЬЗУЕТСЯ, оставлено для совместимости)
+        daily_df: DataFrame с YTM облигации (колонки: ytm, duration)
+        ns_params_df: DataFrame с параметрами Nelson-Siegel (НЕ ИСПОЛЬЗУЕТСЯ)
         window: Окно для rolling Z-Score
         maturity_date: Дата погашения облигации
+        use_duration: Если True, использовать дюрацию вместо maturity
         
     Returns:
         (DataFrame с G-spread, p_value ADF теста)
@@ -625,8 +632,11 @@ def calculate_bond_g_spread(
         if 'index' in bond_data.columns:
             bond_data = bond_data.rename(columns={'index': 'date'})
     
-    # Если есть maturity_date, добавляем колонку
-    if maturity_date:
+    # Добавляем признак use_duration
+    bond_data['use_duration'] = use_duration
+    
+    # Если есть maturity_date и НЕ используем дюрацию, добавляем колонку
+    if maturity_date and not use_duration:
         bond_data['maturity_date'] = pd.to_datetime(maturity_date)
     
     # Получаем даты из данных облигации
@@ -959,6 +969,14 @@ def main():
             max_value=90,
             key="spread_window",  # Автоматическая синхронизация с session_state
             step=5
+        )
+        
+        # Переключатель Maturity/Duration для G-spread
+        use_duration = st.checkbox(
+            "Считать G-spread по дюрации",
+            value=False,
+            key="use_duration",
+            help="Если включено, КБД интерполируется по дюрации, а не по сроку до погашения"
         )
         
         z_threshold = st.slider(
@@ -1520,12 +1538,14 @@ def main():
                 g_spread_df1, p_value1 = calculate_bond_g_spread(
                     bond1.isin, daily_df1, ns_params_df,
                     window=st.session_state.spread_window,
-                    maturity_date=bond1.maturity_date
+                    maturity_date=bond1.maturity_date,
+                    use_duration=st.session_state.use_duration
                 )
                 g_spread_df2, p_value2 = calculate_bond_g_spread(
                     bond2.isin, daily_df2, ns_params_df,
                     window=st.session_state.spread_window,
-                    maturity_date=bond2.maturity_date
+                    maturity_date=bond2.maturity_date,
+                    use_duration=st.session_state.use_duration
                 )
                 
                 # Метрики G-spread

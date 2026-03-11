@@ -531,24 +531,46 @@ def enrich_bond_data_with_yearyields(
     
     df_bond['date'] = pd.to_datetime(df_bond['date'])
     
-    # 2. Расчёт maturity_years если нет
+    # 2. Расчёт координаты для интерполяции КБД (maturity или duration)
+    use_duration = df_bond['use_duration'].iloc[0] if 'use_duration' in df_bond.columns else False
+    
     if 'maturity_years' not in df_bond.columns:
-        if 'maturity_date' in df_bond.columns:
+        if use_duration:
+            # Используем дюрацию
+            duration_col = None
+            if 'duration' in df_bond.columns:
+                duration_col = 'duration'
+            elif 'duration_days' in df_bond.columns:
+                duration_col = 'duration_days'
+            
+            if duration_col:
+                # Конвертируем duration в годы если в днях
+                df_bond['maturity_years'] = df_bond[duration_col].apply(
+                    lambda x: x / 365.25 if x > 30 else x
+                )
+                logger.info(f"G-spread рассчитывается по ДЮРАЦИИ ({duration_col})")
+            else:
+                logger.error("Нет duration для расчёта")
+                return pd.DataFrame(), 1.0
+        elif 'maturity_date' in df_bond.columns:
+            # Используем срок до погашения
             df_bond['maturity_date'] = pd.to_datetime(df_bond['maturity_date'])
             df_bond['maturity_years'] = df_bond.apply(
                 lambda r: (r['maturity_date'] - r['date']).days / 365.25 
                 if pd.notna(r['maturity_date']) and pd.notna(r['date']) else 0,
                 axis=1
             )
+            logger.info("G-spread рассчитывается по MATURITY")
         else:
-            logger.warning("Нет maturity_date или maturity_years, используем duration")
-            if 'duration' in df_bond.columns:
-                # Конвертируем duration в годы если в днях
-                df_bond['maturity_years'] = df_bond['duration'].apply(
+            # Fallback на duration
+            logger.warning("Нет maturity_date, используем duration")
+            duration_col = 'duration' if 'duration' in df_bond.columns else 'duration_days'
+            if duration_col in df_bond.columns:
+                df_bond['maturity_years'] = df_bond[duration_col].apply(
                     lambda x: x / 365.25 if x > 30 else x
                 )
             else:
-                logger.error("Нет данных для расчёта maturity")
+                logger.error("Нет данных для расчёта")
                 return pd.DataFrame(), 1.0
     
     # 3. Подготовка yearyields
