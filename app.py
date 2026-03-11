@@ -31,10 +31,8 @@ from components.charts import (
 )
 from api.moex_zcyc import ZCYCFetcher
 from services.g_spread_calculator import (
-    calculate_g_spread_history,
     calculate_g_spread_stats,
-    generate_g_spread_signal,
-    enrich_bond_data  # С Z-Score и ADF тестом
+    generate_g_spread_signal
 )
 from core.db import get_g_spread_repo, init_database
 from version import format_version_badge
@@ -243,9 +241,6 @@ def init_session_state():
     # Параметры для Spread Analytics
     if 'spread_window' not in st.session_state:
         st.session_state.spread_window = 30
-    
-    if 'use_duration' not in st.session_state:
-        st.session_state.use_duration = False
     
     if 'z_threshold' not in st.session_state:
         st.session_state.z_threshold = 2.0
@@ -950,14 +945,6 @@ def main():
             step=5
         )
         
-        # Переключатель Maturity/Duration для G-spread
-        use_duration = st.checkbox(
-            "Считать G-spread по дюрации",
-            value=False,
-            key="use_duration",
-            help="Если включено, КБД интерполируется по дюрации, а не по сроку до погашения"
-        )
-        
         z_threshold = st.slider(
             "Z-Score порог (σ)",
             min_value=1.0,
@@ -1406,224 +1393,117 @@ def main():
         st.markdown("""
         **G-Spread** — разница между реальной YTM облигации и теоретической YTM по кривой КБД.
         
+        **Данные:** Точные G-spread от MOEX (ZCYC API)
+        
         **Интерпретация:**
         - G-spread < 0: Облигация дешевле кривой → ПОКУПКА
         - G-spread > 0: Облигация дороже кривой → ПРОДАЖА
-        
-        **Модель Nelson-Siegel:**
-        Y(t) = b₁ + b₂·f₁(t) + b₃·f₂(t)
         """)
         
-        # Проверяем наличие данных NS в БД
-        g_spread_repo = get_g_spread_repo()
-        ns_count = g_spread_repo.count_ns_params()
-        last_ns_date = g_spread_repo.get_last_ns_params_date()
-        
-        # Проверяем актуальность данных
-        today = date.today()
-        need_update = False
-        if last_ns_date:
-            days_behind = (today - last_ns_date).days
-            if days_behind > 1:
-                need_update = True
-        
-        # UI для загрузки
-        col_ns_refresh, col_ns_status = st.columns([1, 3])
-        
-        if ns_count == 0:
-            # Данных нет - предупреждение и кнопка загрузки
-            st.warning("⚠️ **Параметры КБД не загружены.** Первая загрузка займёт ~5-10 минут (~2900 дней с 2014 года).")
-            
-            with col_ns_refresh:
-                if st.button("📥 Загрузить КБД (~5-10 мин)", key="load_ns_params", type="primary"):
-                    st.session_state.loading_ns = True
-                    st.rerun()
-            
-        elif need_update:
-            # Данные есть, но не актуальны
-            with col_ns_status:
-                st.caption(f"⚠️ КБД: {ns_count} записей, последняя: {last_ns_date} (отстает на {days_behind} дн.)")
-            
-            with col_ns_refresh:
-                col_btn1, col_btn2 = st.columns(2)
-                with col_btn1:
-                    if st.button("▶️ Продолжить", key="continue_ns_params", type="primary"):
-                        st.session_state.loading_ns = True
-                        st.rerun()
-                with col_btn2:
-                    if st.button("🔄 Перезагрузить", key="reload_ns_params"):
-                        st.session_state.reload_ns = True
-                        st.rerun()
-        else:
-            # Данные актуальны
-            with col_ns_status:
-                st.caption(f"✅ КБД: {ns_count} записей, последняя: {last_ns_date}")
-            
-            with col_ns_refresh:
-                ns_refresh_clicked = st.button("🔄 Обновить КБД", key="refresh_ns_params")
-            
-            # Загружаем из БД (быстро)
-            ns_params_df = fetch_ns_params_cached(period)
-        
-        # Обработка загрузки (продолжение или новая)
-        if st.session_state.get('loading_ns', False) or st.session_state.get('reload_ns', False):
-            # Если перезагрузка - очищаем БД
-            if st.session_state.get('reload_ns', False):
-                st.info("🗑️ Очистка старых данных...")
-                from core.db.connection import get_connection
-                conn = get_connection()
-                conn.execute('DELETE FROM ns_params')
-                conn.commit()
-                conn.close()
-                st.session_state.reload_ns = False
-                st.cache_data.clear()
-            
-            st.info("🔄 Загрузка параметров Nelson-Siegel с MOEX...")
-            
-            # Прогресс бар
-            progress_bar = st.progress(0)
-            progress_text = st.empty()
-            
-            def update_progress(current, total, day):
-                pct = int(100 * current / total)
-                progress_bar.progress(pct)
-                progress_text.text(f"{current}/{total} дней ({pct}%) — текущая дата: {day}")
-            
-            try:
-                loaded = fetch_ns_params_from_moex(progress_callback=update_progress)
-                progress_bar.progress(100)
-                progress_text.text(f"✅ Загружено {loaded} записей")
-                
-                st.success(f"✅ Всего записей КБД: {loaded}")
-                st.session_state.loading_ns = False
-                st.cache_data.clear()
-                time.sleep(1)
-                st.rerun()
-            except Exception as e:
-                st.error(f"Ошибка загрузки КБД: {e}")
-                logger.error(f"Ошибка загрузки КБД: {e}", exc_info=True)
-                st.session_state.loading_ns = False
-        
-        # Загружаем ns_params_df если ещё не загружен
-        if 'ns_params_df' not in dir() or ns_params_df is None:
-            ns_params_df = fetch_ns_params_cached(period) if ns_count > 0 else pd.DataFrame()
-        
         try:
-            if ns_params_df.empty and ns_count == 0:
-                # Не показываем ошибку если данные просто не загружены
-                st.info("👆 Нажмите 'Загрузить КБД' для начала работы с G-Spread анализом.")
-            else:
-                # Рассчитываем G-spread для обеих облигаций
-                g_spread_df1, p_value1 = calculate_bond_g_spread(
-                    bond1.isin, daily_df1, ns_params_df,
-                    window=st.session_state.spread_window,
-                    maturity_date=bond1.maturity_date,
-                    use_duration=st.session_state.use_duration
-                )
-                g_spread_df2, p_value2 = calculate_bond_g_spread(
-                    bond2.isin, daily_df2, ns_params_df,
-                    window=st.session_state.spread_window,
-                    maturity_date=bond2.maturity_date,
-                    use_duration=st.session_state.use_duration
-                )
+            # Рассчитываем G-spread для обеих облигаций
+            # Используем точные данные MOEX (trdyield - clcyield)
+            g_spread_df1, p_value1 = calculate_bond_g_spread(
+                bond1.isin, daily_df1, pd.DataFrame(),  # ns_params больше не нужен
+                window=st.session_state.spread_window
+            )
+            g_spread_df2, p_value2 = calculate_bond_g_spread(
+                bond2.isin, daily_df2, pd.DataFrame(),
+                window=st.session_state.spread_window
+            )
+            
+            # Метрики G-spread
+            if not g_spread_df1.empty or not g_spread_df2.empty:
+                col_gs1, col_gs2 = st.columns(2)
                 
-                # Метрики G-spread
-                if not g_spread_df1.empty or not g_spread_df2.empty:
-                    col_gs1, col_gs2 = st.columns(2)
-                    
-                    with col_gs1:
-                        if not g_spread_df1.empty:
-                            # Гарантируем что g_spread_bp - это Series
-                            gs1_series = g_spread_df1['g_spread_bp']
-                            if isinstance(gs1_series, pd.DataFrame):
-                                gs1_series = gs1_series.iloc[:, 0]
-                            stats1 = calculate_g_spread_stats(gs1_series)
-                            current_gs1 = stats1.get('current', 0)
-                            signal1 = generate_g_spread_signal(
-                                current_gs1, 
-                                stats1.get('p10', -50), 
-                                stats1.get('p25', -25), 
-                                stats1.get('p75', 25), 
-                                stats1.get('p90', 50)
-                            )
-                            st.metric(
-                                f"G-Spread {bond1.name}", 
-                                f"{current_gs1:.1f} б.п.",
-                                delta=f"Mean: {stats1.get('mean', 0):.1f}"
-                            )
-                            st.markdown(f"<span style='color:{signal1['color']}'>{signal1['signal']}: {signal1['action']}</span>", unsafe_allow_html=True)
-                    
-                    with col_gs2:
-                        if not g_spread_df2.empty:
-                            # Гарантируем что g_spread_bp - это Series
-                            gs2_series = g_spread_df2['g_spread_bp']
-                            if isinstance(gs2_series, pd.DataFrame):
-                                gs2_series = gs2_series.iloc[:, 0]
-                            stats2 = calculate_g_spread_stats(gs2_series)
-                            current_gs2 = stats2.get('current', 0)
-                            signal2 = generate_g_spread_signal(
-                                current_gs2, 
-                                stats2.get('p10', -50), 
-                                stats2.get('p25', -25), 
-                                stats2.get('p75', 25), 
-                                stats2.get('p90', 50)
-                            )
-                            st.metric(
-                                f"G-Spread {bond2.name}", 
-                                f"{current_gs2:.1f} б.п.",
-                                delta=f"Mean: {stats2.get('mean', 0):.1f}"
-                            )
-                            st.markdown(f"<span style='color:{signal2['color']}'>{signal2['signal']}: {signal2['action']}</span>", unsafe_allow_html=True)
-                    
-                    # Подготовка данных для дашборда
-                    if not g_spread_df1.empty and not g_spread_df2.empty:
-                        # Создаём DataFrame для дашборда
-                        df_res = pd.DataFrame()
-                        
-                        # Облигация 1
-                        df1_data = g_spread_df1.reset_index()
-                        df1_data['ticker'] = bond1.name
-                        df1_data['ytm'] = df1_data['ytm_bond']
-                        df1_data['ytm_theor'] = df1_data['ytm_kbd']
-                        df1_data['g_spread'] = df1_data['g_spread_bp']
-                        
-                        # Z-score
-                        mean_gs1 = stats1.get('mean', 0)
-                        std_gs1 = stats1.get('std', 1)
-                        df1_data['zscore'] = (df1_data['g_spread_bp'] - mean_gs1) / std_gs1
-                        
-                        # Облигация 2
-                        df2_data = g_spread_df2.reset_index()
-                        df2_data['ticker'] = bond2.name
-                        df2_data['ytm'] = df2_data['ytm_bond']
-                        df2_data['ytm_theor'] = df2_data['ytm_kbd']
-                        df2_data['g_spread'] = df2_data['g_spread_bp']
-                        
-                        # Z-score
-                        mean_gs2 = stats2.get('mean', 0)
-                        std_gs2 = stats2.get('std', 1)
-                        df2_data['zscore'] = (df2_data['g_spread_bp'] - mean_gs2) / std_gs2
-                        
-                        df_res = pd.concat([df1_data, df2_data], ignore_index=True)
-                        
-                        # График G-spread дашборд
-                        fig_g_spread = create_g_spread_dashboard(df_res)
-                        st.plotly_chart(fig_g_spread, use_container_width=True)
-                        
-                        # Дополнительно: график отдельных G-spread
-                        col_chart1, col_chart2 = st.columns(2)
-                        with col_chart1:
-                            fig_gs1 = create_g_spread_chart_single(g_spread_df1, bond1.name, stats1)
-                            st.plotly_chart(fig_gs1, use_container_width=True)
-                        with col_chart2:
-                            fig_gs2 = create_g_spread_chart_single(g_spread_df2, bond2.name, stats2)
-                            st.plotly_chart(fig_gs2, use_container_width=True)
+                with col_gs1:
+                    if not g_spread_df1.empty:
+                        gs1_series = g_spread_df1['g_spread_bp']
+                        if isinstance(gs1_series, pd.DataFrame):
+                            gs1_series = gs1_series.iloc[:, 0]
+                        stats1 = calculate_g_spread_stats(gs1_series)
+                        current_gs1 = stats1.get('current', 0)
+                        signal1 = generate_g_spread_signal(
+                            current_gs1, 
+                            stats1.get('p10', -50), 
+                            stats1.get('p25', -25), 
+                            stats1.get('p75', 25), 
+                            stats1.get('p90', 50)
+                        )
+                        st.metric(
+                            f"G-Spread {bond1.name}", 
+                            f"{current_gs1:.1f} б.п.",
+                            delta=f"Mean: {stats1.get('mean', 0):.1f}"
+                        )
+                        st.markdown(f"<span style='color:{signal1['color']}'>{signal1['signal']}: {signal1['action']}</span>", unsafe_allow_html=True)
                 
-                elif not ns_params_df.empty:
-                    st.info("Рассчитываем G-spread...")
+                with col_gs2:
+                    if not g_spread_df2.empty:
+                        gs2_series = g_spread_df2['g_spread_bp']
+                        if isinstance(gs2_series, pd.DataFrame):
+                            gs2_series = gs2_series.iloc[:, 0]
+                        stats2 = calculate_g_spread_stats(gs2_series)
+                        current_gs2 = stats2.get('current', 0)
+                        signal2 = generate_g_spread_signal(
+                            current_gs2, 
+                            stats2.get('p10', -50), 
+                            stats2.get('p25', -25), 
+                            stats2.get('p75', 25), 
+                            stats2.get('p90', 50)
+                        )
+                        st.metric(
+                            f"G-Spread {bond2.name}", 
+                            f"{current_gs2:.1f} б.п.",
+                            delta=f"Mean: {stats2.get('mean', 0):.1f}"
+                        )
+                        st.markdown(f"<span style='color:{signal2['color']}'>{signal2['signal']}: {signal2['action']}</span>", unsafe_allow_html=True)
                 
+                # Подготовка данных для дашборда
+                if not g_spread_df1.empty and not g_spread_df2.empty:
+                    df_res = pd.DataFrame()
+                    
+                    # Облигация 1
+                    df1_data = g_spread_df1.reset_index()
+                    df1_data['ticker'] = bond1.name
+                    df1_data['ytm'] = df1_data['ytm_bond']
+                    df1_data['ytm_theor'] = df1_data['ytm_kbd']
+                    df1_data['g_spread'] = df1_data['g_spread_bp']
+                    
+                    mean_gs1 = stats1.get('mean', 0)
+                    std_gs1 = stats1.get('std', 1)
+                    df1_data['zscore'] = (df1_data['g_spread_bp'] - mean_gs1) / std_gs1
+                    
+                    # Облигация 2
+                    df2_data = g_spread_df2.reset_index()
+                    df2_data['ticker'] = bond2.name
+                    df2_data['ytm'] = df2_data['ytm_bond']
+                    df2_data['ytm_theor'] = df2_data['ytm_kbd']
+                    df2_data['g_spread'] = df2_data['g_spread_bp']
+                    
+                    mean_gs2 = stats2.get('mean', 0)
+                    std_gs2 = stats2.get('std', 1)
+                    df2_data['zscore'] = (df2_data['g_spread_bp'] - mean_gs2) / std_gs2
+                    
+                    df_res = pd.concat([df1_data, df2_data], ignore_index=True)
+                    
+                    # График G-spread дашборд
+                    fig_g_spread = create_g_spread_dashboard(df_res)
+                    st.plotly_chart(fig_g_spread, use_container_width=True)
+                    
+                    # График отдельных G-spread
+                    col_chart1, col_chart2 = st.columns(2)
+                    with col_chart1:
+                        fig_gs1 = create_g_spread_chart_single(g_spread_df1, bond1.name, stats1)
+                        st.plotly_chart(fig_gs1, use_container_width=True)
+                    with col_chart2:
+                        fig_gs2 = create_g_spread_chart_single(g_spread_df2, bond2.name, stats2)
+                        st.plotly_chart(fig_gs2, use_container_width=True)
+            
+            elif g_spread_df1.empty and g_spread_df2.empty:
+                st.warning("⚠️ Данные G-spread не найдены на MOEX ZCYC API")
+        
         except Exception as e:
-            st.error(f"Ошибка при загрузке КБД: {e}")
+            st.error(f"Ошибка при расчёте G-spread: {e}")
             logger.error(f"G-spread calculation error: {e}", exc_info=True)
     
     st.divider()

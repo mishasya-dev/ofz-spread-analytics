@@ -457,151 +457,90 @@ def get_ns_params_history(days: int = 365) -> pd.DataFrame:
     return fetcher.fetch_ns_params_history(start_date=start_date)
 
 
-def get_yearyields_for_date(target_date: date) -> pd.DataFrame:
-    """
-    Получить точки КБД (yearyields) за конкретную дату
-    
-    Endpoint: /engines/stock/zcyc/gcurve.json?date=YYYY-MM-DD
-    
-    Args:
-        target_date: Дата для получения данных
-        
-    Returns:
-        DataFrame с колонками: date, period, value
-        period: срок КБД (годы): 0.25, 0.5, 0.75, 1, 2, 3, 5, 7, 10, 15, 20
-        value: YTM КБД (%)
-    """
-    url = "https://iss.moex.com/iss/engines/stock/zcyc/gcurve.json"
-    params = {
-        "iss.meta": "off",
-        "date": target_date.strftime("%Y-%m-%d")
-    }
-    
-    try:
-        response = requests.get(url, params=params, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        
-        yearyields = data.get("yearyields", {})
-        if not yearyields.get("data"):
-            return pd.DataFrame()
-        
-        df = pd.DataFrame(
-            yearyields["data"],
-            columns=yearyields.get("columns", [])
-        )
-        
-        if 'period' in df.columns and 'value' in df.columns:
-            df['date'] = pd.to_datetime(target_date)
-            return df[['date', 'period', 'value']]
-        
-        return pd.DataFrame()
-        
-    except Exception as e:
-        logger.error(f"Ошибка при получении yearyields за {target_date}: {e}")
-        return pd.DataFrame()
+# ============================================================================
+# DEPRECATED: Мёртвый код - заменено на get_zcyc_data_for_date / get_zcyc_history
+# ============================================================================
 
+# def get_yearyields_for_date(target_date: date) -> pd.DataFrame:
+#     """
+#     DEPRECATED: Используйте get_zcyc_data_for_date()
+#     
+#     Получить точки КБД (yearyields) за конкретную дату
+#     
+#     Endpoint: /engines/stock/zcyc/gcurve.json?date=YYYY-MM-DD
+#     
+#     Args:
+#         target_date: Дата для получения данных
+#         
+#     Returns:
+#         DataFrame с колонками: date, period, value
+#         period: срок КБД (годы): 0.25, 0.5, 0.75, 1, 2, 3, 5, 7, 10, 15, 20
+#         value: YTM КБД (%)
+#     """
+#     url = "https://iss.moex.com/iss/engines/stock/zcyc/gcurve.json"
+#     params = {
+#         "iss.meta": "off",
+#         "date": target_date.strftime("%Y-%m-%d")
+#     }
+#     
+#     try:
+#         response = requests.get(url, params=params, timeout=30)
+#         response.raise_for_status()
+#         data = response.json()
+#         
+#         yearyields = data.get("yearyields", {})
+#         if not yearyields.get("data"):
+#             return pd.DataFrame()
+#         
+#         df = pd.DataFrame(
+#             yearyields["data"],
+#             columns=yearyields.get("columns", [])
+#         )
+#         
+#         if 'period' in df.columns and 'value' in df.columns:
+#             df['date'] = pd.to_datetime(target_date)
+#             return df[['date', 'period', 'value']]
+#         
+#         return pd.DataFrame()
+#         
+#     except Exception as e:
+#         logger.error(f"Ошибка при получении yearyields за {target_date}: {e}")
+#         return pd.DataFrame()
+# 
+# 
+# def get_yearyields_history(
+#     start_date: date,
+#     end_date: date = None,
+#     progress_callback=None
+# ) -> pd.DataFrame:
+#     """
+#     DEPRECATED: Используйте get_zcyc_history()
+#     
+#     Получить историю точек КБД (yearyields)
+#     """
+#     pass  # Удалено - используйте get_zcyc_history()
+# 
+# 
+# def get_yearyields_for_dates(
+#     dates_list: List[date],
+#     progress_callback=None
+# ) -> pd.DataFrame:
+#     """
+#     DEPRECATED: Используйте get_zcyc_history()
+#     
+#     Получить точки КБД (yearyields) для конкретного списка дат
+#     """
+#     pass  # Удалено - используйте get_zcyc_history()
 
-def get_yearyields_history(
-    start_date: date,
-    end_date: date = None,
-    progress_callback=None
-) -> pd.DataFrame:
-    """
-    Получить историю точек КБД (yearyields)
-    
-    Загружает данные по дням через gcurve.json API.
-    
-    Args:
-        start_date: Начальная дата
-        end_date: Конечная дата (по умолчанию сегодня)
-        progress_callback: Функция для отображения прогресса (current, total, date)
-        
-    Returns:
-        DataFrame с колонками: date, period, value
-    """
-    if end_date is None:
-        end_date = date.today()
-    
-    # Генерируем список торговых дней
-    trading_days = []
-    current = start_date
-    while current <= end_date:
-        if current.weekday() < 5:  # Без выходных
-            trading_days.append(current)
-        current += timedelta(days=1)
-    
-    all_data = []
-    total = len(trading_days)
-    
-    for i, day in enumerate(trading_days):
-        df = get_yearyields_for_date(day)
-        if not df.empty:
-            all_data.append(df)
-        
-        if progress_callback and (i % 50 == 0 or i == total - 1):
-            progress_callback(i + 1, total, day)
-        
-        if i < total - 1:
-            time_module.sleep(0.1)
-    
-    if not all_data:
-        return pd.DataFrame()
-    
-    result = pd.concat(all_data, ignore_index=True)
-    logger.info(f"Загружено {len(result)} точек yearyields за {len(trading_days)} дней")
-    
-    return result
-
-
-def get_yearyields_for_dates(
-    dates_list: List[date],
-    progress_callback=None
-) -> pd.DataFrame:
-    """
-    Получить точки КБД (yearyields) для конкретного списка дат
-    
-    Оптимизированная версия - загружает только нужные даты.
-    
-    Args:
-        dates_list: Список дат для загрузки
-        progress_callback: Функция для отображения прогресса (current, total, date)
-        
-    Returns:
-        DataFrame с колонками: date, period, value
-    """
-    if not dates_list:
-        return pd.DataFrame()
-    
-    # Убираем дубликаты и сортируем
-    unique_dates = sorted(set(dates_list))
-    
-    all_data = []
-    total = len(unique_dates)
-    
-    for i, day in enumerate(unique_dates):
-        df = get_yearyields_for_date(day)
-        if not df.empty:
-            all_data.append(df)
-        
-        if progress_callback and (i % 10 == 0 or i == total - 1):
-            progress_callback(i + 1, total, day)
-        
-        # Небольшая задержка чтобы не перегружать API
-        if i < total - 1:
-            time_module.sleep(0.05)
-    
-    if not all_data:
-        return pd.DataFrame()
-    
-    result = pd.concat(all_data, ignore_index=True)
-    logger.info(f"Загружено {len(result)} точек yearyields для {len(unique_dates)} дат")
-    
-    return result
+# ============================================================================
+# КОНЕЦ DEPRECATED КОДА
+# ============================================================================
 
 
 def get_current_clcyield(isin: str) -> Optional[float]:
     """
+    DEPRECATED: Используйте get_zcyc_data_for_date()
+    
     Получить текущий YTM по КБД для облигации
     
     Args:
