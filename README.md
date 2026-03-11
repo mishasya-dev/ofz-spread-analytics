@@ -8,6 +8,18 @@ OFZ Spread Analytics — приложение для анализа yield spread
 
 ## Features
 
+### G-Spread Analysis (v0.8.0)
+
+**G-spread теперь берётся напрямую из MOEX ZCYC API:**
+- `trdyield` — рыночная YTM облигации
+- `clcyield` — теоретическая КБД от MOEX
+- `G-spread = trdyield - clcyield` (уже рассчитан MOEX!)
+
+Это обеспечивает **100% точность** по сравнению с самостоятельным расчётом:
+- Nelson-Siegel: ~90-100 bp ошибка ❌
+- Yearyields интерполяция: ~10-15 bp ошибка ❌  
+- **MOEX ZCYC API: 0 bp ошибка** ✅
+
 ### 3-Chart Layout (v0.7.0)
 
 Приложение отображает 3 синхронизированных графика:
@@ -16,17 +28,18 @@ OFZ Spread Analytics — приложение для анализа yield spread
 |-------|------|-------------|
 | 1 | Spread Analytics | YTM обеих облигаций + Z-Score анализ спреда |
 | 2 | YTM Combined | История (дневные) + свечи (intraday) |
-| 3 | Spread Intraday | Intraday спред с перцентилями от дневных данных |
+| 3 | G-Spread Dashboard | G-spread от MOEX с Z-score сигналами |
 
 ### Key Features
 
 - **Real-time MOEX Data**: Прямое подключение к API Московской биржи
+- **Exact G-Spread**: Точные значения G-spread из MOEX ZCYC API
 - **YTM Calculation**: Точный расчёт доходности к погашению из цен свечей
 - **Spread Analysis**: Автоматический расчёт спреда между любыми двумя облигациями
 - **Z-Score Signals**: BUY/SELL сигналы на основе Z-Score анализа
-- **Database Storage**: SQLite для исторических данных
+- **Database Storage**: SQLite для исторических данных с умным кэшированием
+- **Holiday Detection**: Автоматическое определение праздников (нет лишних API запросов)
 - **Bond Management**: Динамическое добавление/удаление отслеживаемых облигаций
-- **Smart Caching**: Оптимизированное кэширование без лишних запросов к API
 
 ## Installation
 
@@ -69,30 +82,47 @@ bonds["SU26255RMFS1"] = BondConfig(
 3. Выберите интервал свечей (1min/10min/1hour)
 4. Графики обновятся автоматически
 
-## Architecture (v0.7.0)
+## Architecture (v0.8.0)
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    API Layer                            │
-│  api/moex_candles.py → только сырые свечи (OHLCV)      │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    API Layer                                 │
+│  api/moex_zcyc.py → ZCYC данные (G-spread от MOEX)          │
+│  api/moex_candles.py → только сырые свечи (OHLCV)           │
+└─────────────────────────────────────────────────────────────┘
                           ↓
-┌─────────────────────────────────────────────────────────┐
-│                 Business Logic                          │
-│  services/candle_processor_ytm_for_bonds.py            │
-│  → BondYTMProcessor: расчёт YTM из цен                 │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                 Business Logic                               │
+│  services/g_spread_calculator.py → статистика и сигналы     │
+│  services/candle_processor_ytm_for_bonds.py → YTM расчёт    │
+└─────────────────────────────────────────────────────────────┘
                           ↓
-┌─────────────────────────────────────────────────────────┐
-│                  Service Layer                          │
-│  services/candle_service.py, data_loader.py            │
-│  → Кэширование, дозагрузка данных                      │
-└─────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────┐
-│                    Database                             │
-│  core/db/ytm_repo.py → SQLite storage                  │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                  Database Layer                              │
+│  core/db/g_spread_repo.py → ZCYC кэш + пустые даты          │
+│  core/db/ytm_repo.py → YTM история                          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Caching Strategy
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Первый запрос периода                                      │
+├─────────────────────────────────────────────────────────────┤
+│  1. Проверка Streamlit кэша → пусто                         │
+│  2. Проверка БД → возврат имеющихся записей                 │
+│  3. Дозагрузка только недостающих дней с MOEX               │
+│  4. Сохранение праздников в zcyc_empty_dates                │
+│  5. Кэширование результата в Streamlit                      │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  Повторный запрос (смена слайдера, те же даты)              │
+├─────────────────────────────────────────────────────────────┤
+│  1. Проверка Streamlit кэша → есть!                         │
+│  2. Мгновенный возврат (без БД и MOEX)                      │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## Project Structure
@@ -102,27 +132,29 @@ streamlit-app/
 ├── app.py                      # Main Streamlit application
 ├── config.py                   # Bond configuration
 ├── api/
+│   ├── moex_zcyc.py            # ZCYC API (G-spread from MOEX)
 │   ├── moex_bonds.py           # Bond list from MOEX
 │   ├── moex_candles.py         # Raw candle data (OHLCV only)
 │   ├── moex_history.py         # Historical YTM data
 │   └── moex_trading.py         # Trading status
 ├── services/
-│   ├── candle_processor_ytm_for_bonds.py  # YTM calculation from prices
+│   ├── g_spread_calculator.py  # G-spread stats & signals
+│   ├── candle_processor_ytm_for_bonds.py  # YTM calculation
 │   ├── candle_service.py       # Candle data management
 │   └── data_loader.py          # Data loading with caching
 ├── core/
-│   ├── database.py             # SQLite database manager
-│   ├── ytm_calculator.py       # YTM calculation engine
-│   ├── spread.py               # Spread calculations
-│   ├── signals.py              # Trading signal generation
-│   └── cointegration.py        # Cointegration analysis
+│   ├── db/
+│   │   ├── connection.py       # SQLite connection + tables
+│   │   ├── g_spread_repo.py    # ZCYC cache + empty dates
+│   │   ├── ytm_repo.py         # YTM storage
+│   │   └── bonds_repo.py       # Bond metadata
+│   ├── cointegration.py        # Cointegration analysis
+│   └── cointegration_service.py
 ├── components/
-│   ├── charts.py               # Plotly chart builders (4 functions)
+│   ├── charts.py               # Plotly chart builders
 │   ├── sidebar.py              # Sidebar components
 │   └── bond_manager.py         # Bond selection modal
-├── models/
-│   └── bond.py                 # Bond dataclass model
-└── tests/                      # Test suite (398 tests)
+└── tests/                      # Test suite
 ```
 
 ## Testing
@@ -132,93 +164,62 @@ streamlit-app/
 cd streamlit-app
 python -m pytest tests/ -v
 
-# Run specific test file
-python -m pytest tests/test_spread_analytics_chart.py -v
-```
-
-### Test Coverage
-
-| File | Tests | Description |
-|------|-------|-------------|
-| test_bond_ytm_processor.py | 14 | BondYTMProcessor service |
-| test_spread_analytics_chart.py | 15 | Spread Analytics chart |
-| test_hover_label.py | 8 | Hover label structure |
-| test_cointegration.py | 12 | Cointegration analysis |
-| test_sidebar_v030.py | 36 | Sidebar components |
-| test_database.py | ~100 | Database operations |
-| test_ytm_calculation.py | 6 | YTM calculation accuracy |
-| test_candle_service.py | 33 | Candle service tests |
-
-**Total: 398 tests**
-
-## Charts API
-
-### Available Functions (components/charts.py)
-
-```python
-# Spread Analytics with Z-Score
-fig = create_spread_analytics_chart(
-    df1, df2,                    # YTM DataFrames
-    bond1_name, bond2_name,      # Bond names
-    window=30,                    # Rolling window (days)
-    z_threshold=2.0              # Z-Score threshold
-)
-
-# Combined YTM chart (history + candles)
-fig = create_combined_ytm_chart(
-    daily_df1, daily_df2,        # Daily YTM data
-    intraday_df1, intraday_df2,  # Intraday candle data
-    bond1_name, bond2_name,
-    candle_days=30               # Candle period
-)
-
-# Intraday spread chart
-fig = create_intraday_spread_chart(
-    spread_df,                   # Spread DataFrame
-    daily_stats                  # Daily percentiles
-)
-
-# Apply zoom range
-fig = apply_zoom_range(fig, x_range)
+# Run ZCYC tests
+python test_zcyc.py
 ```
 
 ## API Reference
 
-### MOEX API Endpoints
-
-- **Securities List**: `https://iss.moex.com/iss/engines/stock/markets/bonds/securities.json`
-- **Historical YTM**: `https://iss.moex.com/iss/engines/stock/markets/bonds/boards/TQOB/securities/{ISIN}/candles.json`
-- **Candles**: `https://iss.moex.com/iss/engines/stock/markets/bonds/boards/TQOB/securities/{ISIN}/candles.json`
-
-### YTM Calculation
-
-Приложение рассчитывает YTM методом Ньютона-Рафсона:
+### MOEX ZCYC API
 
 ```python
-from services.candle_processor_ytm_for_bonds import BondYTMProcessor
+from api.moex_zcyc import get_zcyc_data_for_date, get_zcyc_history_parallel
+from datetime import date
 
-processor = BondYTMProcessor()
+# G-spread за конкретную дату
+df = get_zcyc_data_for_date(date(2026, 3, 10))
+# Returns: date, secid, trdyield, clcyield, duration_days, g_spread_bp
 
-# Add YTM to candles DataFrame
-df_with_ytm = processor.add_ytm_to_candles(raw_candles_df, bond_config)
-
-# Calculate YTM for single price
-ytm = processor.calculate_ytm_for_price(
-    price=95.5,              # Price as % of face value
-    bond_config=bond_config,
-    trade_date=date(2025, 3, 6)
+# История G-spread с кэшированием
+df = get_zcyc_history_parallel(
+    start_date=date(2025, 3, 1),
+    end_date=date(2026, 3, 10),
+    isin="SU26247RMFS5",
+    use_cache=True,
+    max_workers=5
 )
 ```
 
-### Caching Strategy
+### G-Spread Signals
 
 ```python
-# Cache by ISIN (no period dependency)
-_fetch_all_historical_data(isin)  # Returns 730 days, cached by ISIN
+from services.g_spread_calculator import calculate_g_spread_stats, generate_g_spread_signal
 
-# Filter by period (no cache invalidation)
-fetch_historical_data_cached(isin, days=365)  # Filters from cache
+# Статистика
+stats = calculate_g_spread_stats(df['g_spread_bp'])
+# Returns: mean, median, std, p10, p25, p75, p90, current
+
+# Торговый сигнал
+signal = generate_g_spread_signal(
+    current_spread=stats['current'],
+    p10=stats['p10'],
+    p25=stats['p25'],
+    p75=stats['p75'],
+    p90=stats['p90']
+)
+# Returns: signal (BUY/SELL/HOLD), action, reason, color, strength
 ```
+
+## Database Tables
+
+| Table | Purpose |
+|-------|---------|
+| `zcyc_cache` | Кэш ZCYC данных (G-spread) |
+| `zcyc_empty_dates` | Праздники (нет торгов) |
+| `g_spreads` | Рассчитанные G-spread |
+| `daily_ytm` | Дневные YTM |
+| `intraday_ytm` | Внутридневные YTM |
+| `cointegration_cache` | Кэш коинтеграции |
 
 ## License
 
