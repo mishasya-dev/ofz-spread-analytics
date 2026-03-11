@@ -612,3 +612,129 @@ def get_current_clcyield(isin: str) -> Optional[float]:
     """
     fetcher = ZCYCFetcher()
     return fetcher.fetch_current_clcyield(isin)
+
+
+def get_zcyc_data_for_date(target_date: date) -> pd.DataFrame:
+    """
+    Получить данные ZCYC (G-spread) за конкретную дату
+    
+    Endpoint: /engines/stock/zcyc.json?date=YYYY-MM-DD
+    
+    Возвращает точные G-spread от MOEX:
+    - trdyield: рыночная YTM облигации
+    - clcyield: теоретическая КБД для облигации
+    - crtduration: дюрация в днях
+    - G-spread = trdyield - clcyield
+    
+    Args:
+        target_date: Дата для получения данных
+        
+    Returns:
+        DataFrame с колонками: date, secid, shortname, trdyield, clcyield, 
+                               duration_days, g_spread_bp
+    """
+    url = "https://iss.moex.com/iss/engines/stock/zcyc.json"
+    params = {
+        "iss.meta": "off",
+        "date": target_date.strftime("%Y-%m-%d")
+    }
+    
+    try:
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        
+        securities = data.get("securities", {})
+        if not securities.get("data"):
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(
+            securities["data"],
+            columns=securities.get("columns", [])
+        )
+        
+        # Фильтруем только записи с данными
+        df = df[df['clcyield'].notna() & df['trdyield'].notna()]
+        
+        if df.empty:
+            return pd.DataFrame()
+        
+        # Выбираем нужные колонки
+        result = pd.DataFrame({
+            'date': pd.to_datetime(target_date),
+            'secid': df['secid'],
+            'shortname': df['shortname'],
+            'trdyield': df['trdyield'].astype(float),
+            'clcyield': df['clcyield'].astype(float),
+            'duration_days': df['crtduration'].astype(float),
+        })
+        
+        # G-spread в базисных пунктах
+        result['g_spread_bp'] = (result['trdyield'] - result['clcyield']) * 100
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении ZCYC за {target_date}: {e}")
+        return pd.DataFrame()
+
+
+def get_zcyc_history(
+    start_date: date,
+    end_date: date = None,
+    isin: str = None,
+    progress_callback=None
+) -> pd.DataFrame:
+    """
+    Получить историю ZCYC (G-spread) за период
+    
+    Загружает данные по дням. G-spread уже рассчитан MOEX.
+    
+    Args:
+        start_date: Начальная дата
+        end_date: Конечная дата (по умолчанию сегодня)
+        isin: ISIN облигации для фильтрации (если нужно)
+        progress_callback: Функция прогресса (current, total, date)
+        
+    Returns:
+        DataFrame с колонками: date, secid, shortname, trdyield, clcyield,
+                               duration_days, g_spread_bp
+    """
+    if end_date is None:
+        end_date = date.today()
+    
+    # Генерируем список торговых дней
+    trading_days = []
+    current = start_date
+    while current <= end_date:
+        if current.weekday() < 5:  # Без выходных
+            trading_days.append(current)
+        current += timedelta(days=1)
+    
+    all_data = []
+    total = len(trading_days)
+    
+    for i, day in enumerate(trading_days):
+        df = get_zcyc_data_for_date(day)
+        
+        if not df.empty:
+            if isin:
+                df = df[df['secid'] == isin]
+            if not df.empty:
+                all_data.append(df)
+        
+        if progress_callback and (i % 10 == 0 or i == total - 1):
+            progress_callback(i + 1, total, day)
+        
+        if i < total - 1:
+            time_module.sleep(0.05)
+    
+    if not all_data:
+        return pd.DataFrame()
+    
+    result = pd.concat(all_data, ignore_index=True)
+    result = result.sort_values('date').reset_index(drop=True)
+    
+    logger.info(f"Загружено {len(result)} записей ZCYC за {len(trading_days)} дней")
+    
+    return result

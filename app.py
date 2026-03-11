@@ -591,117 +591,96 @@ def calculate_bond_g_spread(
     """
     Рассчитать G-spread для облигации с Z-Score и ADF тестом
     
-    По умолчанию использует MATURITY (срок до погашения).
-    Если use_duration=True, использует DURATION.
-    
-    КБД интерполируется по yearyields с MOEX G-Curve API.
+    ИСПОЛЬЗУЕТ ТОЧНЫЕ ДАННЫЕ MOEX:
+    - trdyield: рыночная YTM облигации
+    - clcyield: теоретическая КБД от MOEX
+    - G-spread = trdyield - clcyield (уже рассчитан MOEX!)
     
     Args:
         isin: ISIN облигации
-        daily_df: DataFrame с YTM облигации (колонки: ytm, duration)
-        ns_params_df: DataFrame с параметрами Nelson-Siegel (НЕ ИСПОЛЬЗУЕТСЯ)
+        daily_df: DataFrame с YTM облигации (НЕ ИСПОЛЬЗУЕТСЯ, берём из ZCYC API)
+        ns_params_df: DataFrame с параметрами NS (НЕ ИСПОЛЬЗУЕТСЯ)
         window: Окно для rolling Z-Score
-        maturity_date: Дата погашения облигации
-        use_duration: Если True, использовать дюрацию вместо maturity
+        maturity_date: Дата погашения (НЕ ИСПОЛЬЗУЕТСЯ)
+        use_duration: НЕ ИСПОЛЬЗУЕТСЯ (MOEX использует дюрацию)
         
     Returns:
         (DataFrame с G-spread, p_value ADF теста)
     """
-    g_spread_repo = get_g_spread_repo()
+    from api.moex_zcyc import get_zcyc_history
+    from statsmodels.tsa.stattools import adfuller
     
-    # Проверяем есть ли в БД
-    g_spread_df = g_spread_repo.load_g_spreads(isin)
+    # Определяем период по данным daily_df
+    if not daily_df.empty:
+        daily_df_copy = daily_df.reset_index() if daily_df.index.name else daily_df
+        if 'date' in daily_df_copy.columns or 'index' in daily_df_copy.columns:
+            date_col = 'date' if 'date' in daily_df_copy.columns else 'index'
+            dates = pd.to_datetime(daily_df_copy[date_col])
+            start_date = dates.min().date()
+            end_date = dates.max().date()
+        else:
+            start_date = date.today() - timedelta(days=365)
+            end_date = date.today()
+    else:
+        start_date = date.today() - timedelta(days=365)
+        end_date = date.today()
     
-    if not g_spread_df.empty:
-        # Проверяем актуальность
-        last_date = g_spread_repo.get_last_g_spread_date(isin)
-        if last_date and (date.today() - last_date).days <= 1:
-            logger.info(f"G-spread из БД для {isin}: {len(g_spread_df)} записей")
-            return g_spread_df, 0.0  # p-value из кэша не храним
+    logger.info(f"Загрузка ZCYC для {isin} за {start_date} - {end_date}")
     
-    # Рассчитываем
-    if daily_df.empty:
+    # Загружаем историю ZCYC с MOEX
+    zcyc_df = get_zcyc_history(start_date, end_date, isin=isin)
+    
+    if zcyc_df.empty:
+        logger.warning(f"Нет ZCYC данных для {isin}")
         return pd.DataFrame(), 1.0
     
-    # Подготовка данных облигации
-    bond_data = daily_df.copy()
+    logger.info(f"Загружено {len(zcyc_df)} записей ZCYC для {isin}")
     
-    # Сбрасываем индекс если нужно
-    if bond_data.index.name == 'date' or bond_data.index.name is None:
-        bond_data = bond_data.reset_index()
-        if 'index' in bond_data.columns:
-            bond_data = bond_data.rename(columns={'index': 'date'})
+    # G-spread уже рассчитан MOEX!
+    # Нужно только добавить Z-score
     
-    # Добавляем признак use_duration
-    bond_data['use_duration'] = use_duration
+    df = zcyc_df.copy()
+    df = df.sort_values('date').reset_index(drop=True)
     
-    # Если есть maturity_date и НЕ используем дюрацию, добавляем колонку
-    if maturity_date and not use_duration:
-        bond_data['maturity_date'] = pd.to_datetime(maturity_date)
+    # Rolling Z-Score
+    roll = df['g_spread_bp'].rolling(window=window)
+    df['z_score'] = (df['g_spread_bp'] - roll.mean()) / roll.std()
     
-    # Получаем даты из данных облигации
-    bond_dates = set()
-    if 'date' in bond_data.columns:
-        bond_dates = {d.date() if hasattr(d, 'date') else d for d in bond_data['date']}
-    elif bond_data.index.name == 'date':
-        bond_dates = {d.date() if hasattr(d, 'date') else d for d in bond_data.index}
+    # ADF тест
+    p_value = 1.0
+    try:
+        g_spread_clean = df['g_spread_bp'].dropna()
+        if len(g_spread_clean) >= 20:
+            adf_result = adfuller(g_spread_clean)
+            p_value = adf_result[1]
+    except Exception as e:
+        logger.warning(f"ADF тест не удался: {e}")
     
-    # Загружаем yearyields из БД
-    yearyields_df = g_spread_repo.load_yearyields()
-    existing_dates = g_spread_repo.get_yearyields_dates() if not yearyields_df.empty else set()
+    # Формируем результат
+    result_df = df.copy()
+    result_df = result_df.set_index('date')
     
-    # Находим недостающие даты
-    missing_dates = bond_dates - existing_dates
+    # Добавляем колонки для совместимости с UI
+    result_df = result_df.rename(columns={
+        'trdyield': 'ytm_bond',
+        'clcyield': 'ytm_kbd',
+        'duration_days': 'duration_days'
+    })
     
-    if missing_dates:
-        from api.moex_zcyc import get_yearyields_for_dates
-        logger.info(f"Загрузка yearyields для {len(missing_dates)} дат...")
-        
-        new_yearyields = get_yearyields_for_dates(list(missing_dates))
-        
-        if not new_yearyields.empty:
-            g_spread_repo.save_yearyields(new_yearyields)
-            logger.info(f"Сохранено {len(new_yearyields)} точек yearyields")
-            # Перезагружаем с новыми данными
-            yearyields_df = g_spread_repo.load_yearyields()
+    # Добавляем duration_years
+    result_df['duration_years'] = result_df['duration_days'] / 365.25
     
-    if yearyields_df.empty:
-        logger.warning("Нет yearyields для расчёта G-spread")
-        return pd.DataFrame(), 1.0
+    # Сохраняем в БД (опционально)
+    try:
+        g_spread_repo = get_g_spread_repo()
+        # Используем тот же формат что и раньше
+        save_df = result_df[['ytm_bond', 'ytm_kbd', 'g_spread_bp', 'duration_years', 'z_score']].copy()
+        saved = g_spread_repo.save_g_spreads(isin, save_df)
+        logger.info(f"Сохранено {saved} G-spread для {isin}")
+    except Exception as e:
+        logger.warning(f"Не удалось сохранить G-spread: {e}")
     
-    # Вызываем новый метод с yearyields
-    from services.g_spread_calculator import enrich_bond_data_with_yearyields
-    g_spread_df, p_value = enrich_bond_data_with_yearyields(bond_data, yearyields_df, window=window)
-    
-    if not g_spread_df.empty:
-        # Преобразуем в формат для сохранения и UI
-        result_df = g_spread_df.copy()
-        
-        # Устанавливаем date как индекс если это колонка
-        if 'date' in result_df.columns:
-            result_df = result_df.set_index('date')
-        
-        # Переименовываем колонки для совместимости
-        result_df = result_df.rename(columns={
-            'ytm': 'ytm_bond',
-            'ytm_kbd': 'ytm_kbd'
-        })
-        
-        # Убираем дубликат g_spread если есть обе колонки
-        if 'g_spread' in result_df.columns and 'g_spread_bp' in result_df.columns:
-            result_df = result_df.drop(columns=['g_spread'])
-        
-        # Оставляем только нужные колонки
-        keep_cols = ['ytm_bond', 'ytm_kbd', 'g_spread_bp', 'maturity_years', 'z_score']
-        result_df = result_df[[c for c in keep_cols if c in result_df.columns]]
-        
-        # Сохраняем в БД
-        saved = g_spread_repo.save_g_spreads(isin, result_df)
-        logger.info(f"Сохранено {saved} G-spread для {isin}, ADF p-value: {p_value:.4f}")
-        
-        return result_df, p_value
-    
-    return pd.DataFrame(), 1.0
+    return result_df, p_value
 
 
 def calculate_spread_stats(spread_series: pd.Series) -> Dict:
