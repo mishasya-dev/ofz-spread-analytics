@@ -575,6 +575,38 @@ def fetch_ns_params_from_moex(progress_callback=None, days: int = 730) -> int:
     return g_spread_repo.count_ns_params()
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _fetch_zcyc_cached(isin: str, start_date_str: str, end_date_str: str) -> pd.DataFrame:
+    """
+    Кэшированная загрузка ZCYC данных (5 минут TTL)
+    
+    Args:
+        isin: ISIN облигации
+        start_date_str: Начальная дата (строка для хэширования)
+        end_date_str: Конечная дата (строка для хэширования)
+        
+    Returns:
+        DataFrame с ZCYC данными
+    """
+    from api.moex_zcyc import get_zcyc_history_parallel
+    from datetime import datetime as dt
+    
+    start_date = dt.strptime(start_date_str, '%Y-%m-%d').date()
+    end_date = dt.strptime(end_date_str, '%Y-%m-%d').date()
+    
+    repo = get_g_spread_repo()
+    
+    # Загружаем данные с MOEX (с кэшированием в БД)
+    zcyc_df = get_zcyc_history_parallel(
+        start_date, end_date,
+        isin=isin,
+        save_callback=repo.save_zcyc,
+        max_workers=5
+    )
+    
+    return zcyc_df
+
+
 def calculate_bond_g_spread(
     isin: str,
     daily_df: pd.DataFrame,
@@ -602,7 +634,6 @@ def calculate_bond_g_spread(
     Returns:
         (DataFrame с G-spread, p_value ADF теста)
     """
-    from api.moex_zcyc import get_zcyc_history
     from statsmodels.tsa.stattools import adfuller
     
     # Определяем период по данным daily_df
@@ -622,14 +653,11 @@ def calculate_bond_g_spread(
     
     logger.info(f"Загрузка ZCYC для {isin} за {start_date} - {end_date}")
     
-    # Загружаем историю ZCYC с MOEX с кэшированием (параллельно)
-    from api.moex_zcyc import get_zcyc_history_parallel
-    repo = get_g_spread_repo()
-    zcyc_df = get_zcyc_history_parallel(
-        start_date, end_date, 
-        isin=isin,
-        save_callback=repo.save_zcyc,
-        max_workers=5  # 5 параллельных запросов
+    # Кэшированная загрузка ZCYC (TTL 5 минут)
+    zcyc_df = _fetch_zcyc_cached(
+        isin,
+        start_date.strftime('%Y-%m-%d'),
+        end_date.strftime('%Y-%m-%d')
     )
     
     if zcyc_df.empty:
