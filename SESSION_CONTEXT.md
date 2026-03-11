@@ -1,154 +1,150 @@
-# Session Context - 08.03.2026
+# Session Context - 11.03.2026
 
 ## Project State
 
 ### Git Information
 - **Repository**: https://github.com/mishasya-dev/ofz-spread-analytics
-- **Branch**: `feature/g-spread-implementation`
-- **Last Commit**: `1747c2f` - feat: add G-spread UI with dashboard charts and metrics
+- **Branch**: `feature/g-spread-yearyields-method`
+- **Last Commit**: `f30c2e2` - docs: update README for v0.8.0, clean up tests
 
 ### Database Status
 - **Location**: `streamlit-app/data/ofz_data.db`
-- **Tables**: bonds, daily_ytm, intraday_ytm, spreads, ns_params, g_spreads
+- **Tables**: bonds, daily_ytm, intraday_ytm, spreads, ns_params, g_spreads, zcyc_cache, zcyc_empty_dates
 - **Bonds Tracked**: 16+
 
-## Research Summary: G-spread Calculation
+## Key Change: G-Spread Methodology (v0.8.0)
 
 ### Problem
-Historical G-spread is NOT available directly from MOEX:
-- ZSPREAD in history/yields = always None
-- clcyield (YTM by KBD) = only current data
-- yearyields (KBD points) = only current data
+- Nelson-Siegel formula: ~90-100 bp ошибка
+- Yearyields интерполяция: ~10-15 bp ошибка
 
-### Solution: Nelson-Siegel Model
+### Solution: Direct MOEX ZCYC API
+**G-spread теперь берётся НАПРЯМУЮ из MOEX ZCYC API:**
+- `trdyield` — рыночная YTM облигации
+- `clcyield` — теоретическая КБД от MOEX
+- `G-spread = trdyield - clcyield` (уже рассчитан MOEX!)
+- **Ошибка: 0 bp** ✅
 
+### API Endpoints
 ```
-G-spread = YTM_bond - YTM_KBD(duration)
-
-YTM_KBD(t) = β₀ + β₁·f₁(t) + β₂·f₂(t)
-
-where:
-  f₁(t) = (1 - e^(-t/τ)) / (t/τ)
-  f₂(t) = f₁(t) - e^(-t/τ)
+GET /engines/stock/zcyc.json?date=YYYY-MM-DD
+Returns: securities data with trdyield, clcyield, crtduration
 ```
 
-### Data Sources
-
-| Data | Endpoint | History |
-|------|----------|---------|
-| NS params (B1,B2,B3,T1) | `/history/engines/stock/zcyc` | ✅ 16528 records |
-| Bond YTM, Duration | `/history/.../securities/{ISIN}` | ✅ 2+ years |
-| yearyields (KBD points) | `/engines/stock/zcyc` | ❌ Current only |
-| clcyield | `/engines/stock/zcyc/securities` | ❌ Current only |
-
-### Algorithm
-
+### Key Functions
 ```python
-# Step 1: Get historical NS params
-ns_params = fetch_history_zcyc(date_from, date_to)
-# Returns: {date: {B1, B2, B3, T1}}
+from api.moex_zcyc import get_zcyc_data_for_date, get_zcyc_history_parallel
 
-# Step 2: Get bond data
-bond_data = fetch_history_securities(isin, date_from, date_to)
-# Returns: {date: {YIELDCLOSE, DURATION}}
+# G-spread за дату
+df = get_zcyc_data_for_date(date(2026, 3, 10))
 
-# Step 3: Calibrate NS to current yearyields
-beta0, beta1, beta2, tau = fit_ns_to_yearyields(yearyields, B1_hint)
-
-# Step 4: Calculate G-spread
-for date in dates:
-    duration_years = bond_data[date]['DURATION'] / 365.25
-    ytm_kbd = nelson_siegel(duration_years, beta0, beta1, beta2, tau)
-    g_spread = bond_data[date]['YIELDCLOSE'] - ytm_kbd
+# История с кэшированием
+df = get_zcyc_history_parallel(start_date, end_date, isin="SU26247RMFS5")
 ```
 
-### Accuracy
+## Caching Architecture
 
-| Method | Error (bps) |
-|--------|-------------|
-| API clcyield (current) | 0 (exact) |
-| NS calibrated to current yearyields | 2-20 |
-| NS with daily yearyields snapshots | 0-2 |
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Первый запрос периода                                      │
+├─────────────────────────────────────────────────────────────┤
+│  1. Проверка Streamlit кэша → пусто                         │
+│  2. Проверка БД → возврат имеющихся записей                 │
+│  3. Дозагрузка только недостающих дней с MOEX               │
+│  4. Сохранение праздников в zcyc_empty_dates                │
+│  5. Кэширование результата в Streamlit                      │
+└─────────────────────────────────────────────────────────────┘
 
-### Recommendation for Mean-Reversion Strategy
+┌─────────────────────────────────────────────────────────────┐
+│  Повторный запрос (смена слайдера, те же даты)              │
+├─────────────────────────────────────────────────────────────┤
+│  1. Проверка Streamlit кэша → есть!                         │
+│  2. Мгновенный возврат (без БД и MOEX)                      │
+└─────────────────────────────────────────────────────────────┘
+```
 
-1. **Current signals**: Use `clcyield` or `zspread` from API (exact)
-2. **Historical analysis**: Use NS calibration (acceptable error)
-3. **Production**: Save yearyields daily to DB for future accuracy
+## Database Tables
+
+| Table | Purpose |
+|-------|---------|
+| `zcyc_cache` | Кэш ZCYC данных (G-spread) |
+| `zcyc_empty_dates` | Праздники (нет торгов) - NEW! |
+| `g_spreads` | Рассчитанные G-spread |
+| `ns_params` | Параметры Nelson-Siegel (deprecated) |
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    API Layer                                    │
-│  api/moex_candles.py → только сырые свечи (OHLCV)              │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    API Layer                                 │
+│  api/moex_zcyc.py → ZCYC данные (G-spread от MOEX)          │
+│  api/moex_candles.py → только сырые свечи (OHLCV)           │
+└─────────────────────────────────────────────────────────────┘
                           ↓
-┌─────────────────────────────────────────────────────────────────┐
-│                 Business Logic                                  │
-│  services/candle_processor_ytm_for_bonds.py                    │
-│  → BondYTMProcessor: расчёт YTM из цен                         │
-│  → GSpreadCalculator: расчёт G-spread через NS (NEW)           │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                 Business Logic                               │
+│  services/g_spread_calculator.py → статистика и сигналы     │
+│  services/candle_processor_ytm_for_bonds.py → YTM расчёт    │
+└─────────────────────────────────────────────────────────────┘
                           ↓
-┌─────────────────────────────────────────────────────────────────┐
-│                  Service Layer                                  │
-│  services/candle_service.py, data_loader.py                    │
-│  → Кэширование, дозагрузка данных                              │
-└─────────────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────────────┐
-│                    Database                                     │
-│  core/db/ytm_repo.py → SQLite storage                          │
-│  → NEW TABLE: yearyields_snapshots (для истории КБД)           │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                  Database Layer                              │
+│  core/db/g_spread_repo.py → ZCYC кэш + пустые даты          │
+│  core/db/ytm_repo.py → YTM история                          │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## Key Files Reference
 
 ### Core Files
 ```
-api/moex_candles.py                      - Raw candle data only
-api/moex_zcyc.py                         - NS params & clcyield from MOEX (NEW)
-services/candle_processor_ytm_for_bonds.py - BondYTMProcessor
-services/g_spread_calculator.py          - Nelson-Siegel & G-spread (NEW)
-core/db/g_spread_repo.py                 - Repository for NS & G-spread (NEW)
-components/charts.py                     - 6 functions (~970 lines)
+api/moex_zcyc.py                         - ZCYC API (G-spread from MOEX)
+core/db/g_spread_repo.py                 - ZCYC cache + empty dates
+services/g_spread_calculator.py          - G-spread stats & signals
+components/charts.py                     - Chart builders
 app.py                                   - Main Streamlit application
 ```
 
-### Active Tests
+### Tests
 ```
-tests/test_bond_ytm_processor.py         - 14 tests for BondYTMProcessor
-tests/test_spread_analytics_chart.py     - 15 tests for Z-Score chart
-tests/test_hover_label.py                - 8 tests for hover labels
-tests/test_cointegration.py              - 12 tests for cointegration
-tests/test_sidebar_v030.py               - 36 tests for sidebar
-tests/test_database.py                   - ~100 tests for DB
-tests/test_candle_service.py             - 33 tests for candle service
+test_zcyc.py                             - 7 tests for ZCYC functionality
+tests/                                   - 398 tests total
+```
 
-Total: 398 tests
+## Deprecated Code (DO NOT USE)
+
+```python
+# DEPRECATED - даёт ~90-100 bp ошибку:
+from services.g_spread_calculator import nelson_siegel
+
+# DEPRECATED - заменено на get_zcyc_data_for_date():
+from api.moex_zcyc import get_yearyields_for_date
+
+# DEPRECATED - заменено на get_zcyc_history_parallel():
+from services.g_spread_calculator import calculate_g_spread_history
 ```
 
 ## Notes for Next Session
 
 - Working directory: `/home/z/my-project/streamlit-app/`
-- Run tests: `python -m pytest tests/ -v --ignore=tests/test_ui.py`
+- Run tests: `python3 test_zcyc.py`
 - Start app: `streamlit run app.py`
 - Database: `data/ofz_data.db`
 
-### TODO for G-spread Implementation
+### Completed Tasks
+- [x] Implement get_zcyc_data_for_date() - exact G-spread from MOEX
+- [x] Implement get_zcyc_history_parallel() - parallel loading with 5 workers
+- [x] Add zcyc_cache table for caching ZCYC data
+- [x] Add zcyc_empty_dates table for holidays
+- [x] Add Streamlit cache for ZCYC (no TTL - historical data immutable)
+- [x] Update README with new architecture
+- [x] Create comprehensive test_zcyc.py
 
-- [x] Create `services/g_spread_calculator.py`
-- [x] Add `ns_params` and `g_spreads` tables to DB
-- [x] Create `api/moex_zcyc.py` for fetching NS params
-- [x] Create `core/db/g_spread_repo.py` for storage
-- [x] Add G-spread dashboard chart to UI
-- [x] Add G-spread metrics and signals to UI
-- [x] Add `enrich_bond_data()` with Z-score and ADF test
-- [x] Auto-detect duration units (days vs years)
-- [ ] Create daily snapshot job for yearyields (optional)
-- [ ] Test historical G-spread accuracy with real data
+### Potential Future Tasks
+- [ ] Add daily snapshot job for ZCYC data
+- [ ] Implement G-spread alerts/notifications
+- [ ] Add more bond pairs for analysis
+- [ ] Create API documentation with OpenAPI
 
 ---
-*Session saved: 2026-03-08 UTC*
+*Session saved: 2026-03-11 UTC*

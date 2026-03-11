@@ -2291,3 +2291,93 @@ Has g_spread_bp: True
 ---
 
 *Обновление: 09.03.2026*
+
+---
+
+## v0.8.0 — G-Spread from MOEX ZCYC API (11.03.2026)
+
+### Ключевое изменение
+
+**G-spread теперь берётся НАПРЯМУЮ из MOEX ZCYC API:**
+- `trdyield` — рыночная YTM облигации
+- `clcyield` — теоретическая КБД от MOEX
+- `G-spread = trdyield - clcyield` (уже рассчитан MOEX!)
+
+**Точность:**
+- Nelson-Siegel: ~90-100 bp ошибка ❌
+- Yearyields интерполяция: ~10-15 bp ошибка ❌
+- **MOEX ZCYC API: 0 bp ошибка** ✅
+
+### Новые файлы
+
+| Файл | Назначение |
+|------|------------|
+| `api/moex_zcyc.py` | `get_zcyc_data_for_date()`, `get_zcyc_history_parallel()` |
+| `test_zcyc.py` | 7 тестов для ZCYC функционала |
+
+### Новые таблицы БД
+
+```sql
+-- Кэш ZCYC данных
+zcyc_cache (
+    date TEXT,
+    secid TEXT,
+    trdyield REAL,      -- рыночная YTM
+    clcyield REAL,      -- теоретическая КБД
+    duration_days REAL,
+    g_spread_bp REAL,   -- G-spread (б.п.)
+    UNIQUE(date, secid)
+)
+
+-- Праздники (нет торгов)
+zcyc_empty_dates (
+    date TEXT PRIMARY KEY
+)
+```
+
+### Архитектура кэширования
+
+```
+Первый запрос:
+  1. Проверка Streamlit кэша → пусто
+  2. Проверка БД → возврат имеющихся записей
+  3. Дозагрузка только недостающих дней с MOEX (5 workers)
+  4. Сохранение праздников в zcyc_empty_dates
+  5. Кэширование в Streamlit (без TTL)
+
+Повторный запрос:
+  1. Проверка Streamlit кэша → есть!
+  2. Мгновенный возврат (без БД и MOEX)
+```
+
+### Deprecated код
+
+Следующие функции НЕ ИСПОЛЬЗУЮТЬСЯ (закомментированы):
+- `nelson_siegel()` — ~90-100 bp ошибка
+- `interpolate_kbd()` — заменено на `clcyield`
+- `calculate_g_spread()` — заменено на `get_zcyc_history_parallel()`
+- `enrich_bond_data()` — заменено на MOEX ZCYC API
+
+### Тесты
+
+```
+test_zcyc.py: 7 тестов
+  ✅ test_zcyc_data_for_date
+  ✅ test_zcyc_history_parallel
+  ✅ test_zcyc_repository
+  ✅ test_empty_dates_cache
+  ✅ test_g_spread_stats
+  ✅ test_g_spread_signal
+  ✅ test_db_stats
+```
+
+### Git
+
+- Ветка: `feature/g-spread-yearyields-method`
+- Коммиты:
+  - `b31af1d` - feat: add empty dates cache for holidays
+  - `f30c2e2` - docs: update README for v0.8.0, clean up tests
+
+---
+
+*Обновление: 11.03.2026 UTC*
