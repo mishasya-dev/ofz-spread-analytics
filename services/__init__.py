@@ -25,14 +25,10 @@ from .candle_processor_ytm_for_bonds import (
     get_t1_settlement_date,
 )
 from .g_spread_calculator import (
-    nelson_siegel,
-    nelson_siegel_vectorized,
-    calculate_g_spread,
-    calculate_g_spread_history,
+    # DEPRECATED: nelson_siegel, nelson_siegel_vectorized, calculate_g_spread,
+    # DEPRECATED: calculate_g_spread_history, enrich_bond_data, GSpreadCalculator
     calculate_g_spread_stats,
     generate_g_spread_signal,
-    enrich_bond_data,
-    GSpreadCalculator,
 )
 
 __all__ = [
@@ -56,13 +52,7 @@ __all__ = [
     'BondYTMProcessor',
     'calculate_ytm_for_bond_price',
     'get_t1_settlement_date',
-    # GSpreadCalculator
-    'nelson_siegel',
-    'nelson_siegel_vectorized',
-    'calculate_g_spread',
-    'calculate_g_spread_history',
+    # GSpreadCalculator (активные функции)
     'calculate_g_spread_stats',
     'generate_g_spread_signal',
-    'enrich_bond_data',
-    'GSpreadCalculator',
 ]
