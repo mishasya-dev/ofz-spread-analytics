@@ -589,3 +589,106 @@ class GSpreadRepository:
                 datetime.strptime(row['max_d'], '%Y-%m-%d').date()
             )
         return (None, None)
+    
+    # ==========================================
+    # ПУСТЫЕ ДАТЫ (праздники, когда нет торгов)
+    # ==========================================
+    
+    def save_empty_date(self, empty_date: date) -> bool:
+        """
+        Сохранить дату, для которой MOEX вернул пустой ответ
+        
+        Args:
+            empty_date: Дата без торгов (праздник)
+            
+        Returns:
+            True если сохранено
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT OR IGNORE INTO zcyc_empty_dates (date)
+                VALUES (?)
+            ''', (empty_date.strftime('%Y-%m-%d'),))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.warning(f"Ошибка сохранения пустой даты {empty_date}: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    def save_empty_dates(self, dates: list) -> int:
+        """
+        Сохранить несколько пустых дат
+        
+        Args:
+            dates: Список дат
+            
+        Returns:
+            Количество сохранённых
+        """
+        if not dates:
+            return 0
+        
+        conn = get_connection()
+        cursor = conn.cursor()
+        saved = 0
+        
+        for d in dates:
+            try:
+                cursor.execute('''
+                    INSERT OR IGNORE INTO zcyc_empty_dates (date)
+                    VALUES (?)
+                ''', (d.strftime('%Y-%m-%d'),))
+                saved += 1
+            except Exception:
+                pass
+        
+        conn.commit()
+        conn.close()
+        return saved
+    
+    def load_empty_dates(self, start_date: date = None, end_date: date = None) -> set:
+        """
+        Загрузить множество пустых дат
+        
+        Args:
+            start_date: Начальная дата
+            end_date: Конечная дата
+            
+        Returns:
+            Множество дат
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        query = 'SELECT date FROM zcyc_empty_dates WHERE 1=1'
+        params = []
+        
+        if start_date:
+            query += ' AND date >= ?'
+            params.append(start_date.strftime('%Y-%m-%d'))
+        
+        if end_date:
+            query += ' AND date <= ?'
+            params.append(end_date.strftime('%Y-%m-%d'))
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return {datetime.strptime(row['date'], '%Y-%m-%d').date() for row in rows}
+    
+    def count_empty_dates(self) -> int:
+        """Количество пустых дат"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT COUNT(*) as cnt FROM zcyc_empty_dates')
+        row = cursor.fetchone()
+        conn.close()
+        
+        return row['cnt'] if row else 0

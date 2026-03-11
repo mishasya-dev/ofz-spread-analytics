@@ -397,6 +397,17 @@ def init_database():
         ON zcyc_cache(secid)
     ''')
     
+    # ==========================================
+    # ТАБЛИЦА ZCYC_EMPTY_DATES (даты без торгов)
+    # ==========================================
+    # Хранит даты, для которых MOEX вернул пустой ответ (праздники)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS zcyc_empty_dates (
+            date TEXT PRIMARY KEY,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована")

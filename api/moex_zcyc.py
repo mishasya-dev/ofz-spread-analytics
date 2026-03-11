@@ -779,7 +779,16 @@ def get_zcyc_history_parallel(
                 all_data.append(cached_df)
                 cached_dates = set(d.date() for d in cached_df['date'])
                 dates_to_fetch = [d for d in trading_days if d not in cached_dates]
-                logger.info(f"Из кэша: {len(cached_df)} записей, нужно загрузить: {len(dates_to_fetch)} дней")
+            
+            # Исключаем известные пустые даты (праздники)
+            empty_dates = repo.load_empty_dates(start_date=start_date, end_date=end_date)
+            if empty_dates:
+                dates_to_fetch = [d for d in dates_to_fetch if d not in empty_dates]
+            
+            if cached_df.empty:
+                logger.info(f"Кэш пуст, нужно загрузить: {len(dates_to_fetch)} дней")
+            else:
+                logger.info(f"Из кэша: {len(cached_df)} записей, нужно загрузить: {len(dates_to_fetch)} дней (праздников пропущено: {len(empty_dates & set(trading_days))})")
         except Exception as e:
             logger.warning(f"Ошибка при чтении кэша: {e}")
     
@@ -794,6 +803,7 @@ def get_zcyc_history_parallel(
     # Параллельная загрузка
     total = len(dates_to_fetch)
     new_data = []
+    empty_dates = []  # Даты, для которых MOEX вернул пустой ответ (праздники)
     completed_count = [0]  # Используем list для mutable в замыкании
     lock = threading.Lock()
     
@@ -828,10 +838,23 @@ def get_zcyc_history_parallel(
                     df = df[df['secid'] == isin]
                 if not df.empty:
                     new_data.append(df)
+            else:
+                # MOEX вернул пустой ответ - сохраняем как "пустую дату"
+                empty_dates.append(day)
             
             # Прогресс
             if progress_callback and (current_count % 10 == 0 or current_count == total):
                 progress_callback(current_count, total, day)
+    
+    # Сохраняем пустые даты (праздники)
+    if empty_dates and use_cache:
+        try:
+            from core.db import get_g_spread_repo
+            repo = get_g_spread_repo()
+            saved_empty = repo.save_empty_dates(empty_dates)
+            logger.info(f"Сохранено {saved_empty} пустых дат (праздников)")
+        except Exception as e:
+            logger.warning(f"Ошибка при сохранении пустых дат: {e}")
     
     if new_data:
         new_df = pd.concat(new_data, ignore_index=True)
