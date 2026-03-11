@@ -421,3 +421,171 @@ class GSpreadRepository:
     # def get_last_yearyields_date(self) -> Optional[date]: ...
     # def get_yearyields_dates(self) -> set: ...
     # def count_yearyields(self) -> int: ...
+    
+    # ==========================================
+    # ZCYC CACHE (кэш G-spread от MOEX)
+    # ==========================================
+    
+    def save_zcyc(self, df: pd.DataFrame) -> int:
+        """
+        Сохранить ZCYC данные в кэш
+        
+        Args:
+            df: DataFrame с колонками: date, secid, shortname, trdyield, 
+                clcyield, duration_days, g_spread_bp
+                
+        Returns:
+            Количество сохранённых записей
+        """
+        if df.empty:
+            return 0
+        
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        saved_count = 0
+        
+        for _, row in df.iterrows():
+            try:
+                if isinstance(row['date'], pd.Timestamp):
+                    date_str = row['date'].strftime('%Y-%m-%d')
+                else:
+                    date_str = str(row['date'])[:10]
+                
+                cursor.execute('''
+                    INSERT OR REPLACE INTO zcyc_cache 
+                    (date, secid, shortname, trdyield, clcyield, duration_days, g_spread_bp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    date_str,
+                    str(row['secid']),
+                    str(row.get('shortname', '')),
+                    float(row['trdyield']) if pd.notna(row.get('trdyield')) else None,
+                    float(row['clcyield']) if pd.notna(row.get('clcyield')) else None,
+                    float(row['duration_days']) if pd.notna(row.get('duration_days')) else None,
+                    float(row['g_spread_bp']) if pd.notna(row.get('g_spread_bp')) else None
+                ))
+                saved_count += 1
+                
+            except Exception as e:
+                logger.warning(f"Ошибка сохранения ZCYC: {e}")
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"Сохранено {saved_count} записей ZCYC в кэш")
+        return saved_count
+    
+    def load_zcyc(
+        self,
+        isin: str = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> pd.DataFrame:
+        """
+        Загрузить ZCYC данные из кэша
+        
+        Args:
+            isin: ISIN облигации для фильтрации
+            start_date: Начальная дата
+            end_date: Конечная дата
+            
+        Returns:
+            DataFrame с ZCYC данными
+        """
+        conn = get_connection()
+        
+        query = '''
+            SELECT date, secid, shortname, trdyield, clcyield, duration_days, g_spread_bp
+            FROM zcyc_cache
+            WHERE 1=1
+        '''
+        params = []
+        
+        if isin:
+            query += ' AND secid = ?'
+            params.append(isin)
+        
+        if start_date:
+            query += ' AND date >= ?'
+            params.append(start_date.strftime('%Y-%m-%d'))
+        
+        if end_date:
+            query += ' AND date <= ?'
+            params.append(end_date.strftime('%Y-%m-%d'))
+        
+        query += ' ORDER BY date'
+        
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        
+        if df.empty:
+            return pd.DataFrame()
+        
+        df['date'] = pd.to_datetime(df['date'])
+        
+        return df
+    
+    def get_zcyc_cached_dates(self, isin: str = None) -> set:
+        """
+        Получить множество дат, для которых есть ZCYC данные в кэше
+        
+        Args:
+            isin: ISIN облигации (если None - все даты)
+            
+        Returns:
+            Множество дат
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        if isin:
+            cursor.execute(
+                'SELECT DISTINCT date FROM zcyc_cache WHERE secid = ?',
+                (isin,)
+            )
+        else:
+            cursor.execute('SELECT DISTINCT date FROM zcyc_cache')
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return {datetime.strptime(row['date'], '%Y-%m-%d').date() for row in rows}
+    
+    def count_zcyc(self, isin: str = None) -> int:
+        """Количество записей ZCYC в кэше"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        if isin:
+            cursor.execute('SELECT COUNT(*) as cnt FROM zcyc_cache WHERE secid = ?', (isin,))
+        else:
+            cursor.execute('SELECT COUNT(*) as cnt FROM zcyc_cache')
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        return row['cnt'] if row else 0
+    
+    def get_zcyc_date_range(self, isin: str = None) -> tuple:
+        """Получить диапазон дат ZCYC в кэше"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        if isin:
+            cursor.execute(
+                'SELECT MIN(date) as min_d, MAX(date) as max_d FROM zcyc_cache WHERE secid = ?',
+                (isin,)
+            )
+        else:
+            cursor.execute('SELECT MIN(date) as min_d, MAX(date) as max_d FROM zcyc_cache')
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row and row['min_d']:
+            return (
+                datetime.strptime(row['min_d'], '%Y-%m-%d').date(),
+                datetime.strptime(row['max_d'], '%Y-%m-%d').date()
+            )
+        return (None, None)

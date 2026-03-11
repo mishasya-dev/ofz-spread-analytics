@@ -622,18 +622,27 @@ def get_zcyc_history(
     start_date: date,
     end_date: date = None,
     isin: str = None,
-    progress_callback=None
+    progress_callback=None,
+    use_cache: bool = True,
+    save_callback=None,
 ) -> pd.DataFrame:
     """
-    Получить историю ZCYC (G-spread) за период
+    Получить историю ZCYC (G-spread) за период с кэшированием
     
     Загружает данные по дням. G-spread уже рассчитан MOEX.
+    
+    При use_cache=True:
+    1. Проверяет кэш БД
+    2. Загружает только недостающие даты с MOEX
+    3. Сохраняет новые данные в кэш
     
     Args:
         start_date: Начальная дата
         end_date: Конечная дата (по умолчанию сегодня)
         isin: ISIN облигации для фильтрации (если нужно)
         progress_callback: Функция прогресса (current, total, date)
+        use_cache: Использовать кэш БД (по умолчанию True)
+        save_callback: Функция для сохранения в БД (df -> int)
         
     Returns:
         DataFrame с колонками: date, secid, shortname, trdyield, clcyield,
@@ -651,22 +660,57 @@ def get_zcyc_history(
         current += timedelta(days=1)
     
     all_data = []
-    total = len(trading_days)
+    dates_to_fetch = trading_days.copy()
     
-    for i, day in enumerate(trading_days):
-        df = get_zcyc_data_for_date(day)
+    # Проверяем кэш если включён
+    if use_cache and save_callback:
+        try:
+            # Импортируем здесь для избежания циклических зависимостей
+            from core.db import get_g_spread_repo
+            repo = get_g_spread_repo()
+            
+            # Загружаем закэшированные данные
+            cached_df = repo.load_zcyc(isin=isin, start_date=start_date, end_date=end_date)
+            
+            if not cached_df.empty:
+                all_data.append(cached_df)
+                cached_dates = set(d.date() for d in cached_df['date'])
+                dates_to_fetch = [d for d in trading_days if d not in cached_dates]
+                logger.info(f"Из кэша: {len(cached_df)} записей, нужно загрузить: {len(dates_to_fetch)} дней")
+        except Exception as e:
+            logger.warning(f"Ошибка при чтении кэша: {e}")
+    
+    # Загружаем недостающие данные с MOEX
+    if dates_to_fetch:
+        total = len(dates_to_fetch)
+        new_data = []
         
-        if not df.empty:
-            if isin:
-                df = df[df['secid'] == isin]
+        for i, day in enumerate(dates_to_fetch):
+            df = get_zcyc_data_for_date(day)
+            
             if not df.empty:
-                all_data.append(df)
+                if isin:
+                    df = df[df['secid'] == isin]
+                if not df.empty:
+                    new_data.append(df)
+            
+            if progress_callback and (i % 10 == 0 or i == total - 1):
+                progress_callback(i + 1, total, day)
+            
+            if i < total - 1:
+                time_module.sleep(0.05)
         
-        if progress_callback and (i % 10 == 0 or i == total - 1):
-            progress_callback(i + 1, total, day)
-        
-        if i < total - 1:
-            time_module.sleep(0.05)
+        if new_data:
+            new_df = pd.concat(new_data, ignore_index=True)
+            all_data.append(new_df)
+            
+            # Сохраняем в кэш
+            if use_cache and save_callback:
+                try:
+                    saved = save_callback(new_df)
+                    logger.info(f"Сохранено в кэш: {saved} записей")
+                except Exception as e:
+                    logger.warning(f"Ошибка при сохранении в кэш: {e}")
     
     if not all_data:
         return pd.DataFrame()
@@ -674,6 +718,6 @@ def get_zcyc_history(
     result = pd.concat(all_data, ignore_index=True)
     result = result.sort_values('date').reset_index(drop=True)
     
-    logger.info(f"Загружено {len(result)} записей ZCYC за {len(trading_days)} дней")
+    logger.info(f"Всего загружено {len(result)} записей ZCYC за {len(trading_days)} дней")
     
     return result

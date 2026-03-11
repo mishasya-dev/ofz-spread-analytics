@@ -369,6 +369,34 @@ def init_database():
         ON yearyields(date)
     ''')
     
+    # ==========================================
+    # ТАБЛИЦА ZCYC_CACHE (кэш G-spread от MOEX)
+    # ==========================================
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS zcyc_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            secid TEXT NOT NULL,
+            shortname TEXT,
+            trdyield REAL,
+            clcyield REAL,
+            duration_days REAL,
+            g_spread_bp REAL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(date, secid)
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_zcyc_cache_date 
+        ON zcyc_cache(date)
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_zcyc_cache_secid 
+        ON zcyc_cache(secid)
+    ''')
+    
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована")

@@ -622,8 +622,13 @@ def calculate_bond_g_spread(
     
     logger.info(f"Загрузка ZCYC для {isin} за {start_date} - {end_date}")
     
-    # Загружаем историю ZCYC с MOEX
-    zcyc_df = get_zcyc_history(start_date, end_date, isin=isin)
+    # Загружаем историю ZCYC с MOEX с кэшированием
+    repo = get_g_spread_repo()
+    zcyc_df = get_zcyc_history(
+        start_date, end_date, 
+        isin=isin,
+        save_callback=repo.save_zcyc
+    )
     
     if zcyc_df.empty:
         logger.warning(f"Нет ZCYC данных для {isin}")
