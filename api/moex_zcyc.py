@@ -554,6 +554,52 @@ def get_yearyields_history(
     return result
 
 
+def get_yearyields_for_dates(
+    dates_list: List[date],
+    progress_callback=None
+) -> pd.DataFrame:
+    """
+    Получить точки КБД (yearyields) для конкретного списка дат
+    
+    Оптимизированная версия - загружает только нужные даты.
+    
+    Args:
+        dates_list: Список дат для загрузки
+        progress_callback: Функция для отображения прогресса (current, total, date)
+        
+    Returns:
+        DataFrame с колонками: date, period, value
+    """
+    if not dates_list:
+        return pd.DataFrame()
+    
+    # Убираем дубликаты и сортируем
+    unique_dates = sorted(set(dates_list))
+    
+    all_data = []
+    total = len(unique_dates)
+    
+    for i, day in enumerate(unique_dates):
+        df = get_yearyields_for_date(day)
+        if not df.empty:
+            all_data.append(df)
+        
+        if progress_callback and (i % 10 == 0 or i == total - 1):
+            progress_callback(i + 1, total, day)
+        
+        # Небольшая задержка чтобы не перегружать API
+        if i < total - 1:
+            time_module.sleep(0.05)
+    
+    if not all_data:
+        return pd.DataFrame()
+    
+    result = pd.concat(all_data, ignore_index=True)
+    logger.info(f"Загружено {len(result)} точек yearyields для {len(unique_dates)} дат")
+    
+    return result
+
+
 def get_current_clcyield(isin: str) -> Optional[float]:
     """
     Получить текущий YTM по КБД для облигации

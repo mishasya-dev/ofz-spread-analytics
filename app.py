@@ -629,19 +629,31 @@ def calculate_bond_g_spread(
     if maturity_date:
         bond_data['maturity_date'] = pd.to_datetime(maturity_date)
     
+    # Получаем даты из данных облигации
+    bond_dates = set()
+    if 'date' in bond_data.columns:
+        bond_dates = {d.date() if hasattr(d, 'date') else d for d in bond_data['date']}
+    elif bond_data.index.name == 'date':
+        bond_dates = {d.date() if hasattr(d, 'date') else d for d in bond_data.index}
+    
     # Загружаем yearyields из БД
     yearyields_df = g_spread_repo.load_yearyields()
+    existing_dates = g_spread_repo.get_yearyields_dates() if not yearyields_df.empty else set()
     
-    # Если yearyields нет в БД, загружаем с MOEX
-    if yearyields_df.empty:
-        from api.moex_zcyc import get_yearyields_history
-        logger.info("Загрузка yearyields с MOEX...")
-        start_date = date.today() - timedelta(days=365)
-        yearyields_df = get_yearyields_history(start_date, date.today())
+    # Находим недостающие даты
+    missing_dates = bond_dates - existing_dates
+    
+    if missing_dates:
+        from api.moex_zcyc import get_yearyields_for_dates
+        logger.info(f"Загрузка yearyields для {len(missing_dates)} дат...")
         
-        if not yearyields_df.empty:
-            g_spread_repo.save_yearyields(yearyields_df)
-            logger.info(f"Сохранено {len(yearyields_df)} точек yearyields")
+        new_yearyields = get_yearyields_for_dates(list(missing_dates))
+        
+        if not new_yearyields.empty:
+            g_spread_repo.save_yearyields(new_yearyields)
+            logger.info(f"Сохранено {len(new_yearyields)} точек yearyields")
+            # Перезагружаем с новыми данными
+            yearyields_df = g_spread_repo.load_yearyields()
     
     if yearyields_df.empty:
         logger.warning("Нет yearyields для расчёта G-spread")

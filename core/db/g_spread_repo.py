@@ -520,6 +520,17 @@ class GSpreadRepository:
             return datetime.strptime(row['last_date'], '%Y-%m-%d').date()
         return None
     
+    def get_yearyields_dates(self) -> set:
+        """Получить множество дат, для которых есть yearyields в БД"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT DISTINCT date FROM yearyields')
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return {datetime.strptime(row['date'], '%Y-%m-%d').date() for row in rows}
+    
     def count_yearyields(self) -> int:
         """Количество записей yearyields"""
         conn = get_connection()
