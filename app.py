@@ -575,10 +575,14 @@ def fetch_ns_params_from_moex(progress_callback=None, days: int = 730) -> int:
     return g_spread_repo.count_ns_params()
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(show_spinner=False)  # Без TTL - исторические данные не меняются
 def _fetch_zcyc_cached(isin: str, start_date_str: str, end_date_str: str) -> pd.DataFrame:
     """
-    Кэшированная загрузка ZCYC данных (5 минут TTL)
+    Кэшированная загрузка ZCYC данных
+    
+    Исторические данные не меняются, поэтому TTL не нужен.
+    При первом вызове проверяет БД, при отсутствии - загружает с MOEX.
+    При последующих вызовах возвращает результат из кэша Streamlit.
     
     Args:
         isin: ISIN облигации
