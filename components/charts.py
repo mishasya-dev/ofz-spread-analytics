@@ -885,7 +885,8 @@ def create_g_spread_dashboard(
 def create_g_spread_chart_single(
     g_spread_df: pd.DataFrame,
     bond_name: str,
-    stats: Optional[Dict] = None
+    stats: Optional[Dict] = None,
+    p_value: Optional[float] = None
 ) -> go.Figure:
     """
     Создать график G-spread для одной облигации с перцентилями
@@ -898,6 +899,8 @@ def create_g_spread_chart_single(
             - g_spread_bp: G-spread (б.п.)
         bond_name: Название облигации
         stats: Статистика {p25, p75, mean, current}
+        p_value: P-value ADF теста на стационарность G-spread
+                  p < 0.05 означает коинтеграцию с КБД
         
     Returns:
         Plotly Figure
@@ -957,8 +960,18 @@ def create_g_spread_chart_single(
                 showlegend=False
             ))
     
+    # Формируем заголовок с коинтеграцией
+    # p_value > 0 и < 1 означает реальный результат ADF теста
+    # p_value == 0 или 1 означает отсутствие данных (из кэша)
+    title = f"G-spread: {bond_name}"
+    if p_value is not None and 0 < p_value < 1:
+        if p_value < 0.05:
+            title += f" | Коинтеграция с КБД ✅"
+        else:
+            title += f" | Коинтеграция с КБД ❌"
+    
     fig.update_layout(
-        title=f"G-spread: {bond_name}",
+        title=title,
         xaxis_title="Дата",
         yaxis_title="G-spread (б.п.)",
         hovermode='x unified',
