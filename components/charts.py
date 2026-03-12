@@ -934,7 +934,7 @@ def create_g_spread_chart_single(
             name=f"+{z_threshold}σ",
             line=dict(color='rgba(255, 0, 0, 0.4)', dash='dot', width=1),
             showlegend=True,
-            hovertemplate=f'+{z_threshold}σ: %{y:.1f} б.п.<extra></extra>'
+            hovertemplate=f'+{z_threshold}σ: %{{y:.1f}} б.п.<extra></extra>'
         ))
         
         # Нижняя граница с заливкой
@@ -946,7 +946,7 @@ def create_g_spread_chart_single(
             fill='tonexty',
             fillcolor='rgba(128, 128, 128, 0.1)',
             showlegend=True,
-            hovertemplate=f'-{z_threshold}σ: %{y:.1f} б.п.<extra></extra>'
+            hovertemplate=f'-{z_threshold}σ: %{{y:.1f}} б.п.<extra></extra>'
         ))
         
         # Rolling Mean
@@ -955,7 +955,7 @@ def create_g_spread_chart_single(
             y=g_spread_df['rolling_mean'],
             name=f"MA({window})",
             line=dict(color='gray', dash='dash', width=1),
-            hovertemplate=f'MA({window}): %{y:.1f} б.п.<extra></extra>'
+            hovertemplate=f'MA({window}): %{{y:.1f}} б.п.<extra></extra>'
         ))
     
     # G-spread
