@@ -245,6 +245,16 @@ def init_session_state():
     if 'z_threshold' not in st.session_state:
         st.session_state.z_threshold = 2.0
 
+    # Параметры для G-Spread Analytics
+    if 'g_spread_period' not in st.session_state:
+        st.session_state.g_spread_period = 365
+    
+    if 'g_spread_window' not in st.session_state:
+        st.session_state.g_spread_window = 30
+    
+    if 'g_spread_z_threshold' not in st.session_state:
+        st.session_state.g_spread_z_threshold = 2.0
+
     # Результат валидации YTM
     if 'ytm_validation' not in st.session_state:
         st.session_state.ytm_validation = None
@@ -1001,6 +1011,37 @@ def main():
         
         st.divider()
         
+        # Настройки G-Spread Analytics
+        st.subheader("📈 G-Spread Анализ")
+        
+        g_spread_period = st.slider(
+            "Период G-Spread (дней)",
+            min_value=30,
+            max_value=730,
+            key="g_spread_period",
+            step=30,
+            format="%d дней"
+        )
+        
+        g_spread_window = st.slider(
+            "Окно rolling (дней)",
+            min_value=5,
+            max_value=90,
+            key="g_spread_window",
+            step=5
+        )
+        
+        g_spread_z_threshold = st.slider(
+            "Z-Score порог (σ)",
+            min_value=1.0,
+            max_value=3.0,
+            key="g_spread_z_threshold",
+            step=0.1,
+            format="%.1fσ"
+        )
+        
+        st.divider()
+        
         # Интервал свечей (intraday) - radio
         st.subheader("⏱️ Интервал свечей")
         interval_options = {"1": "1 мин", "10": "10 мин", "60": "1 час"}
@@ -1264,6 +1305,10 @@ def main():
         daily_df1 = fetch_historical_data_cached(bond1.isin, period)
         daily_df2 = fetch_historical_data_cached(bond2.isin, period)
         
+        # Дневные данные для G-Spread (с отдельным периодом)
+        g_spread_df1_raw = fetch_historical_data_cached(bond1.isin, st.session_state.g_spread_period)
+        g_spread_df2_raw = fetch_historical_data_cached(bond2.isin, st.session_state.g_spread_period)
+        
         # Intraday данные
         # candle_days уже установлен в sidebar
         intraday_df1 = fetch_candle_data_cached(bond1.isin, bond_config_to_dict(bond1), candle_interval, candle_days)
@@ -1449,12 +1494,12 @@ def main():
             # Рассчитываем G-spread для обеих облигаций
             # Используем точные данные MOEX (trdyield - clcyield)
             g_spread_df1, p_value1 = calculate_bond_g_spread(
-                bond1.isin, daily_df1, pd.DataFrame(),  # ns_params больше не нужен
-                window=st.session_state.spread_window
+                bond1.isin, g_spread_df1_raw, pd.DataFrame(),  # ns_params больше не нужен
+                window=st.session_state.g_spread_window
             )
             g_spread_df2, p_value2 = calculate_bond_g_spread(
-                bond2.isin, daily_df2, pd.DataFrame(),
-                window=st.session_state.spread_window
+                bond2.isin, g_spread_df2_raw, pd.DataFrame(),
+                window=st.session_state.g_spread_window
             )
             
             # Метрики G-spread
@@ -1532,7 +1577,7 @@ def main():
                     df_res = pd.concat([df1_data, df2_data], ignore_index=True)
                     
                     # График G-spread дашборд
-                    fig_g_spread = create_g_spread_dashboard(df_res)
+                    fig_g_spread = create_g_spread_dashboard(df_res, z_threshold=st.session_state.g_spread_z_threshold)
                     st.plotly_chart(fig_g_spread, width='stretch')
                     
                     # График отдельных G-spread

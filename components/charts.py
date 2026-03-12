@@ -756,7 +756,8 @@ def apply_zoom_range(fig: go.Figure, x_range: Optional[Tuple]) -> go.Figure:
 
 def create_g_spread_dashboard(
     df_res: pd.DataFrame,
-    title: str = "YTM ОФЗ vs Теоретическая КБД"
+    title: str = "YTM ОФЗ vs Теоретическая КБД",
+    z_threshold: float = 2.0
 ) -> go.Figure:
     """
     Создать дашборд G-spread с двумя графиками:
@@ -771,6 +772,7 @@ def create_g_spread_dashboard(
             - ytm_theor: теоретическая YTM по КБД (%)
             - zscore: Z-Score G-spread
             - g_spread: G-spread (б.п.)
+        z_threshold: Порог Z-Score для сигналов (по умолчанию 2.0σ)
             
     Returns:
         Plotly Figure
@@ -834,20 +836,20 @@ def create_g_spread_dashboard(
 
     # Линии сигналов на нижнем графике
     fig.add_hline(
-        y=2, 
+        y=z_threshold, 
         line_dash="dash", 
         line_color="red", 
         row=2, col=1, 
-        annotation_text="SELL",
+        annotation_text=f"SELL (+{z_threshold}σ)",
         annotation_position="right",
         annotation_font_color="red"
     )
     fig.add_hline(
-        y=-2, 
+        y=-z_threshold, 
         line_dash="dash", 
         line_color="green", 
         row=2, col=1, 
-        annotation_text="BUY",
+        annotation_text=f"BUY (-{z_threshold}σ)",
         annotation_position="right",
         annotation_font_color="green"
     )
