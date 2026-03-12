@@ -692,9 +692,11 @@ def calculate_bond_g_spread(
     df = zcyc_df.copy()
     df = df.sort_values('date').reset_index(drop=True)
     
-    # Rolling Z-Score
+    # Rolling Z-Score (сохраняем также mean и std для графиков)
     roll = df['g_spread_bp'].rolling(window=window)
-    df['z_score'] = (df['g_spread_bp'] - roll.mean()) / roll.std()
+    df['rolling_mean'] = roll.mean()
+    df['rolling_std'] = roll.std()
+    df['z_score'] = (df['g_spread_bp'] - df['rolling_mean']) / df['rolling_std']
     
     # ADF тест
     p_value = 1.0
@@ -1558,10 +1560,8 @@ def main():
                     df1_data['ytm'] = df1_data['ytm_bond']
                     df1_data['ytm_theor'] = df1_data['ytm_kbd']
                     df1_data['g_spread'] = df1_data['g_spread_bp']
-                    
-                    mean_gs1 = stats1.get('mean', 0)
-                    std_gs1 = stats1.get('std', 1)
-                    df1_data['zscore'] = (df1_data['g_spread_bp'] - mean_gs1) / std_gs1
+                    # Используем уже рассчитанный rolling Z-score (зависит от g_spread_window)
+                    df1_data['zscore'] = df1_data['z_score']
                     
                     # Облигация 2
                     df2_data = g_spread_df2.reset_index()
@@ -1569,10 +1569,8 @@ def main():
                     df2_data['ytm'] = df2_data['ytm_bond']
                     df2_data['ytm_theor'] = df2_data['ytm_kbd']
                     df2_data['g_spread'] = df2_data['g_spread_bp']
-                    
-                    mean_gs2 = stats2.get('mean', 0)
-                    std_gs2 = stats2.get('std', 1)
-                    df2_data['zscore'] = (df2_data['g_spread_bp'] - mean_gs2) / std_gs2
+                    # Используем уже рассчитанный rolling Z-score (зависит от g_spread_window)
+                    df2_data['zscore'] = df2_data['z_score']
                     
                     df_res = pd.concat([df1_data, df2_data], ignore_index=True)
                     
@@ -1583,10 +1581,18 @@ def main():
                     # График отдельных G-spread
                     col_chart1, col_chart2 = st.columns(2)
                     with col_chart1:
-                        fig_gs1 = create_g_spread_chart_single(g_spread_df1, bond1.name, stats1, p_value1)
+                        fig_gs1 = create_g_spread_chart_single(
+                            g_spread_df1, bond1.name, stats1, p_value1,
+                            window=st.session_state.g_spread_window,
+                            z_threshold=st.session_state.g_spread_z_threshold
+                        )
                         st.plotly_chart(fig_gs1, width='stretch')
                     with col_chart2:
-                        fig_gs2 = create_g_spread_chart_single(g_spread_df2, bond2.name, stats2, p_value2)
+                        fig_gs2 = create_g_spread_chart_single(
+                            g_spread_df2, bond2.name, stats2, p_value2,
+                            window=st.session_state.g_spread_window,
+                            z_threshold=st.session_state.g_spread_z_threshold
+                        )
                         st.plotly_chart(fig_gs2, width='stretch')
             
             elif g_spread_df1.empty and g_spread_df2.empty:

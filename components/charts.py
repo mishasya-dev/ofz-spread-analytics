@@ -888,10 +888,12 @@ def create_g_spread_chart_single(
     g_spread_df: pd.DataFrame,
     bond_name: str,
     stats: Optional[Dict] = None,
-    p_value: Optional[float] = None
+    p_value: Optional[float] = None,
+    window: int = 30,
+    z_threshold: float = 2.0
 ) -> go.Figure:
     """
-    Создать график G-spread для одной облигации с перцентилями
+    Создать график G-spread для одной облигации с rolling Z-score границами
     
     Args:
         g_spread_df: DataFrame с колонками:
@@ -899,10 +901,14 @@ def create_g_spread_chart_single(
             - ytm_bond: YTM облигации (%)
             - ytm_kbd: YTM по КБД (%)
             - g_spread_bp: G-spread (б.п.)
+            - rolling_mean: Rolling mean (опционально)
+            - rolling_std: Rolling std (опционально)
         bond_name: Название облигации
         stats: Статистика {p25, p75, mean, current}
         p_value: P-value ADF теста на стационарность G-spread
                   p < 0.05 означает коинтеграцию с КБД
+        window: Окно rolling (для отображения в заголовке)
+        z_threshold: Порог Z-Score для границ (по умолчанию 2.0σ)
         
     Returns:
         Plotly Figure
@@ -913,18 +919,57 @@ def create_g_spread_chart_single(
     if 'date' not in g_spread_df.columns:
         g_spread_df = g_spread_df.reset_index()
     
+    # Проверяем наличие rolling данных
+    has_rolling = 'rolling_mean' in g_spread_df.columns and 'rolling_std' in g_spread_df.columns
+    
+    # Rolling границы (если есть данные)
+    if has_rolling:
+        upper_band = g_spread_df['rolling_mean'] + z_threshold * g_spread_df['rolling_std']
+        lower_band = g_spread_df['rolling_mean'] - z_threshold * g_spread_df['rolling_std']
+        
+        # Верхняя граница
+        fig.add_trace(go.Scatter(
+            x=g_spread_df['date'],
+            y=upper_band,
+            name=f"+{z_threshold}σ",
+            line=dict(color='rgba(255, 0, 0, 0.4)', dash='dot', width=1),
+            showlegend=True,
+            hovertemplate=f'+{z_threshold}σ: %{y:.1f} б.п.<extra></extra>'
+        ))
+        
+        # Нижняя граница с заливкой
+        fig.add_trace(go.Scatter(
+            x=g_spread_df['date'],
+            y=lower_band,
+            name=f"-{z_threshold}σ",
+            line=dict(color='rgba(0, 180, 0, 0.4)', dash='dot', width=1),
+            fill='tonexty',
+            fillcolor='rgba(128, 128, 128, 0.1)',
+            showlegend=True,
+            hovertemplate=f'-{z_threshold}σ: %{y:.1f} б.п.<extra></extra>'
+        ))
+        
+        # Rolling Mean
+        fig.add_trace(go.Scatter(
+            x=g_spread_df['date'],
+            y=g_spread_df['rolling_mean'],
+            name=f"MA({window})",
+            line=dict(color='gray', dash='dash', width=1),
+            hovertemplate=f'MA({window}): %{y:.1f} б.п.<extra></extra>'
+        ))
+    
     # G-spread
     fig.add_trace(go.Scatter(
         x=g_spread_df['date'],
         y=g_spread_df['g_spread_bp'],
         name='G-spread',
         line=dict(color='#9B59B6', width=2),
-        fill='tozeroy',
-        fillcolor='rgba(155, 89, 182, 0.1)'
+        fill='tozeroy' if not has_rolling else None,
+        fillcolor='rgba(155, 89, 182, 0.1)' if not has_rolling else None
     ))
     
-    # Перцентили
-    if stats:
+    # Перцентили (только если нет rolling данных)
+    if stats and not has_rolling:
         if 'p25' in stats:
             fig.add_hline(
                 y=stats['p25'],
@@ -949,23 +994,46 @@ def create_g_spread_chart_single(
                 annotation_text=f"Mean: {stats['mean']:.0f}",
                 annotation_position='left'
             )
+    
+    # Текущая точка с Z-score
+    if stats and 'current' in stats:
+        last_date = g_spread_df['date'].iloc[-1]
+        current_gs = stats['current']
         
-        # Текущая точка
-        if 'current' in stats:
-            last_date = g_spread_df['date'].iloc[-1]
-            fig.add_trace(go.Scatter(
-                x=[last_date],
-                y=[stats['current']],
-                mode='markers',
-                marker=dict(size=12, color='yellow', line=dict(width=2, color='black')),
-                name='Текущий',
-                showlegend=False
-            ))
+        # Определяем цвет по Z-score
+        if has_rolling and 'z_score' in g_spread_df.columns:
+            last_zscore = g_spread_df['z_score'].iloc[-1]
+            if pd.notna(last_zscore):
+                if last_zscore > z_threshold:
+                    marker_color = 'red'
+                elif last_zscore < -z_threshold:
+                    marker_color = 'green'
+                else:
+                    marker_color = 'yellow'
+                z_text = f"Z={last_zscore:.1f}"
+            else:
+                marker_color = 'yellow'
+                z_text = ""
+        else:
+            marker_color = 'yellow'
+            z_text = ""
+        
+        fig.add_trace(go.Scatter(
+            x=[last_date],
+            y=[current_gs],
+            mode='markers+text' if z_text else 'markers',
+            marker=dict(size=12, color=marker_color, line=dict(width=2, color='black')),
+            text=[z_text] if z_text else None,
+            textposition="top center",
+            textfont=dict(size=10, color='black'),
+            name='Текущий',
+            showlegend=False
+        ))
     
     # Формируем заголовок с коинтеграцией
-    # p_value > 0 и < 1 означает реальный результат ADF теста
-    # p_value == 0 или 1 означает отсутствие данных (из кэша)
     title = f"G-spread: {bond_name}"
+    if has_rolling:
+        title += f" (Rolling {window} дн.)"
     if p_value is not None and 0 < p_value < 1:
         if p_value < 0.05:
             title += f" | Коинтеграция с КБД ✅"
@@ -978,7 +1046,14 @@ def create_g_spread_chart_single(
         yaxis_title="G-spread (б.п.)",
         hovermode='x unified',
         template="plotly_white",
-        height=400
+        height=400,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
     )
     
     return fig
