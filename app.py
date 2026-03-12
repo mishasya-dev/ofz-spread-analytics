@@ -19,8 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import AppConfig, BondConfig, CANDLE_INTERVAL_CONFIG
 from api.moex_history import HistoryFetcher
 from api.moex_candles import CandleFetcher, CandleInterval
-from core.database import get_db
-from core.db import get_ytm_repo
+from core.db import get_db_facade, get_ytm_repo
 from components.charts import (
     create_combined_ytm_chart,
     create_intraday_spread_chart,
@@ -172,7 +171,7 @@ def init_session_state():
     
     # Миграция при первом запуске
     if 'bonds_loaded' not in st.session_state:
-        db = get_db()
+        db = get_db_facade()
         config = st.session_state.config
         migrated = db.migrate_config_bonds(config.bonds)
         if migrated > 0:
@@ -180,7 +179,7 @@ def init_session_state():
         st.session_state.bonds_loaded = True
     
     # Загрузка/обновление облигаций из БД
-    db = get_db()
+    db = get_db_facade()
     favorites = db.get_favorite_bonds_as_config()
     
     if favorites:
@@ -310,7 +309,7 @@ def _fetch_all_historical_data(secid: str) -> pd.DataFrame:
     Кэшируется по secid (без подчёркивания - чтобы был отдельный кэш для каждого ISIN).
     """
     fetcher = get_history_fetcher()
-    db = get_db()
+    db = get_db_facade()
     
     # Всегда загружаем на максимум
     start_date = date.today() - timedelta(days=MAX_CACHE_PERIOD_DAYS)
@@ -392,7 +391,7 @@ def _fetch_all_candle_data(isin: str, interval: str) -> pd.DataFrame:
     from services.candle_processor_ytm_for_bonds import BondYTMProcessor
     
     fetcher = get_candle_fetcher()
-    db = get_db()
+    db = get_db_facade()
     ytm_processor = BondYTMProcessor()
     
     # Максимальный период для данного интервала
@@ -846,7 +845,7 @@ def update_database_full(bonds_list: List = None, progress_callback=None) -> Dic
     
     fetcher = get_history_fetcher()
     candle_fetcher = get_candle_fetcher()
-    db = get_db()
+    db = get_db_facade()
     ytm_processor = BondYTMProcessor()
     
     if bonds_list is None:
@@ -1114,7 +1113,7 @@ def main():
         # Управление БД
         st.subheader("🗄️ База данных")
         
-        db = get_db()
+        db = get_db_facade()
         db_stats = db.get_stats()
         
         with st.expander("📊 Статистика БД", expanded=False):

@@ -17,7 +17,7 @@ from typing import Dict, Optional
 import logging
 
 from core.cointegration import CointegrationAnalyzer
-from core.database import get_db
+from core.db import get_db_facade
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class CointegrationService:
         """
         self.ttl_hours = ttl_hours
         self.analyzer = CointegrationAnalyzer()
-        self.db = get_db()
+        self.db = get_db_facade()
 
     def get_or_calculate(
         self,

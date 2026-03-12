@@ -27,8 +27,8 @@ def get_bond_manager():
     import sys
     import os
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from core.database import get_db
-    return get_db()
+    from core.db import get_db_facade
+    return get_db_facade()
 
 
 def get_ofz_cache():
@@ -389,8 +389,8 @@ def render_bond_manager_button():
         if 'bond_manager_bonds' in st.session_state:
             del st.session_state['bond_manager_bonds']
         # Кэшируем количество избранных
-        from core.database import get_db
-        db = get_db()
+        from core.db import get_db_facade
+        db = get_db_facade()
         st.session_state.cached_favorites_count = len(db.get_favorite_bonds())
         st.rerun()
     

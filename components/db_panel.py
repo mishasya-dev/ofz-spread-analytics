@@ -48,7 +48,7 @@ def update_database_full(bonds_list: List = None, progress_callback=None) -> Dic
     from api.moex_candles import CandleInterval
     from api.moex_history import HistoryFetcher
     from api.moex_candles import CandleFetcher
-    from core.database import get_db
+    from core.db import get_db_facade
     from components.sidebar import get_bonds_list
     import logging
     
@@ -56,7 +56,7 @@ def update_database_full(bonds_list: List = None, progress_callback=None) -> Dic
     
     fetcher = HistoryFetcher()
     candle_fetcher = CandleFetcher()
-    db = get_db()
+    db = get_db_facade()
     
     if bonds_list is None:
         bonds_list = get_bonds_list()
@@ -130,11 +130,11 @@ def update_database_full(bonds_list: List = None, progress_callback=None) -> Dic
 
 def render_db_panel():
     """Рендерит панель управления БД"""
-    from core.database import get_db
+    from core.db import get_db_facade
     
     st.subheader("🗄️ База данных")
     
-    db = get_db()
+    db = get_db_facade()
     db_stats = db.get_stats()
     
     # Статистика

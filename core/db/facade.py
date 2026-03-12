@@ -466,6 +466,127 @@ class DatabaseFacade:
         finally:
             conn.close()
 
+    def clear_cointegration_cache(
+        self,
+        bond1_isin: str = None,
+        bond2_isin: str = None,
+        period_days: int = None
+    ) -> int:
+        """
+        Очистить кэш коинтеграции
+
+        Args:
+            bond1_isin: ISIN первой облигации (опционально)
+            bond2_isin: ISIN второй облигации (опционально)
+            period_days: Период (опционально)
+
+        Returns:
+            Количество удалённых записей
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        try:
+            if bond1_isin and bond2_isin:
+                isins = sorted([bond1_isin, bond2_isin])
+                if period_days:
+                    cursor.execute('''
+                        DELETE FROM cointegration_cache
+                        WHERE bond1_isin = ? AND bond2_isin = ? AND period_days = ?
+                    ''', (isins[0], isins[1], period_days))
+                else:
+                    cursor.execute('''
+                        DELETE FROM cointegration_cache
+                        WHERE bond1_isin = ? AND bond2_isin = ?
+                    ''', (isins[0], isins[1]))
+            elif period_days:
+                cursor.execute('DELETE FROM cointegration_cache WHERE period_days = ?', (period_days,))
+            else:
+                cursor.execute('DELETE FROM cointegration_cache')
+
+            deleted = cursor.rowcount
+            conn.commit()
+            return deleted
+
+        except Exception as e:
+            logger.error(f"Ошибка очистки кэша коинтеграции: {e}")
+            return 0
+        finally:
+            conn.close()
+
+    # ==========================================
+    # СТАРЫЙ API КОИНТЕГРАЦИИ (для совместимости)
+    # ==========================================
+
+    def get_cointegration_cache(
+        self,
+        bond1_isin: str,
+        bond2_isin: str,
+        period_days: int,
+        ttl_hours: int = 24
+    ) -> Optional[Dict]:
+        """
+        Получить кэшированный результат коинтеграции (старый API).
+
+        Совместимость с core/database.py::DatabaseManager.
+
+        Args:
+            bond1_isin: ISIN первой облигации
+            bond2_isin: ISIN второй облигации
+            period_days: Период анализа в днях
+            ttl_hours: Время жизни кэша в часах (default 24)
+
+        Returns:
+            Словарь с результатом или None если кэш устарел/отсутствует
+        """
+        result = self.load_cointegration_result(bond1_isin, bond2_isin)
+
+        if result is None:
+            return None
+
+        # Проверяем TTL
+        if 'checked_at' in result:
+            try:
+                checked_at = datetime.fromisoformat(result['checked_at'])
+                age_hours = (datetime.now() - checked_at).total_seconds() / 3600
+                if age_hours > ttl_hours:
+                    logger.debug(f"Кэш коинтеграции устарел ({age_hours:.1f} ч. > {ttl_hours} ч.)")
+                    return None
+            except Exception:
+                pass
+
+        return result
+
+    def save_cointegration_cache(
+        self,
+        bond1_isin: str,
+        bond2_isin: str,
+        period_days: int,
+        result: Dict
+    ) -> bool:
+        """
+        Сохранить результат коинтеграции в кэш (старый API).
+
+        Совместимость с core/database.py::DatabaseManager.
+
+        Args:
+            bond1_isin: ISIN первой облигации
+            bond2_isin: ISIN второй облигации
+            period_days: Период анализа в днях
+            result: Словарь с результатом анализа
+
+        Returns:
+            True если успешно
+        """
+        # Добавляем недостающие поля для нового API
+        full_result = {
+            'bond1_isin': bond1_isin,
+            'bond2_isin': bond2_isin,
+            'data_days': period_days,
+            **result
+        }
+        return self.save_cointegration_result(full_result)
+
 
 # Глобальный экземпляр фасада
 _facade_instance: Optional[DatabaseFacade] = None

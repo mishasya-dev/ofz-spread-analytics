@@ -72,8 +72,8 @@ def fetch_historical_data(
     start_date = date.today() - timedelta(days=days)
 
     if db is None:
-        from core.database import get_db
-        db = get_db()
+        from core.db import get_db_facade
+        db = get_db_facade()
 
     # Проверяем наличие данных в БД
     db_df = db.load_daily_ytm(secid, start_date=start_date)
@@ -144,8 +144,8 @@ def fetch_candle_data(
     ytm_processor = BondYTMProcessor()
 
     if db is None:
-        from core.database import get_db
-        db = get_db()
+        from core.db import get_db_facade
+        db = get_db_facade()
 
     bond_config = BondConfig(**bond_config_dict)
 
@@ -267,13 +267,13 @@ def update_database_full(
         Dict со статистикой: daily_ytm_saved, intraday_ytm_saved, errors
     """
     from api.moex_candles import CandleInterval
-    from core.database import get_db
+    from core.db import get_db_facade
     from services.candle_processor_ytm_for_bonds import BondYTMProcessor
 
     fetcher = get_history_fetcher()
     candle_fetcher = get_candle_fetcher()
     ytm_processor = BondYTMProcessor()
-    db = get_db()
+    db = get_db_facade()
 
     if not bonds_list:
         return {'daily_ytm_saved': 0, 'intraday_ytm_saved': 0, 'errors': ['Нет облигаций']}

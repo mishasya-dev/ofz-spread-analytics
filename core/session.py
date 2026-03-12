@@ -94,7 +94,7 @@ def init_session_state():
     
     Заменяет оригинальную функцию из app.py.
     """
-    from core.database import get_db
+    from core.db import get_db_facade
     from config import AppConfig
     import logging
     
@@ -109,7 +109,7 @@ def init_session_state():
     
     # Миграция при первом запуске
     if not st.session_state.bonds_loaded:
-        db = get_db()
+        db = get_db_facade()
         config = st.session_state.config
         migrated = db.migrate_config_bonds(config.bonds)
         if migrated > 0:
@@ -117,7 +117,7 @@ def init_session_state():
         st.session_state.bonds_loaded = True
     
     # Загрузка/обновление облигаций из БД
-    db = get_db()
+    db = get_db_facade()
     favorites = db.get_favorite_bonds_as_config()
     
     if favorites:
