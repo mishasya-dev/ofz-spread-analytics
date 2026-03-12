@@ -669,14 +669,27 @@ def get_zcyc_history(
             from core.db import get_g_spread_repo
             repo = get_g_spread_repo()
             
-            # Загружаем закэшированные данные
+            # Загружаем данные для конкретного ISIN (для возврата)
             cached_df = repo.load_zcyc(isin=isin, start_date=start_date, end_date=end_date)
+            
+            # Но проверяем все даты в кэше (для любой облигации)
+            all_cached_dates = repo.get_zcyc_cached_dates(
+                isin=None, 
+                start_date=start_date, 
+                end_date=end_date
+            )
             
             if not cached_df.empty:
                 all_data.append(cached_df)
-                cached_dates = set(d.date() for d in cached_df['date'])
-                dates_to_fetch = [d for d in trading_days if d not in cached_dates]
-                logger.info(f"Из кэша: {len(cached_df)} записей, нужно загрузить: {len(dates_to_fetch)} дней")
+            
+            dates_to_fetch = [d for d in trading_days if d not in all_cached_dates]
+            
+            # Исключаем пустые даты
+            empty_dates = repo.load_empty_dates(start_date=start_date, end_date=end_date)
+            if empty_dates:
+                dates_to_fetch = [d for d in dates_to_fetch if d not in empty_dates]
+            
+            logger.info(f"Из кэша: {len(cached_df)} записей для {isin or 'всех'}, дат в кэше: {len(all_cached_dates)}, нужно загрузить: {len(dates_to_fetch)} дней")
         except Exception as e:
             logger.warning(f"Ошибка при чтении кэша: {e}")
     
@@ -773,22 +786,29 @@ def get_zcyc_history_parallel(
             from core.db import get_g_spread_repo
             repo = get_g_spread_repo()
             
+            # Загружаем данные для конкретного ISIN (для возврата)
             cached_df = repo.load_zcyc(isin=isin, start_date=start_date, end_date=end_date)
+            
+            # Но проверяем все даты в кэше (для любой облигации)
+            # Если дата уже есть в кэше - MOEX уже был опрошен, не нужно спрашивать снова
+            all_cached_dates = repo.get_zcyc_cached_dates(
+                isin=None, 
+                start_date=start_date, 
+                end_date=end_date
+            )
             
             if not cached_df.empty:
                 all_data.append(cached_df)
-                cached_dates = set(d.date() for d in cached_df['date'])
-                dates_to_fetch = [d for d in trading_days if d not in cached_dates]
+            
+            # Даты для загрузки = торговые дни - все закэшированные даты - пустые даты
+            dates_to_fetch = [d for d in trading_days if d not in all_cached_dates]
             
             # Исключаем известные пустые даты (праздники)
             empty_dates = repo.load_empty_dates(start_date=start_date, end_date=end_date)
             if empty_dates:
                 dates_to_fetch = [d for d in dates_to_fetch if d not in empty_dates]
             
-            if cached_df.empty:
-                logger.info(f"Кэш пуст, нужно загрузить: {len(dates_to_fetch)} дней")
-            else:
-                logger.info(f"Из кэша: {len(cached_df)} записей, нужно загрузить: {len(dates_to_fetch)} дней (праздников пропущено: {len(empty_dates & set(trading_days))})")
+            logger.info(f"Из кэша: {len(cached_df)} записей для {isin or 'всех'}, дат в кэше: {len(all_cached_dates)}, нужно загрузить: {len(dates_to_fetch)} дней (праздников пропущено: {len(empty_dates & set(trading_days))})")
         except Exception as e:
             logger.warning(f"Ошибка при чтении кэша: {e}")
     

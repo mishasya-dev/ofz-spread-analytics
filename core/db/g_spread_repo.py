@@ -526,12 +526,19 @@ class GSpreadRepository:
         
         return df
     
-    def get_zcyc_cached_dates(self, isin: str = None) -> set:
+    def get_zcyc_cached_dates(
+        self,
+        isin: str = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> set:
         """
         Получить множество дат, для которых есть ZCYC данные в кэше
         
         Args:
             isin: ISIN облигации (если None - все даты)
+            start_date: Начальная дата (опционально)
+            end_date: Конечная дата (опционально)
             
         Returns:
             Множество дат
@@ -539,14 +546,22 @@ class GSpreadRepository:
         conn = get_connection()
         cursor = conn.cursor()
         
-        if isin:
-            cursor.execute(
-                'SELECT DISTINCT date FROM zcyc_cache WHERE secid = ?',
-                (isin,)
-            )
-        else:
-            cursor.execute('SELECT DISTINCT date FROM zcyc_cache')
+        query = 'SELECT DISTINCT date FROM zcyc_cache WHERE 1=1'
+        params = []
         
+        if isin:
+            query += ' AND secid = ?'
+            params.append(isin)
+        
+        if start_date:
+            query += ' AND date >= ?'
+            params.append(start_date.strftime('%Y-%m-%d'))
+        
+        if end_date:
+            query += ' AND date <= ?'
+            params.append(end_date.strftime('%Y-%m-%d'))
+        
+        cursor.execute(query, params)
         rows = cursor.fetchall()
         conn.close()
         
