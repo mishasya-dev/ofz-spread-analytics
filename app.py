@@ -17,8 +17,11 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import AppConfig, BondConfig, CANDLE_INTERVAL_CONFIG
-from api.moex_history import HistoryFetcher
-from api.moex_candles import CandleFetcher, CandleInterval
+from api.moex_candles import CandleInterval
+from api.moex_history import fetch_ytm_history, get_trading_data
+from api.moex_candles import fetch_candles
+from api.moex_zcyc import fetch_ns_params_history
+from api.moex_client import MOEXClient
 from core.db import get_db_facade, get_ytm_repo
 from components.charts import (
     create_combined_ytm_chart,
@@ -28,7 +31,7 @@ from components.charts import (
     create_g_spread_dashboard,
     create_g_spread_chart_single
 )
-from api.moex_zcyc import ZCYCFetcher
+# ZCYCFetcher удалён - используем функции из api.moex_zcyc
 from services.g_spread_calculator import (
     calculate_g_spread_stats,
     generate_g_spread_signal
@@ -162,7 +165,7 @@ def format_bond_label(bond, ytm: float = None, duration_years: float = None) -> 
 
 
 def init_session_state():
-    """Инициализация состояния сессии с сохранением в URL"""
+    """Инициализация состояния сессии"""
     # Инициализация БД (создание таблиц при необходимости)
     init_database()
     
@@ -205,51 +208,26 @@ def init_session_state():
                 for isin, bond in config.bonds.items()
             }
     
-    # ==========================================
-    # ЗАГРУЗКА НАСТРОЕК ИЗ URL
-    # ==========================================
-    params = st.query_params
-    isins = list(st.session_state.get('bonds', {}).keys())
+    if 'selected_bond1' not in st.session_state:
+        st.session_state.selected_bond1 = 0
     
-    # Выбранные облигации (из URL или дефолт)
-    if 'selected_bond1_isin' not in st.session_state:
-        url_bond1 = params.get("b1")
-        if url_bond1 and url_bond1 in isins:
-            st.session_state.selected_bond1_isin = url_bond1
-        else:
-            first_isin = next(iter(isins), None) if isins else None
-            st.session_state.selected_bond1_isin = first_isin
+    if 'selected_bond2' not in st.session_state:
+        st.session_state.selected_bond2 = 1
     
-    if 'selected_bond2_isin' not in st.session_state:
-        url_bond2 = params.get("b2")
-        if url_bond2 and url_bond2 in isins:
-            st.session_state.selected_bond2_isin = url_bond2
-        else:
-            st.session_state.selected_bond2_isin = isins[1] if len(isins) > 1 else isins[0] if isins else None
-    
-    # Период (из URL или дефолт)
+    # Единый период (30 дней - 2 года, по умолчанию 1 год)
     if 'period' not in st.session_state:
-        try:
-            st.session_state.period = int(params.get("p", "365"))
-        except:
-            st.session_state.period = 365
+        st.session_state.period = 365
     
-    # Интервал свечей (из URL или дефолт)
+    # Интервал свечей для intraday графиков
     if 'candle_interval' not in st.session_state:
-        ci = params.get("ci", "60")
-        if ci in ["1", "10", "60"]:
-            st.session_state.candle_interval = ci
-        else:
-            st.session_state.candle_interval = "60"
+        st.session_state.candle_interval = "60"
     
-    # Период свечей (из URL или дефолт)
+    # Период свечей (динамический, зависит от интервала)
     if 'candle_days' not in st.session_state:
-        try:
-            st.session_state.candle_days = int(params.get("cd", "30"))
-        except:
-            st.session_state.candle_days = 30
+        st.session_state.candle_days = 30  # дефолт для 1 час
     
-    # Остальные параметры (без URL, дефолты)
+
+    
     if 'auto_refresh' not in st.session_state:
         st.session_state.auto_refresh = False
     
@@ -262,81 +240,30 @@ def init_session_state():
     if 'updating_db' not in st.session_state:
         st.session_state.updating_db = False
     
-    # Параметры для Spread Analytics (из URL или дефолт)
+    # Параметры для Spread Analytics
     if 'spread_window' not in st.session_state:
-        try:
-            st.session_state.spread_window = int(params.get("sw", "30"))
-        except:
-            st.session_state.spread_window = 30
+        st.session_state.spread_window = 30
     
     if 'z_threshold' not in st.session_state:
-        try:
-            st.session_state.z_threshold = float(params.get("zt", "2.0"))
-        except:
-            st.session_state.z_threshold = 2.0
+        st.session_state.z_threshold = 2.0
 
-    # Параметры для G-Spread Analytics (из URL или дефолт)
+    # Параметры для G-Spread Analytics
     if 'g_spread_period' not in st.session_state:
-        try:
-            st.session_state.g_spread_period = int(params.get("gp", "365"))
-        except:
-            st.session_state.g_spread_period = 365
+        st.session_state.g_spread_period = 365
     
     if 'g_spread_window' not in st.session_state:
-        try:
-            st.session_state.g_spread_window = int(params.get("gw", "30"))
-        except:
-            st.session_state.g_spread_window = 30
+        st.session_state.g_spread_window = 30
     
     if 'g_spread_z_threshold' not in st.session_state:
-        try:
-            st.session_state.g_spread_z_threshold = float(params.get("gzt", "2.0"))
-        except:
-            st.session_state.g_spread_z_threshold = 2.0
+        st.session_state.g_spread_z_threshold = 2.0
 
     # Результат валидации YTM
     if 'ytm_validation' not in st.session_state:
         st.session_state.ytm_validation = None
 
 
-def save_settings_to_url():
-    """Сохранить текущие настройки в URL"""
-    params = {}
-    
-    # Облигации
-    if st.session_state.get('selected_bond1_isin'):
-        params["b1"] = st.session_state.selected_bond1_isin
-    if st.session_state.get('selected_bond2_isin'):
-        params["b2"] = st.session_state.selected_bond2_isin
-    
-    # Периоды
-    if st.session_state.get('period'):
-        params["p"] = str(st.session_state.period)
-    if st.session_state.get('candle_interval'):
-        params["ci"] = st.session_state.candle_interval
-    if st.session_state.get('candle_days'):
-        params["cd"] = str(st.session_state.candle_days)
-    
-    # Spread Analytics
-    if st.session_state.get('spread_window'):
-        params["sw"] = str(st.session_state.spread_window)
-    if st.session_state.get('z_threshold'):
-        params["zt"] = str(st.session_state.z_threshold)
-    
-    # G-Spread
-    if st.session_state.get('g_spread_period'):
-        params["gp"] = str(st.session_state.g_spread_period)
-    if st.session_state.get('g_spread_window'):
-        params["gw"] = str(st.session_state.g_spread_window)
-    if st.session_state.get('g_spread_z_threshold'):
-        params["gzt"] = str(st.session_state.g_spread_z_threshold)
-    
-    # Обновляем URL
-    st.query_params.from_dict(params)
-
-
 def get_bonds_list() -> List:
-    """Получить список облигаций для отображения (отсортированный по дюрации)"""
+    """Получить список облигаций для отображения"""
     bonds_dict = st.session_state.get('bonds', {})
     
     class BondItem:
@@ -350,43 +277,26 @@ def get_bonds_list() -> List:
             self.coupon_frequency = data.get('coupon_frequency', 2)
             self.issue_date = data.get('issue_date', '')
             self.day_count_convention = data.get('day_count_convention', 'ACT/ACT')
-            # Для сортировки
-            self._duration_years = data.get('duration_years')
     
-    # Сортируем по duration_years для СТАБИЛЬНОГО порядка
-    # Это критично для сохранения выбора пользователя
-    def get_duration(bond_data):
-        # Сначала пробуем duration_years
-        if bond_data.get('duration_years') is not None:
-            return bond_data['duration_years']
-        # Иначе вычисляем по maturity_date
-        try:
-            maturity = datetime.strptime(bond_data.get('maturity_date', ''), '%Y-%m-%d')
-            return (maturity - datetime.now()).days / 365.25
-        except:
-            return 999  # В конец списка
-    
-    sorted_bonds = sorted(bonds_dict.values(), key=get_duration)
-    return [BondItem(bond_data) for bond_data in sorted_bonds]
+    return [BondItem(bond_data) for bond_data in bonds_dict.values()]
 
 
+# MOEXClient кэшируется как resource
 @st.cache_resource
-def get_history_fetcher():
-    """Получить экземпляр HistoryFetcher (кэшируется)"""
-    return HistoryFetcher()
+def get_moex_client():
+    """Получить глобальный MOEXClient (кэшируется)"""
+    return MOEXClient()
 
 
-@st.cache_resource
-def get_candle_fetcher():
-    """Получить экземпляр CandleFetcher (кэшируется)"""
-    return CandleFetcher()
+# Удаляем старые getter'ы - используем функции напрямую
+# get_history_fetcher, get_candle_fetcher, get_zcyc_fetcher удалены
 
 
 @st.cache_data(ttl=300)
 def fetch_trading_data_cached(secid: str) -> Dict:
     """Получить торговые данные с кэшированием"""
-    fetcher = get_history_fetcher()
-    return fetcher.get_trading_data(secid)
+    with MOEXClient() as client:
+        return get_trading_data(secid, client=client)
 
 
 # Максимальный период для кэширования (2 года)
@@ -400,7 +310,6 @@ def _fetch_all_historical_data(secid: str) -> pd.DataFrame:
     
     Кэшируется по secid (без подчёркивания - чтобы был отдельный кэш для каждого ISIN).
     """
-    fetcher = get_history_fetcher()
     db = get_db_facade()
     
     # Всегда загружаем на максимум
@@ -424,7 +333,8 @@ def _fetch_all_historical_data(secid: str) -> pd.DataFrame:
         else:
             # Дозагружаем только новые данные
             new_start = last_db_date + timedelta(days=1)
-            new_df = fetcher.fetch_ytm_history(secid, start_date=new_start)
+            with MOEXClient() as client:
+                new_df = fetch_ytm_history(secid, start_date=new_start, client=client)
             
             if not new_df.empty:
                 db.save_daily_ytm(secid, new_df)
@@ -434,7 +344,8 @@ def _fetch_all_historical_data(secid: str) -> pd.DataFrame:
             return db_df
     
     # БД пуста или устарела - загружаем весь период
-    db_df = fetcher.fetch_ytm_history(secid, start_date=start_date)
+    with MOEXClient() as client:
+        db_df = fetch_ytm_history(secid, start_date=start_date, client=client)
     
     if not db_df.empty:
         db.save_daily_ytm(secid, db_df)
@@ -482,7 +393,6 @@ def _fetch_all_candle_data(isin: str, interval: str) -> pd.DataFrame:
     """
     from services.candle_processor_ytm_for_bonds import BondYTMProcessor
     
-    fetcher = get_candle_fetcher()
     db = get_db_facade()
     ytm_processor = BondYTMProcessor()
     
@@ -521,13 +431,15 @@ def _fetch_all_candle_data(isin: str, interval: str) -> pd.DataFrame:
     
     bond_config = BondConfigAdapter(bond_data)
     
-    # Запрашиваем текущий день (сырые свечи)
-    raw_today_df = fetcher.fetch_candles(
-        isin,
-        interval=candle_interval,
-        start_date=date.today(),
-        end_date=date.today()
-    )
+    # Запрашиваем текущий день (сырые свечи) через новый API
+    with MOEXClient() as client:
+        raw_today_df = fetch_candles(
+            isin,
+            interval=candle_interval,
+            start_date=date.today(),
+            end_date=date.today(),
+            client=client
+        )
     
     # Рассчитываем YTM для текущего дня
     today_df = pd.DataFrame()
@@ -538,13 +450,15 @@ def _fetch_all_candle_data(isin: str, interval: str) -> pd.DataFrame:
     last_db_datetime = db.get_last_intraday_ytm_datetime(isin, interval)
     
     if db_ytm_df.empty and date.today() > date.today() - timedelta(days=1):
-        # БД пуста - загружаем историю
-        raw_history_df = fetcher.fetch_candles(
-            isin,
-            interval=candle_interval,
-            start_date=date.today() - timedelta(days=max_days),
-            end_date=date.today() - timedelta(days=1)
-        )
+        # БД пуста - загружаем историю через новый API
+        with MOEXClient() as client:
+            raw_history_df = fetch_candles(
+                isin,
+                interval=candle_interval,
+                start_date=date.today() - timedelta(days=max_days),
+                end_date=date.today() - timedelta(days=1),
+                client=client
+            )
         
         if not raw_history_df.empty:
             history_df = ytm_processor.add_ytm_to_candles(raw_history_df, bond_config)
@@ -604,10 +518,7 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
 # G-SPREAD: NELSON-SIEGEL PARAMS
 # ==========================================
 
-@st.cache_resource
-def get_zcyc_fetcher():
-    """Получить экземпляр ZCYCFetcher (кэшируется)"""
-    return ZCYCFetcher()
+# get_zcyc_fetcher удалён - используем функции напрямую из api.moex_zcyc
 
 
 @st.cache_data(ttl=3600)  # Кэш на 1 час
@@ -651,7 +562,6 @@ def fetch_ns_params_from_moex(progress_callback=None, days: int = 730) -> int:
         Количество загруженных записей
     """
     g_spread_repo = get_g_spread_repo()
-    fetcher = get_zcyc_fetcher()
     
     # Проверяем последнюю дату в БД
     last_date = g_spread_repo.get_last_ns_params_date()
@@ -665,13 +575,15 @@ def fetch_ns_params_from_moex(progress_callback=None, days: int = 730) -> int:
         start_date = None  # Будет использоваться days параметр
         logger.info(f"Начало загрузки за последние {days} дней")
     
-    # Загружаем с MOEX по дням
-    ns_df = fetcher.fetch_ns_params_history(
-        start_date=start_date,
-        save_callback=g_spread_repo.save_ns_params,
-        progress_callback=progress_callback,
-        days=days
-    )
+    # Загружаем с MOEX по дням через новый API
+    with MOEXClient() as client:
+        ns_df = fetch_ns_params_history(
+            start_date=start_date,
+            save_callback=g_spread_repo.save_ns_params,
+            progress_callback=progress_callback,
+            days=days,
+            client=client
+        )
     
     return g_spread_repo.count_ns_params()
 
@@ -935,8 +847,6 @@ def update_database_full(bonds_list: List = None, progress_callback=None) -> Dic
     """Полное обновление базы данных"""
     from services.candle_processor_ytm_for_bonds import BondYTMProcessor
     
-    fetcher = get_history_fetcher()
-    candle_fetcher = get_candle_fetcher()
     db = get_db_facade()
     ytm_processor = BondYTMProcessor()
     
@@ -956,54 +866,57 @@ def update_database_full(bonds_list: List = None, progress_callback=None) -> Dic
     total_steps = len(bonds) * 4
     current_step = 0
     
-    # Дневные YTM
-    for bond in bonds:
-        try:
-            if progress_callback:
-                progress_callback(current_step / total_steps, f"Загрузка дневных YTM: {bond.name}")
-            
-            df = fetcher.fetch_ytm_history(bond.isin, start_date=date.today() - timedelta(days=730))
-            if not df.empty:
-                saved = db.save_daily_ytm(bond.isin, df)
-                stats['daily_ytm_saved'] += saved
-        except Exception as e:
-            stats['errors'].append(f"Daily YTM {bond.name}: {str(e)}")
-        
-        current_step += 1
-    
-    # Intraday YTM
-    intervals = [
-        ("60", CandleInterval.MIN_60, 30),
-        ("10", CandleInterval.MIN_10, 7),
-        ("1", CandleInterval.MIN_1, 3),
-    ]
-    
-    for bond in bonds:
-        for interval_str, interval_enum, days in intervals:
+    # Используем один MOEXClient для всех запросов
+    with MOEXClient() as client:
+        # Дневные YTM
+        for bond in bonds:
             try:
                 if progress_callback:
-                    progress_callback(current_step / total_steps, f"Загрузка {interval_str}мин свечей: {bond.name}")
+                    progress_callback(current_step / total_steps, f"Загрузка дневных YTM: {bond.name}")
                 
-                # Получаем сырые свечи
-                raw_df = candle_fetcher.fetch_candles(
-                    bond.isin,
-                    interval=interval_enum,
-                    start_date=date.today() - timedelta(days=days),
-                    end_date=date.today()
-                )
-                
-                # Рассчитываем YTM
-                df = pd.DataFrame()
-                if not raw_df.empty:
-                    df = ytm_processor.add_ytm_to_candles(raw_df, bond)
-                
-                if not df.empty and 'ytm_close' in df.columns:
-                    saved = db.save_intraday_ytm(bond.isin, interval_str, df)
-                    stats['intraday_ytm_saved'] += saved
+                df = fetch_ytm_history(bond.isin, start_date=date.today() - timedelta(days=730), client=client)
+                if not df.empty:
+                    saved = db.save_daily_ytm(bond.isin, df)
+                    stats['daily_ytm_saved'] += saved
             except Exception as e:
-                stats['errors'].append(f"Intraday YTM {bond.name} {interval_str}min: {str(e)}")
+                stats['errors'].append(f"Daily YTM {bond.name}: {str(e)}")
             
             current_step += 1
+        
+        # Intraday YTM
+        intervals = [
+            ("60", CandleInterval.MIN_60, 30),
+            ("10", CandleInterval.MIN_10, 7),
+            ("1", CandleInterval.MIN_1, 3),
+        ]
+        
+        for bond in bonds:
+            for interval_str, interval_enum, days in intervals:
+                try:
+                    if progress_callback:
+                        progress_callback(current_step / total_steps, f"Загрузка {interval_str}мин свечей: {bond.name}")
+                    
+                    # Получаем сырые свечи через новый API
+                    raw_df = fetch_candles(
+                        bond.isin,
+                        interval=interval_enum,
+                        start_date=date.today() - timedelta(days=days),
+                        end_date=date.today(),
+                        client=client
+                    )
+                    
+                    # Рассчитываем YTM
+                    df = pd.DataFrame()
+                    if not raw_df.empty:
+                        df = ytm_processor.add_ytm_to_candles(raw_df, bond)
+                    
+                    if not df.empty and 'ytm_close' in df.columns:
+                        saved = db.save_intraday_ytm(bond.isin, interval_str, df)
+                        stats['intraday_ytm_saved'] += saved
+                except Exception as e:
+                    stats['errors'].append(f"Intraday YTM {bond.name} {interval_str}min: {str(e)}")
+                
+                current_step += 1
     
     if progress_callback:
         progress_callback(1.0, "Готово!")
@@ -1039,7 +952,6 @@ def main():
         # Получаем данные для dropdown
         bond_labels = []
         bond_trading_data = {}
-        bond_isins = [b.isin for b in bonds]  # Список ISIN в том же порядке
         
         for b in bonds:
             data = fetch_trading_data_cached(b.isin)
@@ -1049,65 +961,25 @@ def main():
             else:
                 bond_labels.append(format_bond_label(b))
         
-        # Находим индексы по ISIN (с валидацией)
-        selected_isin1 = st.session_state.get('selected_bond1_isin')
-        selected_isin2 = st.session_state.get('selected_bond2_isin')
+        # Проверка и корректировка индексов (гарантируем валидный диапазон)
+        max_idx = len(bonds) - 1
+        st.session_state.selected_bond1 = max(0, min(st.session_state.selected_bond1, max_idx))
+        st.session_state.selected_bond2 = max(0, min(st.session_state.selected_bond2, max_idx))
         
-        # Если ISIN не найден в списке - берём первый
-        if selected_isin1 not in bond_isins:
-            selected_isin1 = bond_isins[0] if bond_isins else None
-            st.session_state.selected_bond1_isin = selected_isin1
-        if selected_isin2 not in bond_isins:
-            selected_isin2 = bond_isins[1] if len(bond_isins) > 1 else bond_isins[0] if bond_isins else None
-            st.session_state.selected_bond2_isin = selected_isin2
-        
-        bond1_idx = bond_isins.index(selected_isin1) if selected_isin1 else 0
-        bond2_idx = bond_isins.index(selected_isin2) if selected_isin2 else 0
-        
-        # Выбор облигаций (сохраняем ISIN, а не индекс!)
-        def on_bond1_change():
-            idx = st.session_state.selected_bond1_idx
-            # idx может быть int или str - приводим к int
-            try:
-                idx = int(idx)
-                st.session_state.selected_bond1_isin = bond_isins[idx] if 0 <= idx < len(bond_isins) else None
-            except (ValueError, TypeError):
-                st.session_state.selected_bond1_isin = bond_isins[0] if bond_isins else None
-        
-        def on_bond2_change():
-            idx = st.session_state.selected_bond2_idx
-            try:
-                idx = int(idx)
-                st.session_state.selected_bond2_isin = bond_isins[idx] if 0 <= idx < len(bond_isins) else None
-            except (ValueError, TypeError):
-                st.session_state.selected_bond2_isin = bond_isins[0] if bond_isins else None
-        
+        # Выбор облигаций
         bond1_idx = st.selectbox(
             "Облигация 1",
             range(len(bonds)),
             format_func=lambda i: bond_labels[i],
-            index=bond1_idx,
-            key="selected_bond1_idx",
-            on_change=on_bond1_change
+            key="selected_bond1"  # Автоматическая синхронизация с session_state
         )
         
         bond2_idx = st.selectbox(
             "Облигация 2",
             range(len(bonds)),
             format_func=lambda i: bond_labels[i],
-            index=bond2_idx,
-            key="selected_bond2_idx",
-            on_change=on_bond2_change
+            key="selected_bond2"  # Автоматическая синхронизация с session_state
         )
-        
-        # Синхронизируем ISIN
-        try:
-            idx1 = int(bond1_idx)
-            idx2 = int(bond2_idx)
-            st.session_state.selected_bond1_isin = bond_isins[idx1] if 0 <= idx1 < len(bond_isins) else None
-            st.session_state.selected_bond2_isin = bond_isins[idx2] if 0 <= idx2 < len(bond_isins) else None
-        except (ValueError, TypeError):
-            pass
         
         st.divider()
         
@@ -1757,10 +1629,6 @@ def main():
     # ==========================================
     # АВТООБНОВЛЕНИЕ
     # ==========================================
-    
-    # Сохраняем настройки в URL (для восстановления при F5)
-    save_settings_to_url()
-    
     if st.session_state.auto_refresh:
         interval = st.session_state.refresh_interval or 60
         time.sleep(interval)
