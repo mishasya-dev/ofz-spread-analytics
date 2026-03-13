@@ -17,8 +17,11 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import AppConfig, BondConfig, CANDLE_INTERVAL_CONFIG
-from api.moex_history import HistoryFetcher
-from api.moex_candles import CandleFetcher, CandleInterval
+from api.moex_candles import CandleInterval
+from api.moex_history import fetch_ytm_history, get_trading_data
+from api.moex_candles import fetch_candles
+from api.moex_zcyc import fetch_ns_params_history
+from api.moex_client import MOEXClient
 from core.db import get_db_facade, get_ytm_repo
 from components.charts import (
     create_combined_ytm_chart,
@@ -28,7 +31,7 @@ from components.charts import (
     create_g_spread_dashboard,
     create_g_spread_chart_single
 )
-from api.moex_zcyc import ZCYCFetcher
+# ZCYCFetcher удалён - используем функции из api.moex_zcyc
 from services.g_spread_calculator import (
     calculate_g_spread_stats,
     generate_g_spread_signal
@@ -52,6 +55,44 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Функции логирования действий пользователей (DEBUG режим)
+# =============================================================================
+def log_widget_change(widget_name: str, details: str = None):
+    """Логирует изменение виджета в DEBUG режиме"""
+    value = st.session_state.get(widget_name)
+    emoji_map = {
+        'selected_bond': '📌',
+        'period': '📏',
+        'spread_window': '📐',
+        'z_threshold': '🎯',
+        'g_spread': '📊',
+        'candle': '🕯️',
+        'refresh': '🔄',
+        'log_level': '📜',
+        'validation': '🔍',
+    }
+    emoji = '🎛️'
+    for key, e in emoji_map.items():
+        if key in widget_name:
+            emoji = e
+            break
+
+    msg = f"{emoji} {widget_name} = {value}"
+    if details:
+        msg += f" ({details})"
+    logger.debug(msg)
+
+
+def log_button_press(button_name: str, details: str = None):
+    """Логирует нажатие кнопки в DEBUG режиме"""
+    msg = f"🔘 Нажата кнопка: '{button_name}'"
+    if details:
+        msg += f" ({details})"
+    logger.debug(msg)
+
 
 # Конфигурация страницы
 st.set_page_config(
@@ -278,23 +319,22 @@ def get_bonds_list() -> List:
     return [BondItem(bond_data) for bond_data in bonds_dict.values()]
 
 
+# MOEXClient кэшируется как resource
 @st.cache_resource
-def get_history_fetcher():
-    """Получить экземпляр HistoryFetcher (кэшируется)"""
-    return HistoryFetcher()
+def get_moex_client():
+    """Получить глобальный MOEXClient (кэшируется)"""
+    return MOEXClient()
 
 
-@st.cache_resource
-def get_candle_fetcher():
-    """Получить экземпляр CandleFetcher (кэшируется)"""
-    return CandleFetcher()
+# Удаляем старые getter'ы - используем функции напрямую
+# get_history_fetcher, get_candle_fetcher, get_zcyc_fetcher удалены
 
 
 @st.cache_data(ttl=300)
 def fetch_trading_data_cached(secid: str) -> Dict:
     """Получить торговые данные с кэшированием"""
-    fetcher = get_history_fetcher()
-    return fetcher.get_trading_data(secid)
+    with MOEXClient() as client:
+        return get_trading_data(secid, client=client)
 
 
 # Максимальный период для кэширования (2 года)
@@ -308,7 +348,6 @@ def _fetch_all_historical_data(secid: str) -> pd.DataFrame:
     
     Кэшируется по secid (без подчёркивания - чтобы был отдельный кэш для каждого ISIN).
     """
-    fetcher = get_history_fetcher()
     db = get_db_facade()
     
     # Всегда загружаем на максимум
@@ -332,7 +371,8 @@ def _fetch_all_historical_data(secid: str) -> pd.DataFrame:
         else:
             # Дозагружаем только новые данные
             new_start = last_db_date + timedelta(days=1)
-            new_df = fetcher.fetch_ytm_history(secid, start_date=new_start)
+            with MOEXClient() as client:
+                new_df = fetch_ytm_history(secid, start_date=new_start, client=client)
             
             if not new_df.empty:
                 db.save_daily_ytm(secid, new_df)
@@ -342,7 +382,8 @@ def _fetch_all_historical_data(secid: str) -> pd.DataFrame:
             return db_df
     
     # БД пуста или устарела - загружаем весь период
-    db_df = fetcher.fetch_ytm_history(secid, start_date=start_date)
+    with MOEXClient() as client:
+        db_df = fetch_ytm_history(secid, start_date=start_date, client=client)
     
     if not db_df.empty:
         db.save_daily_ytm(secid, db_df)
@@ -390,7 +431,6 @@ def _fetch_all_candle_data(isin: str, interval: str) -> pd.DataFrame:
     """
     from services.candle_processor_ytm_for_bonds import BondYTMProcessor
     
-    fetcher = get_candle_fetcher()
     db = get_db_facade()
     ytm_processor = BondYTMProcessor()
     
@@ -429,13 +469,15 @@ def _fetch_all_candle_data(isin: str, interval: str) -> pd.DataFrame:
     
     bond_config = BondConfigAdapter(bond_data)
     
-    # Запрашиваем текущий день (сырые свечи)
-    raw_today_df = fetcher.fetch_candles(
-        isin,
-        interval=candle_interval,
-        start_date=date.today(),
-        end_date=date.today()
-    )
+    # Запрашиваем текущий день (сырые свечи) через новый API
+    with MOEXClient() as client:
+        raw_today_df = fetch_candles(
+            isin,
+            interval=candle_interval,
+            start_date=date.today(),
+            end_date=date.today(),
+            client=client
+        )
     
     # Рассчитываем YTM для текущего дня
     today_df = pd.DataFrame()
@@ -446,13 +488,15 @@ def _fetch_all_candle_data(isin: str, interval: str) -> pd.DataFrame:
     last_db_datetime = db.get_last_intraday_ytm_datetime(isin, interval)
     
     if db_ytm_df.empty and date.today() > date.today() - timedelta(days=1):
-        # БД пуста - загружаем историю
-        raw_history_df = fetcher.fetch_candles(
-            isin,
-            interval=candle_interval,
-            start_date=date.today() - timedelta(days=max_days),
-            end_date=date.today() - timedelta(days=1)
-        )
+        # БД пуста - загружаем историю через новый API
+        with MOEXClient() as client:
+            raw_history_df = fetch_candles(
+                isin,
+                interval=candle_interval,
+                start_date=date.today() - timedelta(days=max_days),
+                end_date=date.today() - timedelta(days=1),
+                client=client
+            )
         
         if not raw_history_df.empty:
             history_df = ytm_processor.add_ytm_to_candles(raw_history_df, bond_config)
@@ -512,10 +556,7 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
 # G-SPREAD: NELSON-SIEGEL PARAMS
 # ==========================================
 
-@st.cache_resource
-def get_zcyc_fetcher():
-    """Получить экземпляр ZCYCFetcher (кэшируется)"""
-    return ZCYCFetcher()
+# get_zcyc_fetcher удалён - используем функции напрямую из api.moex_zcyc
 
 
 @st.cache_data(ttl=3600)  # Кэш на 1 час
@@ -559,7 +600,6 @@ def fetch_ns_params_from_moex(progress_callback=None, days: int = 730) -> int:
         Количество загруженных записей
     """
     g_spread_repo = get_g_spread_repo()
-    fetcher = get_zcyc_fetcher()
     
     # Проверяем последнюю дату в БД
     last_date = g_spread_repo.get_last_ns_params_date()
@@ -573,13 +613,15 @@ def fetch_ns_params_from_moex(progress_callback=None, days: int = 730) -> int:
         start_date = None  # Будет использоваться days параметр
         logger.info(f"Начало загрузки за последние {days} дней")
     
-    # Загружаем с MOEX по дням
-    ns_df = fetcher.fetch_ns_params_history(
-        start_date=start_date,
-        save_callback=g_spread_repo.save_ns_params,
-        progress_callback=progress_callback,
-        days=days
-    )
+    # Загружаем с MOEX по дням через новый API
+    with MOEXClient() as client:
+        ns_df = fetch_ns_params_history(
+            start_date=start_date,
+            save_callback=g_spread_repo.save_ns_params,
+            progress_callback=progress_callback,
+            days=days,
+            client=client
+        )
     
     return g_spread_repo.count_ns_params()
 
@@ -843,8 +885,6 @@ def update_database_full(bonds_list: List = None, progress_callback=None) -> Dic
     """Полное обновление базы данных"""
     from services.candle_processor_ytm_for_bonds import BondYTMProcessor
     
-    fetcher = get_history_fetcher()
-    candle_fetcher = get_candle_fetcher()
     db = get_db_facade()
     ytm_processor = BondYTMProcessor()
     
@@ -864,54 +904,57 @@ def update_database_full(bonds_list: List = None, progress_callback=None) -> Dic
     total_steps = len(bonds) * 4
     current_step = 0
     
-    # Дневные YTM
-    for bond in bonds:
-        try:
-            if progress_callback:
-                progress_callback(current_step / total_steps, f"Загрузка дневных YTM: {bond.name}")
-            
-            df = fetcher.fetch_ytm_history(bond.isin, start_date=date.today() - timedelta(days=730))
-            if not df.empty:
-                saved = db.save_daily_ytm(bond.isin, df)
-                stats['daily_ytm_saved'] += saved
-        except Exception as e:
-            stats['errors'].append(f"Daily YTM {bond.name}: {str(e)}")
-        
-        current_step += 1
-    
-    # Intraday YTM
-    intervals = [
-        ("60", CandleInterval.MIN_60, 30),
-        ("10", CandleInterval.MIN_10, 7),
-        ("1", CandleInterval.MIN_1, 3),
-    ]
-    
-    for bond in bonds:
-        for interval_str, interval_enum, days in intervals:
+    # Используем один MOEXClient для всех запросов
+    with MOEXClient() as client:
+        # Дневные YTM
+        for bond in bonds:
             try:
                 if progress_callback:
-                    progress_callback(current_step / total_steps, f"Загрузка {interval_str}мин свечей: {bond.name}")
+                    progress_callback(current_step / total_steps, f"Загрузка дневных YTM: {bond.name}")
                 
-                # Получаем сырые свечи
-                raw_df = candle_fetcher.fetch_candles(
-                    bond.isin,
-                    interval=interval_enum,
-                    start_date=date.today() - timedelta(days=days),
-                    end_date=date.today()
-                )
-                
-                # Рассчитываем YTM
-                df = pd.DataFrame()
-                if not raw_df.empty:
-                    df = ytm_processor.add_ytm_to_candles(raw_df, bond)
-                
-                if not df.empty and 'ytm_close' in df.columns:
-                    saved = db.save_intraday_ytm(bond.isin, interval_str, df)
-                    stats['intraday_ytm_saved'] += saved
+                df = fetch_ytm_history(bond.isin, start_date=date.today() - timedelta(days=730), client=client)
+                if not df.empty:
+                    saved = db.save_daily_ytm(bond.isin, df)
+                    stats['daily_ytm_saved'] += saved
             except Exception as e:
-                stats['errors'].append(f"Intraday YTM {bond.name} {interval_str}min: {str(e)}")
+                stats['errors'].append(f"Daily YTM {bond.name}: {str(e)}")
             
             current_step += 1
+        
+        # Intraday YTM
+        intervals = [
+            ("60", CandleInterval.MIN_60, 30),
+            ("10", CandleInterval.MIN_10, 7),
+            ("1", CandleInterval.MIN_1, 3),
+        ]
+        
+        for bond in bonds:
+            for interval_str, interval_enum, days in intervals:
+                try:
+                    if progress_callback:
+                        progress_callback(current_step / total_steps, f"Загрузка {interval_str}мин свечей: {bond.name}")
+                    
+                    # Получаем сырые свечи через новый API
+                    raw_df = fetch_candles(
+                        bond.isin,
+                        interval=interval_enum,
+                        start_date=date.today() - timedelta(days=days),
+                        end_date=date.today(),
+                        client=client
+                    )
+                    
+                    # Рассчитываем YTM
+                    df = pd.DataFrame()
+                    if not raw_df.empty:
+                        df = ytm_processor.add_ytm_to_candles(raw_df, bond)
+                    
+                    if not df.empty and 'ytm_close' in df.columns:
+                        saved = db.save_intraday_ytm(bond.isin, interval_str, df)
+                        stats['intraday_ytm_saved'] += saved
+                except Exception as e:
+                    stats['errors'].append(f"Intraday YTM {bond.name} {interval_str}min: {str(e)}")
+                
+                current_step += 1
     
     if progress_callback:
         progress_callback(1.0, "Готово!")
@@ -966,14 +1009,16 @@ def main():
             "Облигация 1",
             range(len(bonds)),
             format_func=lambda i: bond_labels[i],
-            key="selected_bond1"  # Автоматическая синхронизация с session_state
+            key="selected_bond1",
+            on_change=lambda: log_widget_change("selected_bond1", bonds[st.session_state.selected_bond1].isin if st.session_state.selected_bond1 < len(bonds) else None)
         )
         
         bond2_idx = st.selectbox(
             "Облигация 2",
             range(len(bonds)),
             format_func=lambda i: bond_labels[i],
-            key="selected_bond2"  # Автоматическая синхронизация с session_state
+            key="selected_bond2",
+            on_change=lambda: log_widget_change("selected_bond2", bonds[st.session_state.selected_bond2].isin if st.session_state.selected_bond2 < len(bonds) else None)
         )
         
         st.divider()
@@ -984,9 +1029,10 @@ def main():
             "Период анализа (дней)",
             min_value=30,
             max_value=730,
-            key="period",  # Автоматическая синхронизация с session_state
+            key="period",
             step=30,
-            format="%d дней"
+            format="%d дней",
+            on_change=lambda: log_widget_change("period")
         )
         
         st.divider()
@@ -997,17 +1043,19 @@ def main():
             "Окно rolling (дней)",
             min_value=5,
             max_value=90,
-            key="spread_window",  # Автоматическая синхронизация с session_state
-            step=5
+            key="spread_window",
+            step=5,
+            on_change=lambda: log_widget_change("spread_window")
         )
         
         z_threshold = st.slider(
             "Z-Score порог (σ)",
             min_value=1.0,
             max_value=3.0,
-            key="z_threshold",  # Автоматическая синхронизация с session_state
+            key="z_threshold",
             step=0.1,
-            format="%.1fσ"
+            format="%.1fσ",
+            on_change=lambda: log_widget_change("z_threshold")
         )
         
         st.divider()
@@ -1021,7 +1069,8 @@ def main():
             max_value=730,
             key="g_spread_period",
             step=30,
-            format="%d дней"
+            format="%d дней",
+            on_change=lambda: log_widget_change("g_spread_period")
         )
         
         g_spread_window = st.slider(
@@ -1029,7 +1078,8 @@ def main():
             min_value=5,
             max_value=90,
             key="g_spread_window",
-            step=5
+            step=5,
+            on_change=lambda: log_widget_change("g_spread_window")
         )
         
         g_spread_z_threshold = st.slider(
@@ -1038,7 +1088,8 @@ def main():
             max_value=3.0,
             key="g_spread_z_threshold",
             step=0.1,
-            format="%.1fσ"
+            format="%.1fσ",
+            on_change=lambda: log_widget_change("g_spread_z_threshold")
         )
         
         st.divider()
@@ -1050,9 +1101,10 @@ def main():
             "Интервал для intraday графиков",
             options=["1", "10", "60"],
             format_func=lambda x: interval_options[x],
-            key="candle_interval",  # Автоматическая синхронизация с session_state
+            key="candle_interval",
             horizontal=True,
-            label_visibility="collapsed"
+            label_visibility="collapsed",
+            on_change=lambda: log_widget_change("candle_interval", interval_options.get(st.session_state.candle_interval))
         )
         
         # Период свечей (динамический слайдер)
@@ -1074,9 +1126,10 @@ def main():
                 "Период свечей (дней)",
                 min_value=min_candle_days,
                 max_value=max_candle_days,
-                key="candle_days",  # Автоматическая синхронизация с session_state
+                key="candle_days",
                 step=candle_config["step_days"],
-                format="%d дн."
+                format="%d дн.",
+                on_change=lambda: log_widget_change("candle_days")
             )
             # Пояснение
             st.caption(f"Макс. {candle_config['max_days']} дн. для {candle_config['name']} (ограничен периодом анализа: {period} дн.)")
@@ -1093,7 +1146,8 @@ def main():
         st.subheader("🔄 Автообновление")
         auto_refresh = st.toggle(
             "Включить",
-            key="auto_refresh"  # Автоматическая синхронизация с session_state
+            key="auto_refresh",
+            on_change=lambda: log_widget_change("auto_refresh")
         )
         
         if auto_refresh:
@@ -1101,8 +1155,9 @@ def main():
                 "Интервал (сек)",
                 min_value=30,
                 max_value=300,
-                key="refresh_interval",  # Автоматическая синхронизация с session_state
-                step=30
+                key="refresh_interval",
+                step=30,
+                on_change=lambda: log_widget_change("refresh_interval")
             )
             
             if st.session_state.last_update:
@@ -1121,7 +1176,7 @@ def main():
             st.write(f"**Дневных YTM:** {db_stats['daily_ytm_count']}")
             st.write(f"**Intraday YTM:** {db_stats['intraday_ytm_count']}")
         
-        if st.button("🔄 Обновить БД", width="stretch"):
+        if st.button("🔄 Обновить БД", width="stretch", on_click=lambda: log_button_press("Обновить БД")):
             st.session_state.updating_db = True
         
         if st.session_state.get('updating_db', False):
@@ -1146,7 +1201,7 @@ def main():
         
         st.divider()
         
-        if st.button("🗑️ Очистить кэш", width="stretch"):
+        if st.button("🗑️ Очистить кэш", width="stretch", on_click=lambda: log_button_press("Очистить кэш")):
             st.cache_data.clear()
             st.rerun()
         
@@ -1158,7 +1213,9 @@ def main():
             "Уровень",
             options=["INFO", "DEBUG"],
             horizontal=True,
-            key="log_level"
+            key="log_level",
+            index=1,  # По умолчанию DEBUG
+            on_change=lambda: log_widget_change("log_level")
         )
         
         if log_level == "DEBUG":
@@ -1177,7 +1234,8 @@ def main():
             min_value=1,
             max_value=30,
             value=5,
-            step=1
+            step=1,
+            on_change=lambda: log_widget_change("validation_days")
         )
         
         # Получаем текущие облигации для валидации
@@ -1238,6 +1296,7 @@ def main():
             button_pressed = st.button(button_label, width="stretch", type="secondary")
         
         if button_pressed:
+            log_button_press("Проверить расчёт YTM", f"bonds={bond1_for_val.isin if bond1_for_val else None}/{bond2_for_val.isin if bond2_for_val else None}")
             ytm_repo = get_ytm_repo()
             results = []
             all_valid = True
@@ -1426,7 +1485,7 @@ def main():
         # Кнопка принудительного обновления
         col_refresh, col_status = st.columns([1, 3])
         with col_refresh:
-            refresh_clicked = st.button("🔄 Обновить", key="refresh_cointegration")
+            refresh_clicked = st.button("🔄 Обновить", key="refresh_cointegration", on_click=lambda: log_button_press("Обновить коинтеграцию"))
 
         # Получаем сервис коинтеграции
         coint_service = get_cointegration_service()
