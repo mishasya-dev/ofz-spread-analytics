@@ -2,11 +2,13 @@
 Управление соединением с базой данных
 
 Содержит функции для подключения и инициализации БД.
+Предоставляет контекстный менеджер для безопасной работы с соединениями.
 """
 import sqlite3
 import os
 import logging
 from typing import Optional
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +23,71 @@ def ensure_db_dir():
 
 
 def get_connection() -> sqlite3.Connection:
-    """Получить соединение с БД"""
+    """
+    Получить соединение с БД (без контекстного менеджера).
+    
+    ВНИМАНИЕ: При использовании этого метода соединение нужно закрывать вручную!
+    Рекомендуется использовать get_db_connection() как контекстный менеджер.
+    
+    Returns:
+        sqlite3.Connection: Соединение с БД
+    """
     ensure_db_dir()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+@contextmanager
+def get_db_connection():
+    """
+    Контекстный менеджер для безопасной работы с соединением БД.
+    
+    Гарантирует закрытие соединения даже при возникновении исключения.
+    Автоматически делает commit при успешном выходе из контекста.
+    
+    Использование:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM bonds')
+            rows = cursor.fetchall()
+        # conn.close() вызывается автоматически
+    
+    Yields:
+        sqlite3.Connection: Соединение с БД
+    """
+    conn = get_connection()
+    try:
+        yield conn
+        conn.commit()  # Автоматический commit при успешном выходе
+    except Exception as e:
+        conn.rollback()  # Rollback при ошибке
+        logger.error(f"Ошибка в транзакции БД: {e}")
+        raise
+    finally:
+        conn.close()  # Гарантированное закрытие
+
+
+@contextmanager
+def get_db_cursor():
+    """
+    Контекстный менеджер для получения курсора БД.
+    
+    Упрощённый вариант для простых операций с курсором.
+    Соединение и курсор создаются и закрываются автоматически.
+    
+    Использование:
+        with get_db_cursor() as cursor:
+            cursor.execute('SELECT * FROM bonds')
+            rows = cursor.fetchall()
+        # conn.close() вызывается автоматически
+    
+    Yields:
+        sqlite3.Cursor: Курсор БД
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        yield cursor
 
 
 def init_database():

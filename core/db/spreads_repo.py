@@ -2,13 +2,14 @@
 Репозиторий спредов
 
 Содержит операции для работы со спредами между облигациями.
+Использует контекстный менеджер для безопасной работы с БД.
 """
 from typing import Optional, Dict
 from datetime import date, datetime
 import pandas as pd
 import logging
 
-from .connection import get_connection
+from .connection import get_db_connection, get_db_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -31,18 +32,14 @@ class SpreadsRepository:
         p75: float = None
     ) -> int:
         """Сохранить спред"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            INSERT OR REPLACE INTO spreads 
-            (isin_1, isin_2, mode, interval, datetime, ytm_1, ytm_2, spread_bp, signal, p25, p75)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (isin_1, isin_2, mode, interval, datetime_val, ytm_1, ytm_2, spread_bp, signal, p25, p75))
-
-        spread_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO spreads 
+                (isin_1, isin_2, mode, interval, datetime, ytm_1, ytm_2, spread_bp, signal, p25, p75)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (isin_1, isin_2, mode, interval, datetime_val, ytm_1, ytm_2, spread_bp, signal, p25, p75))
+            spread_id = cursor.lastrowid
 
         return spread_id
 
@@ -69,47 +66,49 @@ class SpreadsRepository:
         if df.empty:
             return 0
 
-        conn = get_connection()
-        cursor = conn.cursor()
-
         saved_count = 0
 
-        for idx, row in df.iterrows():
-            try:
-                # datetime
-                if 'datetime' in df.columns:
-                    dt_val = row['datetime']
-                elif isinstance(idx, pd.Timestamp):
-                    dt_val = idx
-                else:
-                    dt_val = row.get('date', idx)
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
 
-                if isinstance(dt_val, pd.Timestamp):
-                    dt_str = dt_val.strftime('%Y-%m-%d %H:%M:%S')
-                elif isinstance(dt_val, datetime):
-                    dt_str = dt_val.strftime('%Y-%m-%d %H:%M:%S')
-                else:
-                    dt_str = str(dt_val)
+                for idx, row in df.iterrows():
+                    try:
+                        # datetime
+                        if 'datetime' in df.columns:
+                            dt_val = row['datetime']
+                        elif isinstance(idx, pd.Timestamp):
+                            dt_val = idx
+                        else:
+                            dt_val = row.get('date', idx)
 
-                cursor.execute('''
-                    INSERT OR REPLACE INTO spreads 
-                    (isin_1, isin_2, mode, interval, datetime, ytm_1, ytm_2, spread_bp, signal)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    isin_1, isin_2, mode, interval, dt_str,
-                    row.get('ytm_1'), row.get('ytm_2'),
-                    row.get('spread'), row.get('signal')
-                ))
-                saved_count += 1
+                        if isinstance(dt_val, pd.Timestamp):
+                            dt_str = dt_val.strftime('%Y-%m-%d %H:%M:%S')
+                        elif isinstance(dt_val, datetime):
+                            dt_str = dt_val.strftime('%Y-%m-%d %H:%M:%S')
+                        else:
+                            dt_str = str(dt_val)
 
-            except Exception as e:
-                logger.warning(f"Ошибка сохранения спреда: {e}")
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO spreads 
+                            (isin_1, isin_2, mode, interval, datetime, ytm_1, ytm_2, spread_bp, signal)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            isin_1, isin_2, mode, interval, dt_str,
+                            row.get('ytm_1'), row.get('ytm_2'),
+                            row.get('spread'), row.get('signal')
+                        ))
+                        saved_count += 1
 
-        conn.commit()
-        conn.close()
+                    except Exception as e:
+                        logger.warning(f"Ошибка сохранения спреда: {e}")
 
-        logger.info(f"Сохранено {saved_count} спредов для {isin_1}/{isin_2} ({mode})")
-        return saved_count
+            logger.info(f"Сохранено {saved_count} спредов для {isin_1}/{isin_2} ({mode})")
+            return saved_count
+            
+        except Exception as e:
+            logger.error(f"Ошибка пакетного сохранения спредов: {e}")
+            return saved_count
 
     def load_spreads(
         self,
@@ -121,8 +120,6 @@ class SpreadsRepository:
         end_date: Optional[date] = None
     ) -> pd.DataFrame:
         """Загрузить спреды из БД"""
-        conn = get_connection()
-
         query = '''
             SELECT datetime, ytm_1, ytm_2, spread_bp, signal, p25, p75
             FROM spreads
@@ -144,8 +141,8 @@ class SpreadsRepository:
 
         query += ' ORDER BY datetime'
 
-        df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
+        with get_db_connection() as conn:
+            df = pd.read_sql_query(query, conn, params=params)
 
         if df.empty:
             return pd.DataFrame()
@@ -161,26 +158,20 @@ class SpreadsRepository:
 
     def count_spreads(self) -> int:
         """Количество записей спредов"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('SELECT COUNT(*) as cnt FROM spreads')
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute('SELECT COUNT(*) as cnt FROM spreads')
+            row = cursor.fetchone()
 
         return row['cnt'] if row else 0
 
     def count_by_mode(self) -> Dict[str, int]:
         """Количество записей по режимам"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            SELECT mode, COUNT(*) as cnt 
-            FROM spreads 
-            GROUP BY mode
-        ''')
-        rows = cursor.fetchall()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT mode, COUNT(*) as cnt 
+                FROM spreads 
+                GROUP BY mode
+            ''')
+            rows = cursor.fetchall()
 
         return {row['mode']: row['cnt'] for row in rows}

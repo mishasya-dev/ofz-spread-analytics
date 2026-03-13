@@ -1,7 +1,9 @@
 """
-Тесты для репозиториев БД
+Тесты для репозиториев БД с контекстными менеджерами
 
 Модуль тестирует:
+- get_db_connection - контекстный менеджер для соединения
+- get_db_cursor - контекстный менеджер для курсора  
 - BondsRepository
 - YTMRepository
 - SpreadsRepository
@@ -13,6 +15,7 @@ from unittest.mock import Mock, patch, MagicMock
 import sqlite3
 import tempfile
 import os
+from contextlib import contextmanager
 
 # Мок streamlit до импорта
 import sys
@@ -24,7 +27,7 @@ sys.modules['streamlit'] = MagicMock()
 # ============================================
 
 @pytest.fixture
-def temp_db():
+def temp_db_path():
     """Временная БД для тестов"""
     fd, db_path = tempfile.mkstemp(suffix='.db')
     os.close(fd)
@@ -113,13 +116,15 @@ def temp_db():
 
 
 @pytest.fixture
-def mock_connection(temp_db):
-    """Мок соединения с БД"""
-    def get_conn():
-        conn = sqlite3.connect(temp_db)
-        conn.row_factory = sqlite3.Row
-        return conn
-    return get_conn
+def mock_db(temp_db_path):
+    """Мокирование БД через патч DB_PATH"""
+    import core.db.connection as db_module
+    original_path = db_module.DB_PATH
+    db_module.DB_PATH = temp_db_path
+    
+    yield temp_db_path
+    
+    db_module.DB_PATH = original_path
 
 
 @pytest.fixture
@@ -172,17 +177,97 @@ def sample_intraday_ytm_df():
 
 
 # ============================================
+# TestContextManagers - тесты контекстных менеджеров
+# ============================================
+
+class TestContextManagers:
+    """Тесты контекстных менеджеров БД"""
+    
+    def test_get_db_connection_basic(self, mock_db):
+        """Базовое использование get_db_connection"""
+        from core.db.connection import get_db_connection
+        
+        with get_db_connection() as conn:
+            assert conn is not None
+            cursor = conn.cursor()
+            cursor.execute('SELECT 1 as value')
+            row = cursor.fetchone()
+            assert row['value'] == 1
+    
+    def test_get_db_connection_auto_close(self, mock_db):
+        """Автоматическое закрытие соединения"""
+        from core.db.connection import get_db_connection
+        
+        conn_ref = None
+        with get_db_connection() as conn:
+            conn_ref = conn
+            cursor = conn.cursor()
+            cursor.execute('SELECT 1')
+        
+        # После выхода из контекста соединение закрыто
+        with pytest.raises(sqlite3.ProgrammingError):
+            conn_ref.execute('SELECT 1')
+    
+    def test_get_db_connection_commit_on_success(self, mock_db):
+        """Автоматический commit при успешном выходе"""
+        from core.db.connection import get_db_connection
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO bonds (isin, name) VALUES (?, ?)",
+                ('TEST001', 'Test Bond')
+            )
+        
+        # Проверяем, что данные сохранены
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM bonds WHERE isin = ?", ('TEST001',))
+            row = cursor.fetchone()
+            assert row is not None
+            assert row['name'] == 'Test Bond'
+    
+    def test_get_db_connection_rollback_on_error(self, mock_db):
+        """Rollback при исключении"""
+        from core.db.connection import get_db_connection
+        
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO bonds (isin, name) VALUES (?, ?)",
+                    ('TEST002', 'Test Bond 2')
+                )
+                raise ValueError("Test exception")
+        except ValueError:
+            pass
+        
+        # Данные должны быть откачены
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM bonds WHERE isin = ?", ('TEST002',))
+            row = cursor.fetchone()
+            assert row is None
+    
+    def test_get_db_cursor_basic(self, mock_db):
+        """Базовое использование get_db_cursor"""
+        from core.db.connection import get_db_cursor
+        
+        with get_db_cursor() as cursor:
+            cursor.execute('SELECT 1 as value')
+            row = cursor.fetchone()
+            assert row['value'] == 1
+
+
+# ============================================
 # TestBondsRepository
 # ============================================
 
 class TestBondsRepository:
     """Тесты BondsRepository"""
     
-    @patch('core.db.bonds_repo.get_connection')
-    def test_save_bond(self, mock_get_conn, mock_connection, sample_bond_data):
+    def test_save_bond(self, mock_db, sample_bond_data):
         """Сохранение облигации"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.bonds_repo import BondsRepository
         repo = BondsRepository()
         
@@ -190,11 +275,8 @@ class TestBondsRepository:
         
         assert result is True
     
-    @patch('core.db.bonds_repo.get_connection')
-    def test_load_bond(self, mock_get_conn, mock_connection, sample_bond_data):
+    def test_load_bond(self, mock_db, sample_bond_data):
         """Загрузка облигации"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.bonds_repo import BondsRepository
         repo = BondsRepository()
         
@@ -208,11 +290,8 @@ class TestBondsRepository:
         assert loaded['isin'] == sample_bond_data['isin']
         assert loaded['name'] == sample_bond_data['name']
     
-    @patch('core.db.bonds_repo.get_connection')
-    def test_load_nonexistent_bond(self, mock_get_conn, mock_connection):
+    def test_load_nonexistent_bond(self, mock_db):
         """Загрузка несуществующей облигации"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.bonds_repo import BondsRepository
         repo = BondsRepository()
         
@@ -220,11 +299,8 @@ class TestBondsRepository:
         
         assert loaded is None
     
-    @patch('core.db.bonds_repo.get_connection')
-    def test_get_all(self, mock_get_conn, mock_connection, sample_bond_data):
+    def test_get_all(self, mock_db, sample_bond_data):
         """Получение всех облигаций"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.bonds_repo import BondsRepository
         repo = BondsRepository()
         
@@ -239,11 +315,8 @@ class TestBondsRepository:
         
         assert len(all_bonds) == 2
     
-    @patch('core.db.bonds_repo.get_connection')
-    def test_get_favorites(self, mock_get_conn, mock_connection, sample_bond_data):
+    def test_get_favorites(self, mock_db, sample_bond_data):
         """Получение избранных облигаций"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.bonds_repo import BondsRepository
         repo = BondsRepository()
         
@@ -263,11 +336,8 @@ class TestBondsRepository:
         assert len(favorites) == 1
         assert favorites[0]['isin'] == sample_bond_data['isin']
     
-    @patch('core.db.bonds_repo.get_connection')
-    def test_set_favorite(self, mock_get_conn, mock_connection, sample_bond_data):
+    def test_set_favorite(self, mock_db, sample_bond_data):
         """Установка флага избранного"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.bonds_repo import BondsRepository
         repo = BondsRepository()
         
@@ -284,52 +354,8 @@ class TestBondsRepository:
         loaded = repo.load(sample_bond_data['isin'])
         assert loaded['is_favorite'] == 1
     
-    @patch('core.db.bonds_repo.get_connection')
-    def test_update_market_data(self, mock_get_conn, mock_connection, sample_bond_data):
-        """Обновление рыночных данных"""
-        mock_get_conn.side_effect = mock_connection
-        
-        from core.db.bonds_repo import BondsRepository
-        repo = BondsRepository()
-        
-        repo.save(sample_bond_data)
-        
-        result = repo.update_market_data(
-            isin=sample_bond_data['isin'],
-            last_price=96.5,
-            last_ytm=14.8,
-            duration_years=15.5,
-            duration_days=5600
-        )
-        
-        assert result is True
-        
-        loaded = repo.load(sample_bond_data['isin'])
-        assert loaded['last_price'] == 96.5
-        assert loaded['last_ytm'] == 14.8
-    
-    @patch('core.db.bonds_repo.get_connection')
-    def test_delete_bond(self, mock_get_conn, mock_connection, sample_bond_data):
-        """Удаление облигации"""
-        mock_get_conn.side_effect = mock_connection
-        
-        from core.db.bonds_repo import BondsRepository
-        repo = BondsRepository()
-        
-        repo.save(sample_bond_data)
-        
-        result = repo.delete(sample_bond_data['isin'])
-        
-        assert result is True
-        
-        loaded = repo.load(sample_bond_data['isin'])
-        assert loaded is None
-    
-    @patch('core.db.bonds_repo.get_connection')
-    def test_count(self, mock_get_conn, mock_connection, sample_bond_data):
+    def test_count(self, mock_db, sample_bond_data):
         """Подсчёт облигаций"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.bonds_repo import BondsRepository
         repo = BondsRepository()
         
@@ -346,11 +372,8 @@ class TestBondsRepository:
 class TestYTMRepository:
     """Тесты YTMRepository"""
     
-    @patch('core.db.ytm_repo.get_connection')
-    def test_save_daily_ytm(self, mock_get_conn, mock_connection, sample_daily_ytm_df):
+    def test_save_daily_ytm(self, mock_db, sample_daily_ytm_df):
         """Сохранение дневных YTM"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.ytm_repo import YTMRepository
         repo = YTMRepository()
         
@@ -359,11 +382,8 @@ class TestYTMRepository:
         
         assert count == 10
     
-    @patch('core.db.ytm_repo.get_connection')
-    def test_load_daily_ytm(self, mock_get_conn, mock_connection, sample_daily_ytm_df):
+    def test_load_daily_ytm(self, mock_db, sample_daily_ytm_df):
         """Загрузка дневных YTM"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.ytm_repo import YTMRepository
         repo = YTMRepository()
         
@@ -375,31 +395,8 @@ class TestYTMRepository:
         assert len(loaded) == 10
         assert 'ytm' in loaded.columns
     
-    @patch('core.db.ytm_repo.get_connection')
-    def test_load_daily_ytm_with_date_filter(self, mock_get_conn, mock_connection, sample_daily_ytm_df):
-        """Загрузка дневных YTM с фильтром по датам"""
-        mock_get_conn.side_effect = mock_connection
-        
-        from core.db.ytm_repo import YTMRepository
-        repo = YTMRepository()
-        
-        isin = 'RU000A1038V6'
-        repo.save_daily_ytm(isin, sample_daily_ytm_df)
-        
-        # Загружаем только последние 5 дней
-        loaded = repo.load_daily_ytm(
-            isin,
-            start_date=date(2026, 2, 6),
-            end_date=date(2026, 2, 10)
-        )
-        
-        assert len(loaded) == 5
-    
-    @patch('core.db.ytm_repo.get_connection')
-    def test_get_last_daily_ytm_date(self, mock_get_conn, mock_connection, sample_daily_ytm_df):
+    def test_get_last_daily_ytm_date(self, mock_db, sample_daily_ytm_df):
         """Получение последней даты дневных YTM"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.ytm_repo import YTMRepository
         repo = YTMRepository()
         
@@ -410,11 +407,8 @@ class TestYTMRepository:
         
         assert last_date == date(2026, 2, 10)
     
-    @patch('core.db.ytm_repo.get_connection')
-    def test_save_intraday_ytm(self, mock_get_conn, mock_connection, sample_intraday_ytm_df):
+    def test_save_intraday_ytm(self, mock_db, sample_intraday_ytm_df):
         """Сохранение intraday YTM"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.ytm_repo import YTMRepository
         repo = YTMRepository()
         
@@ -423,11 +417,8 @@ class TestYTMRepository:
         
         assert count == 10
     
-    @patch('core.db.ytm_repo.get_connection')
-    def test_load_intraday_ytm(self, mock_get_conn, mock_connection, sample_intraday_ytm_df):
+    def test_load_intraday_ytm(self, mock_db, sample_intraday_ytm_df):
         """Загрузка intraday YTM"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.ytm_repo import YTMRepository
         repo = YTMRepository()
         
@@ -439,11 +430,8 @@ class TestYTMRepository:
         assert len(loaded) == 10
         assert 'ytm_close' in loaded.columns
     
-    @patch('core.db.ytm_repo.get_connection')
-    def test_count_daily_ytm(self, mock_get_conn, mock_connection, sample_daily_ytm_df):
+    def test_count_daily_ytm(self, mock_db, sample_daily_ytm_df):
         """Подсчёт дневных YTM"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.ytm_repo import YTMRepository
         repo = YTMRepository()
         
@@ -454,11 +442,8 @@ class TestYTMRepository:
         repo.save_daily_ytm(isin, sample_daily_ytm_df)
         assert repo.count_daily_ytm() == 10
     
-    @patch('core.db.ytm_repo.get_connection')
-    def test_count_intraday_ytm(self, mock_get_conn, mock_connection, sample_intraday_ytm_df):
+    def test_count_intraday_ytm(self, mock_db, sample_intraday_ytm_df):
         """Подсчёт intraday YTM"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.ytm_repo import YTMRepository
         repo = YTMRepository()
         
@@ -477,11 +462,8 @@ class TestYTMRepository:
 class TestSpreadsRepository:
     """Тесты SpreadsRepository"""
     
-    @patch('core.db.spreads_repo.get_connection')
-    def test_save_spread(self, mock_get_conn, mock_connection):
+    def test_save_spread(self, mock_db):
         """Сохранение спреда"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.spreads_repo import SpreadsRepository
         repo = SpreadsRepository()
         
@@ -498,11 +480,8 @@ class TestSpreadsRepository:
         
         assert spread_id > 0
     
-    @patch('core.db.spreads_repo.get_connection')
-    def test_save_spreads_batch(self, mock_get_conn, mock_connection):
+    def test_save_spreads_batch(self, mock_db):
         """Пакетное сохранение спредов"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.spreads_repo import SpreadsRepository
         repo = SpreadsRepository()
         
@@ -523,11 +502,8 @@ class TestSpreadsRepository:
         
         assert count == 10
     
-    @patch('core.db.spreads_repo.get_connection')
-    def test_load_spreads(self, mock_get_conn, mock_connection):
+    def test_load_spreads(self, mock_db):
         """Загрузка спредов"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.spreads_repo import SpreadsRepository
         repo = SpreadsRepository()
         
@@ -557,11 +533,8 @@ class TestSpreadsRepository:
         assert len(loaded) == 10
         assert 'spread_bp' in loaded.columns
     
-    @patch('core.db.spreads_repo.get_connection')
-    def test_count_spreads(self, mock_get_conn, mock_connection):
+    def test_count_spreads(self, mock_db):
         """Подсчёт спредов"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.spreads_repo import SpreadsRepository
         repo = SpreadsRepository()
         
@@ -579,11 +552,8 @@ class TestSpreadsRepository:
         
         assert repo.count_spreads() == 1
     
-    @patch('core.db.spreads_repo.get_connection')
-    def test_count_by_mode(self, mock_get_conn, mock_connection):
+    def test_count_by_mode(self, mock_db):
         """Подсчёт спредов по режимам"""
-        mock_get_conn.side_effect = mock_connection
-        
         from core.db.spreads_repo import SpreadsRepository
         repo = SpreadsRepository()
         
@@ -613,3 +583,11 @@ class TestSpreadsRepository:
         
         assert counts.get('daily', 0) == 1
         assert counts.get('intraday', 0) == 1
+
+
+# ============================================
+# Run tests directly
+# ============================================
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

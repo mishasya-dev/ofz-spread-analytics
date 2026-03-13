@@ -4,13 +4,14 @@
 Таблицы:
 - ns_params: параметры Nelson-Siegel (КБД)
 - g_spreads: рассчитанный G-spread по облигациям
+Использует контекстный менеджер для безопасной работы с БД.
 """
 from typing import Optional, Dict, List
 from datetime import date, datetime
 import pandas as pd
 import logging
 
-from .connection import get_connection
+from .connection import get_db_connection, get_db_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -36,39 +37,41 @@ class GSpreadRepository:
         if df.empty:
             return 0
         
-        conn = get_connection()
-        cursor = conn.cursor()
-        
         saved_count = 0
         
-        for idx, row in df.iterrows():
-            try:
-                if isinstance(idx, pd.Timestamp):
-                    date_str = idx.strftime('%Y-%m-%d')
-                else:
-                    date_str = str(idx)
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
                 
-                cursor.execute('''
-                    INSERT OR REPLACE INTO ns_params 
-                    (date, b1, b2, b3, t1)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (
-                    date_str,
-                    float(row['b1']) if pd.notna(row['b1']) else None,
-                    float(row['b2']) if pd.notna(row['b2']) else None,
-                    float(row['b3']) if pd.notna(row['b3']) else None,
-                    float(row['t1']) if pd.notna(row['t1']) else None
-                ))
-                saved_count += 1
-                
-            except Exception as e:
-                logger.warning(f"Ошибка сохранения NS params {date_str}: {e}")
-        
-        conn.commit()
-        conn.close()
-        
-        logger.info(f"Сохранено {saved_count} параметров Nelson-Siegel")
-        return saved_count
+                for idx, row in df.iterrows():
+                    try:
+                        if isinstance(idx, pd.Timestamp):
+                            date_str = idx.strftime('%Y-%m-%d')
+                        else:
+                            date_str = str(idx)
+                        
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO ns_params 
+                            (date, b1, b2, b3, t1)
+                            VALUES (?, ?, ?, ?, ?)
+                        ''', (
+                            date_str,
+                            float(row['b1']) if pd.notna(row['b1']) else None,
+                            float(row['b2']) if pd.notna(row['b2']) else None,
+                            float(row['b3']) if pd.notna(row['b3']) else None,
+                            float(row['t1']) if pd.notna(row['t1']) else None
+                        ))
+                        saved_count += 1
+                        
+                    except Exception as e:
+                        logger.warning(f"Ошибка сохранения NS params {date_str}: {e}")
+            
+            logger.info(f"Сохранено {saved_count} параметров Nelson-Siegel")
+            return saved_count
+            
+        except Exception as e:
+            logger.error(f"Ошибка сохранения NS params: {e}")
+            return saved_count
     
     def load_ns_params(
         self,
@@ -85,8 +88,6 @@ class GSpreadRepository:
         Returns:
             DataFrame с колонками: b1, b2, b3, t1
         """
-        conn = get_connection()
-        
         query = '''
             SELECT date, b1, b2, b3, t1
             FROM ns_params
@@ -104,8 +105,8 @@ class GSpreadRepository:
         
         query += ' ORDER BY date'
         
-        df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
+        with get_db_connection() as conn:
+            df = pd.read_sql_query(query, conn, params=params)
         
         if df.empty:
             return pd.DataFrame()
@@ -117,16 +118,12 @@ class GSpreadRepository:
     
     def get_last_ns_params_date(self) -> Optional[date]:
         """Получить дату последних параметров NS в БД"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT MAX(date) as last_date
-            FROM ns_params
-        ''')
-        
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT MAX(date) as last_date
+                FROM ns_params
+            ''')
+            row = cursor.fetchone()
         
         if row and row['last_date']:
             return datetime.strptime(row['last_date'], '%Y-%m-%d').date()
@@ -142,16 +139,12 @@ class GSpreadRepository:
         Returns:
             Словарь {b1, b2, b3, t1} или None
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT b1, b2, b3, t1 FROM ns_params
-            WHERE date = ?
-        ''', (target_date.strftime('%Y-%m-%d'),))
-        
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT b1, b2, b3, t1 FROM ns_params
+                WHERE date = ?
+            ''', (target_date.strftime('%Y-%m-%d'),))
+            row = cursor.fetchone()
         
         if row:
             return {
@@ -164,12 +157,9 @@ class GSpreadRepository:
     
     def count_ns_params(self) -> int:
         """Количество записей параметров NS"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT COUNT(*) as cnt FROM ns_params')
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute('SELECT COUNT(*) as cnt FROM ns_params')
+            row = cursor.fetchone()
         
         return row['cnt'] if row else 0
     
@@ -192,40 +182,42 @@ class GSpreadRepository:
         if df.empty:
             return 0
         
-        conn = get_connection()
-        cursor = conn.cursor()
-        
         saved_count = 0
         
-        for idx, row in df.iterrows():
-            try:
-                if isinstance(idx, pd.Timestamp):
-                    date_str = idx.strftime('%Y-%m-%d')
-                else:
-                    date_str = str(idx)
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
                 
-                cursor.execute('''
-                    INSERT OR REPLACE INTO g_spreads 
-                    (isin, date, ytm_bond, duration_years, ytm_kbd, g_spread_bp)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (
-                    isin,
-                    date_str,
-                    float(row['ytm_bond']) if pd.notna(row['ytm_bond']) else None,
-                    float(row['duration_years']) if pd.notna(row['duration_years']) else None,
-                    float(row['ytm_kbd']) if pd.notna(row['ytm_kbd']) else None,
-                    float(row['g_spread_bp']) if pd.notna(row['g_spread_bp']) else None
-                ))
-                saved_count += 1
-                
-            except Exception as e:
-                logger.warning(f"Ошибка сохранения G-spread {date_str}: {e}")
-        
-        conn.commit()
-        conn.close()
-        
-        logger.info(f"Сохранено {saved_count} G-spread для {isin}")
-        return saved_count
+                for idx, row in df.iterrows():
+                    try:
+                        if isinstance(idx, pd.Timestamp):
+                            date_str = idx.strftime('%Y-%m-%d')
+                        else:
+                            date_str = str(idx)
+                        
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO g_spreads 
+                            (isin, date, ytm_bond, duration_years, ytm_kbd, g_spread_bp)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        ''', (
+                            isin,
+                            date_str,
+                            float(row['ytm_bond']) if pd.notna(row.get('ytm_bond')) else None,
+                            float(row['duration_years']) if pd.notna(row.get('duration_years')) else None,
+                            float(row['ytm_kbd']) if pd.notna(row.get('ytm_kbd')) else None,
+                            float(row['g_spread_bp']) if pd.notna(row.get('g_spread_bp')) else None
+                        ))
+                        saved_count += 1
+                        
+                    except Exception as e:
+                        logger.warning(f"Ошибка сохранения G-spread {date_str}: {e}")
+            
+            logger.info(f"Сохранено {saved_count} G-spread для {isin}")
+            return saved_count
+            
+        except Exception as e:
+            logger.error(f"Ошибка сохранения G-spread: {e}")
+            return saved_count
     
     def load_g_spreads(
         self,
@@ -234,7 +226,7 @@ class GSpreadRepository:
         end_date: Optional[date] = None
     ) -> pd.DataFrame:
         """
-        Загрузить G-sread для облигации
+        Загрузить G-spread для облигации из БД
         
         Args:
             isin: ISIN облигации
@@ -244,8 +236,6 @@ class GSpreadRepository:
         Returns:
             DataFrame с G-spread
         """
-        conn = get_connection()
-        
         query = '''
             SELECT date, ytm_bond, duration_years, ytm_kbd, g_spread_bp
             FROM g_spreads
@@ -263,8 +253,8 @@ class GSpreadRepository:
         
         query += ' ORDER BY date'
         
-        df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
+        with get_db_connection() as conn:
+            df = pd.read_sql_query(query, conn, params=params)
         
         if df.empty:
             return pd.DataFrame()
@@ -275,18 +265,14 @@ class GSpreadRepository:
         return df
     
     def get_last_g_spread_date(self, isin: str) -> Optional[date]:
-        """Получить дату последнего G-spread для облигации"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT MAX(date) as last_date
-            FROM g_spreads
-            WHERE isin = ?
-        ''', (isin,))
-        
-        row = cursor.fetchone()
-        conn.close()
+        """Получить дату последнего G-spread в БД для облигации"""
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT MAX(date) as last_date
+                FROM g_spreads
+                WHERE isin = ?
+            ''', (isin,))
+            row = cursor.fetchone()
         
         if row and row['last_date']:
             return datetime.strptime(row['last_date'], '%Y-%m-%d').date()
@@ -307,17 +293,13 @@ class GSpreadRepository:
         Returns:
             Словарь с данными или None
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT ytm_bond, duration_years, ytm_kbd, g_spread_bp
-            FROM g_spreads
-            WHERE isin = ? AND date = ?
-        ''', (isin, target_date.strftime('%Y-%m-%d')))
-        
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT ytm_bond, duration_years, ytm_kbd, g_spread_bp
+                FROM g_spreads
+                WHERE isin = ? AND date = ?
+            ''', (isin, target_date.strftime('%Y-%m-%d')))
+            row = cursor.fetchone()
         
         if row:
             return {
@@ -330,32 +312,28 @@ class GSpreadRepository:
     
     def count_g_spreads(self, isin: str = None) -> int:
         """Количество записей G-spread"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        if isin:
-            cursor.execute('SELECT COUNT(*) as cnt FROM g_spreads WHERE isin = ?', (isin,))
-        else:
-            cursor.execute('SELECT COUNT(*) as cnt FROM g_spreads')
-        
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            if isin:
+                cursor.execute('SELECT COUNT(*) as cnt FROM g_spreads WHERE isin = ?', (isin,))
+            else:
+                cursor.execute('SELECT COUNT(*) as cnt FROM g_spreads')
+            row = cursor.fetchone()
         
         return row['cnt'] if row else 0
     
     def delete_g_spreads(self, isin: str) -> int:
         """Удалить G-spread для облигации"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('DELETE FROM g_spreads WHERE isin = ?', (isin,))
-        deleted = cursor.rowcount
-        
-        conn.commit()
-        conn.close()
-        
-        logger.info(f"Удалено {deleted} G-spread для {isin}")
-        return deleted
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM g_spreads WHERE isin = ?', (isin,))
+                deleted = cursor.rowcount
+            
+            logger.info(f"Удалено {deleted} G-spread для {isin}")
+            return deleted
+        except Exception as e:
+            logger.error(f"Ошибка удаления G-spread: {e}")
+            return 0
     
     # ==========================================
     # СТАТИСТИКА
@@ -363,37 +341,35 @@ class GSpreadRepository:
     
     def get_stats(self) -> Dict:
         """Получить статистику по таблицам G-spread"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        # Параметры NS
-        cursor.execute('SELECT COUNT(*) as cnt FROM ns_params')
-        ns_count = cursor.fetchone()['cnt']
-        
-        # G-spreads
-        cursor.execute('SELECT COUNT(*) as cnt FROM g_spreads')
-        gs_count = cursor.fetchone()['cnt']
-        
-        # G-spreads по облигациям
-        cursor.execute('''
-            SELECT isin, COUNT(*) as cnt
-            FROM g_spreads
-            GROUP BY isin
-        ''')
-        by_isin = {row['isin']: row['cnt'] for row in cursor.fetchall()}
-        
-        # Диапазон дат NS
-        cursor.execute('SELECT MIN(date) as min_d, MAX(date) as max_d FROM ns_params')
-        ns_range = cursor.fetchone()
-        
-        # Yearyields
-        cursor.execute('SELECT COUNT(*) as cnt FROM yearyields')
-        yy_count = cursor.fetchone()['cnt']
-        
-        cursor.execute('SELECT MIN(date) as min_d, MAX(date) as max_d FROM yearyields')
-        yy_range = cursor.fetchone()
-        
-        conn.close()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Параметры NS
+            cursor.execute('SELECT COUNT(*) as cnt FROM ns_params')
+            ns_count = cursor.fetchone()['cnt']
+            
+            # G-spreads
+            cursor.execute('SELECT COUNT(*) as cnt FROM g_spreads')
+            gs_count = cursor.fetchone()['cnt']
+            
+            # G-spreads по облигациям
+            cursor.execute('''
+                SELECT isin, COUNT(*) as cnt
+                FROM g_spreads
+                GROUP BY isin
+            ''')
+            by_isin = {row['isin']: row['cnt'] for row in cursor.fetchall()}
+            
+            # Диапазон дат NS
+            cursor.execute('SELECT MIN(date) as min_d, MAX(date) as max_d FROM ns_params')
+            ns_range = cursor.fetchone()
+            
+            # Yearyields
+            cursor.execute('SELECT COUNT(*) as cnt FROM yearyields')
+            yy_count = cursor.fetchone()['cnt']
+            
+            cursor.execute('SELECT MIN(date) as min_d, MAX(date) as max_d FROM yearyields')
+            yy_range = cursor.fetchone()
         
         return {
             'ns_params_count': ns_count,
@@ -409,18 +385,6 @@ class GSpreadRepository:
                 yy_range['max_d'] if yy_range else None
             )
         }
-    
-    # ==========================================
-    # YEARYIELDS (точки КБД) - DEPRECATED
-    # ==========================================
-    # Функции закомментированы - G-spread теперь берётся напрямую из MOEX ZCYC API
-    # Используйте: get_zcyc_data_for_date() / get_zcyc_history() из api/moex_zcyc.py
-    
-    # def save_yearyields(self, df: pd.DataFrame) -> int: ...
-    # def load_yearyields(self, start_date, end_date) -> pd.DataFrame: ...
-    # def get_last_yearyields_date(self) -> Optional[date]: ...
-    # def get_yearyields_dates(self) -> set: ...
-    # def count_yearyields(self) -> int: ...
     
     # ==========================================
     # ZCYC CACHE (кэш G-spread от MOEX)
@@ -440,41 +404,38 @@ class GSpreadRepository:
         if df.empty:
             return 0
         
-        conn = get_connection()
-        cursor = conn.cursor()
-        
         saved_count = 0
         
-        for _, row in df.iterrows():
-            try:
-                if isinstance(row['date'], pd.Timestamp):
-                    date_str = row['date'].strftime('%Y-%m-%d')
-                else:
-                    date_str = str(row['date'])[:10]
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
                 
-                cursor.execute('''
-                    INSERT OR REPLACE INTO zcyc_cache 
-                    (date, secid, shortname, trdyield, clcyield, duration_days, g_spread_bp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    date_str,
-                    str(row['secid']),
-                    str(row.get('shortname', '')),
-                    float(row['trdyield']) if pd.notna(row.get('trdyield')) else None,
-                    float(row['clcyield']) if pd.notna(row.get('clcyield')) else None,
-                    float(row['duration_days']) if pd.notna(row.get('duration_days')) else None,
-                    float(row['g_spread_bp']) if pd.notna(row.get('g_spread_bp')) else None
-                ))
-                saved_count += 1
-                
-            except Exception as e:
-                logger.warning(f"Ошибка сохранения ZCYC: {e}")
-        
-        conn.commit()
-        conn.close()
-        
-        logger.info(f"Сохранено {saved_count} записей ZCYC в кэш")
-        return saved_count
+                for _, row in df.iterrows():
+                    try:
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO zcyc_cache 
+                            (date, secid, shortname, trdyield, clcyield, duration_days, g_spread_bp)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            str(row['date']) if isinstance(row['date'], str) else row['date'].strftime('%Y-%m-%d'),
+                            row.get('secid'),
+                            row.get('shortname'),
+                            row.get('trdyield'),
+                            row.get('clcyield'),
+                            row.get('duration_days'),
+                            row.get('g_spread_bp')
+                        ))
+                        saved_count += 1
+                        
+                    except Exception as e:
+                        logger.warning(f"Ошибка сохранения ZCYC: {e}")
+            
+            logger.info(f"Сохранено {saved_count} записей ZCYC")
+            return saved_count
+            
+        except Exception as e:
+            logger.error(f"Ошибка сохранения ZCYC: {e}")
+            return saved_count
     
     def load_zcyc(
         self,
@@ -493,8 +454,6 @@ class GSpreadRepository:
         Returns:
             DataFrame с ZCYC данными
         """
-        conn = get_connection()
-        
         query = '''
             SELECT date, secid, shortname, trdyield, clcyield, duration_days, g_spread_bp
             FROM zcyc_cache
@@ -516,8 +475,8 @@ class GSpreadRepository:
         
         query += ' ORDER BY date'
         
-        df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
+        with get_db_connection() as conn:
+            df = pd.read_sql_query(query, conn, params=params)
         
         if df.empty:
             return pd.DataFrame()
@@ -543,9 +502,6 @@ class GSpreadRepository:
         Returns:
             Множество дат
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-        
         query = 'SELECT DISTINCT date FROM zcyc_cache WHERE 1=1'
         params = []
         
@@ -561,42 +517,35 @@ class GSpreadRepository:
             query += ' AND date <= ?'
             params.append(end_date.strftime('%Y-%m-%d'))
         
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
         
         return {datetime.strptime(row['date'], '%Y-%m-%d').date() for row in rows}
     
     def count_zcyc(self, isin: str = None) -> int:
         """Количество записей ZCYC в кэше"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        if isin:
-            cursor.execute('SELECT COUNT(*) as cnt FROM zcyc_cache WHERE secid = ?', (isin,))
-        else:
-            cursor.execute('SELECT COUNT(*) as cnt FROM zcyc_cache')
-        
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            if isin:
+                cursor.execute('SELECT COUNT(*) as cnt FROM zcyc_cache WHERE secid = ?', (isin,))
+            else:
+                cursor.execute('SELECT COUNT(*) as cnt FROM zcyc_cache')
+            row = cursor.fetchone()
         
         return row['cnt'] if row else 0
     
     def get_zcyc_date_range(self, isin: str = None) -> tuple:
         """Получить диапазон дат ZCYC в кэше"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        if isin:
-            cursor.execute(
-                'SELECT MIN(date) as min_d, MAX(date) as max_d FROM zcyc_cache WHERE secid = ?',
-                (isin,)
-            )
-        else:
-            cursor.execute('SELECT MIN(date) as min_d, MAX(date) as max_d FROM zcyc_cache')
-        
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            if isin:
+                cursor.execute(
+                    'SELECT MIN(date) as min_d, MAX(date) as max_d FROM zcyc_cache WHERE secid = ?',
+                    (isin,)
+                )
+            else:
+                cursor.execute('SELECT MIN(date) as min_d, MAX(date) as max_d FROM zcyc_cache')
+            
+            row = cursor.fetchone()
         
         if row and row['min_d']:
             return (
@@ -619,21 +568,17 @@ class GSpreadRepository:
         Returns:
             True если сохранено
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-        
         try:
-            cursor.execute('''
-                INSERT OR IGNORE INTO zcyc_empty_dates (date)
-                VALUES (?)
-            ''', (empty_date.strftime('%Y-%m-%d'),))
-            conn.commit()
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR IGNORE INTO zcyc_empty_dates (date)
+                    VALUES (?)
+                ''', (empty_date.strftime('%Y-%m-%d'),))
             return True
         except Exception as e:
             logger.warning(f"Ошибка сохранения пустой даты {empty_date}: {e}")
             return False
-        finally:
-            conn.close()
     
     def save_empty_dates(self, dates: list) -> int:
         """
@@ -648,23 +593,26 @@ class GSpreadRepository:
         if not dates:
             return 0
         
-        conn = get_connection()
-        cursor = conn.cursor()
         saved = 0
         
-        for d in dates:
-            try:
-                cursor.execute('''
-                    INSERT OR IGNORE INTO zcyc_empty_dates (date)
-                    VALUES (?)
-                ''', (d.strftime('%Y-%m-%d'),))
-                saved += 1
-            except Exception:
-                pass
-        
-        conn.commit()
-        conn.close()
-        return saved
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                for d in dates:
+                    try:
+                        cursor.execute('''
+                            INSERT OR IGNORE INTO zcyc_empty_dates (date)
+                            VALUES (?)
+                        ''', (d.strftime('%Y-%m-%d'),))
+                        saved += 1
+                    except Exception:
+                        pass
+            
+            return saved
+        except Exception as e:
+            logger.error(f"Ошибка сохранения пустых дат: {e}")
+            return saved
     
     def load_empty_dates(self, start_date: date = None, end_date: date = None) -> set:
         """
@@ -677,9 +625,6 @@ class GSpreadRepository:
         Returns:
             Множество дат
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-        
         query = 'SELECT date FROM zcyc_empty_dates WHERE 1=1'
         params = []
         
@@ -691,19 +636,16 @@ class GSpreadRepository:
             query += ' AND date <= ?'
             params.append(end_date.strftime('%Y-%m-%d'))
         
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
         
         return {datetime.strptime(row['date'], '%Y-%m-%d').date() for row in rows}
     
     def count_empty_dates(self) -> int:
         """Количество пустых дат"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT COUNT(*) as cnt FROM zcyc_empty_dates')
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute('SELECT COUNT(*) as cnt FROM zcyc_empty_dates')
+            row = cursor.fetchone()
         
         return row['cnt'] if row else 0

@@ -2,12 +2,13 @@
 Репозиторий облигаций
 
 Содержит операции CRUD для облигаций.
+Использует контекстный менеджер для безопасной работы с БД.
 """
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import logging
 
-from .connection import get_connection
+from .connection import get_db_connection, get_db_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -25,84 +26,71 @@ class BondsRepository:
         Returns:
             True если успешно
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-
         try:
-            cursor.execute('''
-                INSERT OR REPLACE INTO bonds
-                (isin, name, short_name, coupon_rate, maturity_date, issue_date,
-                 face_value, coupon_frequency, day_count, is_favorite,
-                 last_price, last_ytm, duration_years, duration_days,
-                 last_trade_date, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                bond_data.get('isin'),
-                bond_data.get('name'),
-                bond_data.get('short_name'),
-                bond_data.get('coupon_rate'),
-                bond_data.get('maturity_date'),
-                bond_data.get('issue_date'),
-                bond_data.get('face_value', 1000),
-                bond_data.get('coupon_frequency', 2),
-                bond_data.get('day_count', 'ACT/ACT'),
-                bond_data.get('is_favorite', 0),
-                bond_data.get('last_price'),
-                bond_data.get('last_ytm'),
-                bond_data.get('duration_years'),
-                bond_data.get('duration_days'),
-                bond_data.get('last_trade_date'),
-                datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            ))
-            conn.commit()
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO bonds
+                    (isin, name, short_name, coupon_rate, maturity_date, issue_date,
+                     face_value, coupon_frequency, day_count, is_favorite,
+                     last_price, last_ytm, duration_years, duration_days,
+                     last_trade_date, last_updated)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    bond_data.get('isin'),
+                    bond_data.get('name'),
+                    bond_data.get('short_name'),
+                    bond_data.get('coupon_rate'),
+                    bond_data.get('maturity_date'),
+                    bond_data.get('issue_date'),
+                    bond_data.get('face_value', 1000),
+                    bond_data.get('coupon_frequency', 2),
+                    bond_data.get('day_count', 'ACT/ACT'),
+                    bond_data.get('is_favorite', 0),
+                    bond_data.get('last_price'),
+                    bond_data.get('last_ytm'),
+                    bond_data.get('duration_years'),
+                    bond_data.get('duration_days'),
+                    bond_data.get('last_trade_date'),
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                ))
             logger.debug(f"Сохранена облигация {bond_data.get('isin')}")
             return True
         except Exception as e:
             logger.error(f"Ошибка сохранения облигации: {e}")
             return False
-        finally:
-            conn.close()
 
     def load(self, isin: str) -> Optional[Dict]:
         """Загрузить информацию об облигации"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('SELECT * FROM bonds WHERE isin = ?', (isin,))
-        row = cursor.fetchone()
-        conn.close()
-
+        with get_db_cursor() as cursor:
+            cursor.execute('SELECT * FROM bonds WHERE isin = ?', (isin,))
+            row = cursor.fetchone()
+        
         if row:
             return dict(row)
         return None
 
     def get_all(self) -> List[Dict]:
         """Получить список всех облигаций из БД"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            SELECT * FROM bonds
-            ORDER BY is_favorite DESC, duration_years
-        ''')
-        rows = cursor.fetchall()
-        conn.close()
-
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT * FROM bonds
+                ORDER BY is_favorite DESC, duration_years
+            ''')
+            rows = cursor.fetchall()
+        
         return [dict(row) for row in rows]
 
     def get_favorites(self) -> List[Dict]:
         """Получить список избранных облигаций"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            SELECT * FROM bonds
-            WHERE is_favorite = 1
-            ORDER BY duration_years
-        ''')
-        rows = cursor.fetchall()
-        conn.close()
-
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT * FROM bonds
+                WHERE is_favorite = 1
+                ORDER BY duration_years
+            ''')
+            rows = cursor.fetchall()
+        
         return [dict(row) for row in rows]
 
     def set_favorite(self, isin: str, is_favorite: bool = True) -> bool:
@@ -116,22 +104,18 @@ class BondsRepository:
         Returns:
             True если успешно
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-
         try:
-            cursor.execute('''
-                UPDATE bonds
-                SET is_favorite = ?, last_updated = ?
-                WHERE isin = ?
-            ''', (1 if is_favorite else 0, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), isin))
-            conn.commit()
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE bonds
+                    SET is_favorite = ?, last_updated = ?
+                    WHERE isin = ?
+                ''', (1 if is_favorite else 0, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), isin))
             return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Ошибка установки is_favorite: {e}")
             return False
-        finally:
-            conn.close()
 
     def clear_all_favorites(self) -> int:
         """
@@ -140,22 +124,18 @@ class BondsRepository:
         Returns:
             Количество обновлённых записей
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-
         try:
-            cursor.execute('''
-                UPDATE bonds
-                SET is_favorite = 0, last_updated = ?
-                WHERE is_favorite = 1
-            ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),))
-            conn.commit()
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE bonds
+                    SET is_favorite = 0, last_updated = ?
+                    WHERE is_favorite = 1
+                ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),))
             return cursor.rowcount
         except Exception as e:
             logger.error(f"Ошибка очистки избранного: {e}")
             return 0
-        finally:
-            conn.close()
 
     def update_market_data(
         self,
@@ -172,53 +152,42 @@ class BondsRepository:
         Returns:
             True если успешно
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-
         try:
-            cursor.execute('''
-                UPDATE bonds
-                SET last_price = ?, last_ytm = ?, duration_years = ?,
-                    duration_days = ?, last_trade_date = ?, last_updated = ?
-                WHERE isin = ?
-            ''', (
-                last_price, last_ytm, duration_years, duration_days,
-                last_trade_date,
-                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                isin
-            ))
-            conn.commit()
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE bonds
+                    SET last_price = ?, last_ytm = ?, duration_years = ?,
+                        duration_days = ?, last_trade_date = ?, last_updated = ?
+                    WHERE isin = ?
+                ''', (
+                    last_price, last_ytm, duration_years, duration_days,
+                    last_trade_date,
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    isin
+                ))
             return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Ошибка обновления рыночных данных: {e}")
             return False
-        finally:
-            conn.close()
 
     def delete(self, isin: str) -> bool:
         """Удалить облигацию из БД"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
         try:
-            cursor.execute('DELETE FROM bonds WHERE isin = ?', (isin,))
-            conn.commit()
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM bonds WHERE isin = ?', (isin,))
             return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Ошибка удаления облигации: {e}")
             return False
-        finally:
-            conn.close()
 
     def count(self) -> int:
         """Получить количество облигаций в БД"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('SELECT COUNT(*) as cnt FROM bonds')
-        row = cursor.fetchone()
-        conn.close()
-
+        with get_db_cursor() as cursor:
+            cursor.execute('SELECT COUNT(*) as cnt FROM bonds')
+            row = cursor.fetchone()
+        
         return row['cnt'] if row else 0
 
     def migrate_from_config(self, bonds_config: Dict[str, Any]) -> int:

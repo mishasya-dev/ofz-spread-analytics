@@ -2,13 +2,14 @@
 Репозиторий YTM (Yield to Maturity)
 
 Содержит операции для работы с дневными и внутридневными YTM.
+Использует контекстный менеджер для безопасной работы с БД.
 """
 from typing import Optional, Dict
 from datetime import date, datetime, timedelta
 import pandas as pd
 import logging
 
-from .connection import get_connection
+from .connection import get_db_connection, get_db_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -34,42 +35,44 @@ class YTMRepository:
         if df.empty:
             return 0
 
-        conn = get_connection()
-        cursor = conn.cursor()
-
         saved_count = 0
 
-        for idx, row in df.iterrows():
-            try:
-                # Дата
-                if isinstance(idx, pd.Timestamp):
-                    date_str = idx.strftime('%Y-%m-%d')
-                elif hasattr(row, 'date'):
-                    date_str = row['date'].strftime('%Y-%m-%d') if isinstance(row['date'], (datetime, pd.Timestamp)) else str(row['date'])
-                else:
-                    date_str = str(idx)
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
 
-                cursor.execute('''
-                    INSERT OR REPLACE INTO daily_ytm 
-                    (isin, date, ytm, price, duration_days)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (
-                    isin,
-                    date_str,
-                    row.get('ytm'),
-                    row.get('price'),
-                    row.get('duration_days')
-                ))
-                saved_count += 1
+                for idx, row in df.iterrows():
+                    try:
+                        # Дата
+                        if isinstance(idx, pd.Timestamp):
+                            date_str = idx.strftime('%Y-%m-%d')
+                        elif hasattr(row, 'date'):
+                            date_str = row['date'].strftime('%Y-%m-%d') if isinstance(row['date'], (datetime, pd.Timestamp)) else str(row['date'])
+                        else:
+                            date_str = str(idx)
 
-            except Exception as e:
-                logger.warning(f"Ошибка сохранения daily YTM {date_str}: {e}")
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO daily_ytm 
+                            (isin, date, ytm, price, duration_days)
+                            VALUES (?, ?, ?, ?, ?)
+                        ''', (
+                            isin,
+                            date_str,
+                            row.get('ytm'),
+                            row.get('price'),
+                            row.get('duration_days')
+                        ))
+                        saved_count += 1
 
-        conn.commit()
-        conn.close()
+                    except Exception as e:
+                        logger.warning(f"Ошибка сохранения daily YTM {date_str}: {e}")
 
-        logger.info(f"Сохранено {saved_count} дневных YTM для {isin}")
-        return saved_count
+            logger.info(f"Сохранено {saved_count} дневных YTM для {isin}")
+            return saved_count
+            
+        except Exception as e:
+            logger.error(f"Ошибка сохранения daily YTM: {e}")
+            return saved_count
 
     def load_daily_ytm(
         self,
@@ -88,8 +91,6 @@ class YTMRepository:
         Returns:
             DataFrame с YTM
         """
-        conn = get_connection()
-
         query = '''
             SELECT date, ytm, price, duration_days
             FROM daily_ytm
@@ -107,8 +108,8 @@ class YTMRepository:
 
         query += ' ORDER BY date'
 
-        df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
+        with get_db_connection() as conn:
+            df = pd.read_sql_query(query, conn, params=params)
 
         if df.empty:
             return pd.DataFrame()
@@ -120,17 +121,13 @@ class YTMRepository:
 
     def get_last_daily_ytm_date(self, isin: str) -> Optional[date]:
         """Получить дату последнего дневного YTM в БД"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            SELECT MAX(date) as last_date
-            FROM daily_ytm
-            WHERE isin = ?
-        ''', (isin,))
-
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT MAX(date) as last_date
+                FROM daily_ytm
+                WHERE isin = ?
+            ''', (isin,))
+            row = cursor.fetchone()
 
         if row and row['last_date']:
             return datetime.strptime(row['last_date'], '%Y-%m-%d').date()
@@ -155,42 +152,44 @@ class YTMRepository:
         if df.empty:
             return 0
 
-        conn = get_connection()
-        cursor = conn.cursor()
-
         saved_count = 0
 
-        for idx, row in df.iterrows():
-            try:
-                if isinstance(idx, pd.Timestamp):
-                    dt_str = idx.strftime('%Y-%m-%d %H:%M:%S')
-                else:
-                    dt_str = str(idx)
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
 
-                cursor.execute('''
-                    INSERT OR REPLACE INTO intraday_ytm 
-                    (isin, interval, datetime, price_close, ytm, accrued_interest, volume, value)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    isin,
-                    interval,
-                    dt_str,
-                    row.get('close'),
-                    row.get('ytm_close'),
-                    row.get('accrued_interest'),
-                    row.get('volume'),
-                    row.get('value')
-                ))
-                saved_count += 1
+                for idx, row in df.iterrows():
+                    try:
+                        if isinstance(idx, pd.Timestamp):
+                            dt_str = idx.strftime('%Y-%m-%d %H:%M:%S')
+                        else:
+                            dt_str = str(idx)
 
-            except Exception as e:
-                logger.warning(f"Ошибка сохранения intraday YTM {dt_str}: {e}")
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO intraday_ytm 
+                            (isin, interval, datetime, price_close, ytm, accrued_interest, volume, value)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            isin,
+                            interval,
+                            dt_str,
+                            row.get('close'),
+                            row.get('ytm_close'),
+                            row.get('accrued_interest'),
+                            row.get('volume'),
+                            row.get('value')
+                        ))
+                        saved_count += 1
 
-        conn.commit()
-        conn.close()
+                    except Exception as e:
+                        logger.warning(f"Ошибка сохранения intraday YTM {dt_str}: {e}")
 
-        logger.info(f"Сохранено {saved_count} intraday YTM для {isin} (interval={interval})")
-        return saved_count
+            logger.info(f"Сохранено {saved_count} intraday YTM для {isin} (interval={interval})")
+            return saved_count
+            
+        except Exception as e:
+            logger.error(f"Ошибка сохранения intraday YTM: {e}")
+            return saved_count
 
     def load_intraday_ytm(
         self,
@@ -211,8 +210,6 @@ class YTMRepository:
         Returns:
             DataFrame с YTM
         """
-        conn = get_connection()
-
         query = '''
             SELECT datetime, price_close, ytm, accrued_interest, volume, value
             FROM intraday_ytm
@@ -230,8 +227,8 @@ class YTMRepository:
 
         query += ' ORDER BY datetime'
 
-        df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
+        with get_db_connection() as conn:
+            df = pd.read_sql_query(query, conn, params=params)
 
         if df.empty:
             return pd.DataFrame()
@@ -251,17 +248,13 @@ class YTMRepository:
         interval: str
     ) -> Optional[datetime]:
         """Получить datetime последнего рассчитанного YTM"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            SELECT MAX(datetime) as last_dt
-            FROM intraday_ytm
-            WHERE isin = ? AND interval = ?
-        ''', (isin, interval))
-
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT MAX(datetime) as last_dt
+                FROM intraday_ytm
+                WHERE isin = ? AND interval = ?
+            ''', (isin, interval))
+            row = cursor.fetchone()
 
         if row and row['last_dt']:
             return datetime.strptime(row['last_dt'], '%Y-%m-%d %H:%M:%S')
@@ -273,24 +266,17 @@ class YTMRepository:
     
     def count_daily_ytm(self, isin: str = None) -> int:
         """Количество записей дневных YTM"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        if isin:
-            cursor.execute('SELECT COUNT(*) as cnt FROM daily_ytm WHERE isin = ?', (isin,))
-        else:
-            cursor.execute('SELECT COUNT(*) as cnt FROM daily_ytm')
-
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            if isin:
+                cursor.execute('SELECT COUNT(*) as cnt FROM daily_ytm WHERE isin = ?', (isin,))
+            else:
+                cursor.execute('SELECT COUNT(*) as cnt FROM daily_ytm')
+            row = cursor.fetchone()
 
         return row['cnt'] if row else 0
 
     def count_intraday_ytm(self, isin: str = None, interval: str = None) -> int:
         """Количество записей внутридневных YTM"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
         query = 'SELECT COUNT(*) as cnt FROM intraday_ytm WHERE 1=1'
         params = []
 
@@ -301,24 +287,21 @@ class YTMRepository:
             query += ' AND interval = ?'
             params.append(interval)
 
-        cursor.execute(query, params)
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute(query, params)
+            row = cursor.fetchone()
 
         return row['cnt'] if row else 0
 
     def count_intraday_by_interval(self) -> Dict[str, int]:
         """Количество записей по интервалам"""
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            SELECT interval, COUNT(*) as cnt
-            FROM intraday_ytm
-            GROUP BY interval
-        ''')
-        rows = cursor.fetchall()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT interval, COUNT(*) as cnt
+                FROM intraday_ytm
+                GROUP BY interval
+            ''')
+            rows = cursor.fetchall()
 
         return {row['interval']: row['cnt'] for row in rows}
 
@@ -337,16 +320,12 @@ class YTMRepository:
         Returns:
             YTM или None
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            SELECT ytm FROM daily_ytm
-            WHERE isin = ? AND date = ?
-        ''', (isin, target_date.strftime('%Y-%m-%d')))
-
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT ytm FROM daily_ytm
+                WHERE isin = ? AND date = ?
+            ''', (isin, target_date.strftime('%Y-%m-%d')))
+            row = cursor.fetchone()
 
         return row['ytm'] if row else None
 
@@ -377,18 +356,14 @@ class YTMRepository:
         Returns:
             {'ytm': float, 'datetime': datetime, 'price': float} или None
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            SELECT ytm, datetime, price_close FROM intraday_ytm
-            WHERE isin = ? AND interval = ? AND date(datetime) = ?
-            ORDER BY datetime DESC
-            LIMIT 1
-        ''', (isin, interval, target_date.strftime('%Y-%m-%d')))
-
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT ytm, datetime, price_close FROM intraday_ytm
+                WHERE isin = ? AND interval = ? AND date(datetime) = ?
+                ORDER BY datetime DESC
+                LIMIT 1
+            ''', (isin, interval, target_date.strftime('%Y-%m-%d')))
+            row = cursor.fetchone()
 
         if row:
             return {
@@ -426,90 +401,87 @@ class YTMRepository:
                 ]
             }
         """
-        conn = get_connection()
-        cursor = conn.cursor()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
 
-        # Получаем последние N дней с YIELDCLOSE
-        cursor.execute('''
-            SELECT date, ytm FROM daily_ytm
-            WHERE isin = ?
-            ORDER BY date DESC
-            LIMIT ?
-        ''', (isin, days))
-
-        daily_rows = cursor.fetchall()
-
-        if not daily_rows:
-            conn.close()
-            return {
-                'valid': True,
-                'days_checked': 0,
-                'avg_diff_bp': 0,
-                'max_diff_bp': 0,
-                'max_diff_date': None,
-                'details': [],
-                'reason': 'no_daily_data'
-            }
-
-        details = []
-        total_diff = 0
-        max_diff = 0
-        max_diff_date = None
-        valid_days = 0
-        days_checked = 0
-
-        for row in daily_rows:
-            day_date = datetime.strptime(row['date'], '%Y-%m-%d').date()
-            official_ytm = row['ytm']
-
-            # Пропускаем сегодня (неполный торговый день)
-            if day_date >= date.today():
-                continue
-
-            # Получаем полную информацию о последней свече за этот день
+            # Получаем последние N дней с YIELDCLOSE
             cursor.execute('''
-                SELECT ytm, datetime FROM intraday_ytm
-                WHERE isin = ? AND interval = ? AND date(datetime) = ?
-                ORDER BY datetime DESC
-                LIMIT 1
-            ''', (isin, interval, row['date']))
+                SELECT date, ytm FROM daily_ytm
+                WHERE isin = ?
+                ORDER BY date DESC
+                LIMIT ?
+            ''', (isin, days))
 
-            candle_row = cursor.fetchone()
+            daily_rows = cursor.fetchall()
 
-            if candle_row and official_ytm is not None:
-                calculated_ytm = candle_row['ytm']
-                candle_dt = datetime.strptime(candle_row['datetime'], '%Y-%m-%d %H:%M:%S')
-                candle_time = candle_dt.strftime('%H:%M')
+            if not daily_rows:
+                return {
+                    'valid': True,
+                    'days_checked': 0,
+                    'avg_diff_bp': 0,
+                    'max_diff_bp': 0,
+                    'max_diff_date': None,
+                    'details': [],
+                    'reason': 'no_daily_data'
+                }
 
-                diff_bp = abs(calculated_ytm - official_ytm) * 100
-                is_valid = diff_bp <= 5.0
+            details = []
+            total_diff = 0
+            max_diff = 0
+            max_diff_date = None
+            valid_days = 0
+            days_checked = 0
 
-                # День недели (0=Пн, 4=Пт)
-                weekday = day_date.weekday()
-                weekday_names = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
-                weekday_name = weekday_names[weekday]
+            for row in daily_rows:
+                day_date = datetime.strptime(row['date'], '%Y-%m-%d').date()
+                official_ytm = row['ytm']
 
-                details.append({
-                    'date': day_date,
-                    'weekday': weekday_name,
-                    'time': candle_time,
-                    'calculated': round(calculated_ytm, 4),
-                    'official': round(official_ytm, 4),
-                    'diff_bp': round(diff_bp, 2),
-                    'valid': is_valid
-                })
+                # Пропускаем сегодня (неполный торговый день)
+                if day_date >= date.today():
+                    continue
 
-                total_diff += diff_bp
-                days_checked += 1
+                # Получаем полную информацию о последней свече за этот день
+                cursor.execute('''
+                    SELECT ytm, datetime FROM intraday_ytm
+                    WHERE isin = ? AND interval = ? AND date(datetime) = ?
+                    ORDER BY datetime DESC
+                    LIMIT 1
+                ''', (isin, interval, row['date']))
 
-                if diff_bp > max_diff:
-                    max_diff = diff_bp
-                    max_diff_date = day_date
+                candle_row = cursor.fetchone()
 
-                if is_valid:
-                    valid_days += 1
+                if candle_row and official_ytm is not None:
+                    calculated_ytm = candle_row['ytm']
+                    candle_dt = datetime.strptime(candle_row['datetime'], '%Y-%m-%d %H:%M:%S')
+                    candle_time = candle_dt.strftime('%H:%M')
 
-        conn.close()
+                    diff_bp = abs(calculated_ytm - official_ytm) * 100
+                    is_valid = diff_bp <= 5.0
+
+                    # День недели (0=Пн, 4=Пт)
+                    weekday = day_date.weekday()
+                    weekday_names = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+                    weekday_name = weekday_names[weekday]
+
+                    details.append({
+                        'date': day_date,
+                        'weekday': weekday_name,
+                        'time': candle_time,
+                        'calculated': round(calculated_ytm, 4),
+                        'official': round(official_ytm, 4),
+                        'diff_bp': round(diff_bp, 2),
+                        'valid': is_valid
+                    })
+
+                    total_diff += diff_bp
+                    days_checked += 1
+
+                    if diff_bp > max_diff:
+                        max_diff = diff_bp
+                        max_diff_date = day_date
+
+                    if is_valid:
+                        valid_days += 1
 
         if days_checked == 0:
             return {
