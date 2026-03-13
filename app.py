@@ -56,6 +56,44 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# =============================================================================
+# Функции логирования действий пользователей (DEBUG режим)
+# =============================================================================
+def log_widget_change(widget_name: str, details: str = None):
+    """Логирует изменение виджета в DEBUG режиме"""
+    value = st.session_state.get(widget_name)
+    emoji_map = {
+        'selected_bond': '📌',
+        'period': '📏',
+        'spread_window': '📐',
+        'z_threshold': '🎯',
+        'g_spread': '📊',
+        'candle': '🕯️',
+        'refresh': '🔄',
+        'log_level': '📜',
+        'validation': '🔍',
+    }
+    emoji = '🎛️'
+    for key, e in emoji_map.items():
+        if key in widget_name:
+            emoji = e
+            break
+
+    msg = f"{emoji} {widget_name} = {value}"
+    if details:
+        msg += f" ({details})"
+    logger.debug(msg)
+
+
+def log_button_press(button_name: str, details: str = None):
+    """Логирует нажатие кнопки в DEBUG режиме"""
+    msg = f"🔘 Нажата кнопка: '{button_name}'"
+    if details:
+        msg += f" ({details})"
+    logger.debug(msg)
+
+
 # Конфигурация страницы
 st.set_page_config(
     page_title="OFZ Spread Analytics",
@@ -190,12 +228,7 @@ def init_session_state():
         new_keys = set(favorites.keys())
         if current_keys != new_keys:
             st.session_state.bonds = favorites
-            if current_keys:
-                # Изменился список избранного
-                logger.info(f"Изменён список избранного: {len(current_keys)} → {len(favorites)}")
-            else:
-                # Первый запуск в сессии - загружаем из БД
-                logger.debug(f"Загружено {len(favorites)} избранных облигаций из БД")
+            logger.info(f"Обновлён список облигаций: {len(favorites)} избранное")
     else:
         if 'bonds' not in st.session_state:
             config = st.session_state.config
@@ -454,8 +487,8 @@ def _fetch_all_candle_data(isin: str, interval: str) -> pd.DataFrame:
     # Проверяем нужны ли исторические данные
     last_db_datetime = db.get_last_intraday_ytm_datetime(isin, interval)
     
-    # Загружаем историю только если БД пуста
-    if db_ytm_df.empty:
+    if db_ytm_df.empty and date.today() > date.today() - timedelta(days=1):
+        # БД пуста - загружаем историю через новый API
         with MOEXClient() as client:
             raw_history_df = fetch_candles(
                 isin,
@@ -472,14 +505,13 @@ def _fetch_all_candle_data(isin: str, interval: str) -> pd.DataFrame:
                 db_ytm_df = history_df
                 logger.info(f"Сохранены intraday YTM для {isin}: {len(history_df)} записей")
     
-    # Сохраняем текущие данные ТОЛЬКО если их ещё нет в БД
+    elif db_ytm_df.empty:
+        # БД пуста, но сегодня выходной - возвращаем пустой
+        pass
+    
+    # Сохраняем текущие данные
     if not today_df.empty and 'ytm_close' in today_df.columns:
-        # Проверяем есть ли уже данные за сегодня
-        if last_db_datetime is None or last_db_datetime.date() < date.today():
-            db.save_intraday_ytm(isin, interval, today_df)
-            logger.info(f"Сохранены intraday YTM за сегодня: {len(today_df)} записей для {isin}")
-        else:
-            logger.info(f"Intraday YTM за сегодня уже есть в БД для {isin}")
+        db.save_intraday_ytm(isin, interval, today_df)
     
     # Объединяем историю + сегодня
     if not db_ytm_df.empty and not today_df.empty:
@@ -665,8 +697,6 @@ def calculate_bond_g_spread(
     """
     from statsmodels.tsa.stattools import adfuller
     
-    g_spread_repo = get_g_spread_repo()
-    
     # Определяем период по данным daily_df
     if not daily_df.empty:
         daily_df_copy = daily_df.reset_index() if daily_df.index.name else daily_df
@@ -682,34 +712,6 @@ def calculate_bond_g_spread(
         start_date = date.today() - timedelta(days=365)
         end_date = date.today()
     
-    # Проверяем есть ли данные в БД
-    last_db_date = g_spread_repo.get_last_g_spread_date(isin)
-    
-    # Если данные актуальны (за вчера), загружаем из БД
-    if last_db_date and last_db_date >= end_date - timedelta(days=1):
-        logger.info(f"Загрузка G-spread для {isin} из БД (актуально до {last_db_date})")
-        result_df = g_spread_repo.load_g_spreads(isin, start_date, end_date)
-        
-        if not result_df.empty:
-            # Добавляем rolling значения для Z-score
-            roll = result_df['g_spread_bp'].rolling(window=window)
-            result_df['rolling_mean'] = roll.mean()
-            result_df['rolling_std'] = roll.std()
-            result_df['z_score'] = (result_df['g_spread_bp'] - result_df['rolling_mean']) / result_df['rolling_std']
-            
-            # ADF тест
-            p_value = 1.0
-            try:
-                g_spread_clean = result_df['g_spread_bp'].dropna()
-                if len(g_spread_clean) >= 20:
-                    adf_result = adfuller(g_spread_clean)
-                    p_value = adf_result[1]
-            except Exception as e:
-                logger.warning(f"ADF тест не удался: {e}")
-            
-            return result_df, p_value
-    
-    # Данных нет или устарели - загружаем с MOEX
     logger.info(f"Загрузка ZCYC для {isin} за {start_date} - {end_date}")
     
     # Кэшированная загрузка ZCYC (TTL 5 минут)
@@ -999,22 +1001,24 @@ def main():
         
         # Проверка и корректировка индексов (гарантируем валидный диапазон)
         max_idx = len(bonds) - 1
-        st.session_state.selected_bond1 = max(0, min(int(st.session_state.selected_bond1), max_idx))
-        st.session_state.selected_bond2 = max(0, min(int(st.session_state.selected_bond2), max_idx))
+        st.session_state.selected_bond1 = max(0, min(st.session_state.selected_bond1, max_idx))
+        st.session_state.selected_bond2 = max(0, min(st.session_state.selected_bond2, max_idx))
         
         # Выбор облигаций
         bond1_idx = st.selectbox(
             "Облигация 1",
             range(len(bonds)),
             format_func=lambda i: bond_labels[i],
-            key="selected_bond1"  # Автоматическая синхронизация с session_state
+            key="selected_bond1",
+            on_change=lambda: log_widget_change("selected_bond1", bonds[st.session_state.selected_bond1].isin if st.session_state.selected_bond1 < len(bonds) else None)
         )
         
         bond2_idx = st.selectbox(
             "Облигация 2",
             range(len(bonds)),
             format_func=lambda i: bond_labels[i],
-            key="selected_bond2"  # Автоматическая синхронизация с session_state
+            key="selected_bond2",
+            on_change=lambda: log_widget_change("selected_bond2", bonds[st.session_state.selected_bond2].isin if st.session_state.selected_bond2 < len(bonds) else None)
         )
         
         st.divider()
@@ -1025,9 +1029,10 @@ def main():
             "Период анализа (дней)",
             min_value=30,
             max_value=730,
-            key="period",  # Автоматическая синхронизация с session_state
+            key="period",
             step=30,
-            format="%d дней"
+            format="%d дней",
+            on_change=lambda: log_widget_change("period")
         )
         
         st.divider()
@@ -1038,17 +1043,19 @@ def main():
             "Окно rolling (дней)",
             min_value=5,
             max_value=90,
-            key="spread_window",  # Автоматическая синхронизация с session_state
-            step=5
+            key="spread_window",
+            step=5,
+            on_change=lambda: log_widget_change("spread_window")
         )
         
         z_threshold = st.slider(
             "Z-Score порог (σ)",
             min_value=1.0,
             max_value=3.0,
-            key="z_threshold",  # Автоматическая синхронизация с session_state
+            key="z_threshold",
             step=0.1,
-            format="%.1fσ"
+            format="%.1fσ",
+            on_change=lambda: log_widget_change("z_threshold")
         )
         
         st.divider()
@@ -1062,7 +1069,8 @@ def main():
             max_value=730,
             key="g_spread_period",
             step=30,
-            format="%d дней"
+            format="%d дней",
+            on_change=lambda: log_widget_change("g_spread_period")
         )
         
         g_spread_window = st.slider(
@@ -1070,7 +1078,8 @@ def main():
             min_value=5,
             max_value=90,
             key="g_spread_window",
-            step=5
+            step=5,
+            on_change=lambda: log_widget_change("g_spread_window")
         )
         
         g_spread_z_threshold = st.slider(
@@ -1079,7 +1088,8 @@ def main():
             max_value=3.0,
             key="g_spread_z_threshold",
             step=0.1,
-            format="%.1fσ"
+            format="%.1fσ",
+            on_change=lambda: log_widget_change("g_spread_z_threshold")
         )
         
         st.divider()
@@ -1091,9 +1101,10 @@ def main():
             "Интервал для intraday графиков",
             options=["1", "10", "60"],
             format_func=lambda x: interval_options[x],
-            key="candle_interval",  # Автоматическая синхронизация с session_state
+            key="candle_interval",
             horizontal=True,
-            label_visibility="collapsed"
+            label_visibility="collapsed",
+            on_change=lambda: log_widget_change("candle_interval", interval_options.get(st.session_state.candle_interval))
         )
         
         # Период свечей (динамический слайдер)
@@ -1115,9 +1126,10 @@ def main():
                 "Период свечей (дней)",
                 min_value=min_candle_days,
                 max_value=max_candle_days,
-                key="candle_days",  # Автоматическая синхронизация с session_state
+                key="candle_days",
                 step=candle_config["step_days"],
-                format="%d дн."
+                format="%d дн.",
+                on_change=lambda: log_widget_change("candle_days")
             )
             # Пояснение
             st.caption(f"Макс. {candle_config['max_days']} дн. для {candle_config['name']} (ограничен периодом анализа: {period} дн.)")
@@ -1134,7 +1146,8 @@ def main():
         st.subheader("🔄 Автообновление")
         auto_refresh = st.toggle(
             "Включить",
-            key="auto_refresh"  # Автоматическая синхронизация с session_state
+            key="auto_refresh",
+            on_change=lambda: log_widget_change("auto_refresh")
         )
         
         if auto_refresh:
@@ -1142,8 +1155,9 @@ def main():
                 "Интервал (сек)",
                 min_value=30,
                 max_value=300,
-                key="refresh_interval",  # Автоматическая синхронизация с session_state
-                step=30
+                key="refresh_interval",
+                step=30,
+                on_change=lambda: log_widget_change("refresh_interval")
             )
             
             if st.session_state.last_update:
@@ -1162,7 +1176,7 @@ def main():
             st.write(f"**Дневных YTM:** {db_stats['daily_ytm_count']}")
             st.write(f"**Intraday YTM:** {db_stats['intraday_ytm_count']}")
         
-        if st.button("🔄 Обновить БД", width="stretch"):
+        if st.button("🔄 Обновить БД", width="stretch", on_click=lambda: log_button_press("Обновить БД")):
             st.session_state.updating_db = True
         
         if st.session_state.get('updating_db', False):
@@ -1187,7 +1201,7 @@ def main():
         
         st.divider()
         
-        if st.button("🗑️ Очистить кэш", width="stretch"):
+        if st.button("🗑️ Очистить кэш", width="stretch", on_click=lambda: log_button_press("Очистить кэш")):
             st.cache_data.clear()
             st.rerun()
         
@@ -1199,7 +1213,9 @@ def main():
             "Уровень",
             options=["INFO", "DEBUG"],
             horizontal=True,
-            key="log_level"
+            key="log_level",
+            index=1,  # По умолчанию DEBUG
+            on_change=lambda: log_widget_change("log_level")
         )
         
         if log_level == "DEBUG":
@@ -1218,7 +1234,8 @@ def main():
             min_value=1,
             max_value=30,
             value=5,
-            step=1
+            step=1,
+            on_change=lambda: log_widget_change("validation_days")
         )
         
         # Получаем текущие облигации для валидации
@@ -1279,6 +1296,7 @@ def main():
             button_pressed = st.button(button_label, width="stretch", type="secondary")
         
         if button_pressed:
+            log_button_press("Проверить расчёт YTM", f"bonds={bond1_for_val.isin if bond1_for_val else None}/{bond2_for_val.isin if bond2_for_val else None}")
             ytm_repo = get_ytm_repo()
             results = []
             all_valid = True
@@ -1347,13 +1365,9 @@ def main():
         daily_df1 = fetch_historical_data_cached(bond1.isin, period)
         daily_df2 = fetch_historical_data_cached(bond2.isin, period)
         
-        # Дневные данные для G-Spread - используем те же если период совпадает
-        if st.session_state.g_spread_period == period:
-            g_spread_df1_raw = daily_df1
-            g_spread_df2_raw = daily_df2
-        else:
-            g_spread_df1_raw = fetch_historical_data_cached(bond1.isin, st.session_state.g_spread_period)
-            g_spread_df2_raw = fetch_historical_data_cached(bond2.isin, st.session_state.g_spread_period)
+        # Дневные данные для G-Spread (с отдельным периодом)
+        g_spread_df1_raw = fetch_historical_data_cached(bond1.isin, st.session_state.g_spread_period)
+        g_spread_df2_raw = fetch_historical_data_cached(bond2.isin, st.session_state.g_spread_period)
         
         # Intraday данные
         # candle_days уже установлен в sidebar
@@ -1471,7 +1485,7 @@ def main():
         # Кнопка принудительного обновления
         col_refresh, col_status = st.columns([1, 3])
         with col_refresh:
-            refresh_clicked = st.button("🔄 Обновить", key="refresh_cointegration")
+            refresh_clicked = st.button("🔄 Обновить", key="refresh_cointegration", on_click=lambda: log_button_press("Обновить коинтеграцию"))
 
         # Получаем сервис коинтеграции
         coint_service = get_cointegration_service()

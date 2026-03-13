@@ -22,6 +22,27 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# Функции логирования действий пользователей (DEBUG режим)
+# =============================================================================
+def log_widget_change(widget_name: str, details: str = None):
+    """Логирует изменение виджета в DEBUG режиме"""
+    import streamlit as st
+    value = st.session_state.get(widget_name)
+    msg = f"🎛️ {widget_name} = {value}"
+    if details:
+        msg += f" ({details})"
+    logger.debug(msg)
+
+
+def log_button_press(button_name: str, details: str = None):
+    """Логирует нажатие кнопки в DEBUG режиме"""
+    msg = f"🔘 Нажата кнопка: '{button_name}'"
+    if details:
+        msg += f" ({details})"
+    logger.debug(msg)
+
+
 def get_bond_manager():
     """Получить менеджер БД"""
     import sys
@@ -64,6 +85,7 @@ def show_bond_manager_dialog():
         st.markdown("### 📊 Список ОФЗ для торговли")
     with col_refresh:
         if st.button("🔄 Обновить", width="stretch"):
+            log_button_press("Обновить список ОФЗ")
             st.session_state.bond_manager_reload = True
             # Очищаем DataFrame для пересоздания с новыми данными
             if 'bond_manager_df' in st.session_state:
@@ -169,22 +191,17 @@ def show_bond_manager_dialog():
         st.info(f"⭐ Избранных: **{len(current_favorites)}** | Всего: **{len(bonds)}** | Загружено: {load_time}")
     with col_clear:
         if st.button("🗑️ Очистить", width="stretch"):
+            log_button_press("Очистить избранное")
             # Очищаем текущий набор (без сохранения в БД)
             st.session_state.bond_manager_current_favorites = set()
-            
-            # Обновляем DataFrame напрямую - снимаем все галочки
+            # Удаляем DataFrame чтобы пересоздать с очищенными чекбоксами
             if 'bond_manager_df' in st.session_state:
-                df = st.session_state.bond_manager_df.copy()
-                df["⭐"] = False  # Снимаем все галочки
-                st.session_state.bond_manager_df = df
-            
-            # Сбрасываем состояние data_editor
-            editor_version = st.session_state.get('bond_editor_version', 0)
-            editor_key = f"bonds_table_editor_{editor_version}"
-            if editor_key in st.session_state:
-                del st.session_state[editor_key]
-            
-            # БЕЗ st.rerun() - данные обновятся при следующем взаимодействии
+                del st.session_state.bond_manager_df
+            # Увеличиваем версию data_editor для принудительного пересоздания
+            st.session_state.bond_editor_version = st.session_state.get('bond_editor_version', 0) + 1
+            # Генерируем новый UUID для reopen диалога (НЕ сбрасываем last_shown_id)
+            st.session_state.bond_manager_open_id = str(uuid.uuid4())
+            st.rerun()
 
     # ========================================
     # ТАБЛИЦА С ГАЛОЧКАМИ
@@ -286,6 +303,7 @@ def show_bond_manager_dialog():
 
     with col_cancel:
         if st.button("❌ Отменить и закрыть", width="stretch"):
+            log_button_press("Отменить и закрыть")
             # Очищаем состояние
             st.session_state.bond_manager_open_id = None
             st.session_state.bond_manager_last_shown_id = None
@@ -303,6 +321,9 @@ def show_bond_manager_dialog():
             # Синхронизируем с БД
             new_favorites = current_favorites or set()
             old_favorites = original_favorites or set()
+            
+            # Логируем действие
+            log_button_press("Готово", f"added={len(new_favorites - old_favorites)}, removed={len(old_favorites - new_favorites)}")
             
             # INSERT новых
             to_add = new_favorites - old_favorites
@@ -381,6 +402,7 @@ def render_bond_manager_button():
     
     # Кнопка открытия
     if st.button("📊 Выбор инструментов для анализа", width="stretch"):
+        log_button_press("Выбор инструментов для анализа")
         # Генерируем новый ID для этого открытия
         st.session_state.bond_manager_open_id = str(uuid.uuid4())
         # Сбрасываем состояние галочек для нового открытия
