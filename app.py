@@ -449,8 +449,8 @@ def _fetch_all_candle_data(isin: str, interval: str) -> pd.DataFrame:
     # Проверяем нужны ли исторические данные
     last_db_datetime = db.get_last_intraday_ytm_datetime(isin, interval)
     
-    if db_ytm_df.empty and date.today() > date.today() - timedelta(days=1):
-        # БД пуста - загружаем историю через новый API
+    # Загружаем историю только если БД пуста
+    if db_ytm_df.empty:
         with MOEXClient() as client:
             raw_history_df = fetch_candles(
                 isin,
@@ -467,13 +467,14 @@ def _fetch_all_candle_data(isin: str, interval: str) -> pd.DataFrame:
                 db_ytm_df = history_df
                 logger.info(f"Сохранены intraday YTM для {isin}: {len(history_df)} записей")
     
-    elif db_ytm_df.empty:
-        # БД пуста, но сегодня выходной - возвращаем пустой
-        pass
-    
-    # Сохраняем текущие данные
+    # Сохраняем текущие данные ТОЛЬКО если их ещё нет в БД
     if not today_df.empty and 'ytm_close' in today_df.columns:
-        db.save_intraday_ytm(isin, interval, today_df)
+        # Проверяем есть ли уже данные за сегодня
+        if last_db_datetime is None or last_db_datetime.date() < date.today():
+            db.save_intraday_ytm(isin, interval, today_df)
+            logger.info(f"Сохранены intraday YTM за сегодня: {len(today_df)} записей для {isin}")
+        else:
+            logger.info(f"Intraday YTM за сегодня уже есть в БД для {isin}")
     
     # Объединяем историю + сегодня
     if not db_ytm_df.empty and not today_df.empty:
