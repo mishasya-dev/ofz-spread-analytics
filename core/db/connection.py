@@ -272,10 +272,19 @@ def init_database():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             bond1_isin TEXT NOT NULL,
             bond2_isin TEXT NOT NULL,
-            period_days INTEGER NOT NULL,
-            result_json TEXT,
-            calculated_at TEXT,
-            UNIQUE(bond1_isin, bond2_isin, period_days)
+            pair_key TEXT NOT NULL,
+            is_cointegrated INTEGER DEFAULT 0,
+            pvalue REAL,
+            half_life REAL,
+            hedge_ratio REAL,
+            data_days INTEGER DEFAULT 0,
+            adf_bond1_pvalue REAL,
+            adf_bond2_pvalue REAL,
+            both_nonstationary INTEGER DEFAULT 0,
+            low_data INTEGER DEFAULT 0,
+            error TEXT,
+            checked_at TEXT,
+            UNIQUE(pair_key)
         )
     ''')
     
@@ -283,25 +292,63 @@ def init_database():
     cursor.execute("PRAGMA table_info(cointegration_cache)")
     coint_columns = {row[1] for row in cursor.fetchall()}
     
-    # Если старая структура (с pair_key вместо result_json) - пересоздаём таблицу
-    if 'result_json' not in coint_columns and len(coint_columns) > 0:
-        logger.info("Миграция: пересоздание cointegration_cache с новой структурой")
+    # Если старая структура (с result_json) - мигрируем на новую
+    if 'result_json' in coint_columns and 'pair_key' not in coint_columns:
+        logger.info("Миграция: пересоздание cointegration_cache с pair_key")
         cursor.execute('DROP TABLE IF EXISTS cointegration_cache')
         cursor.execute('''
             CREATE TABLE cointegration_cache (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 bond1_isin TEXT NOT NULL,
                 bond2_isin TEXT NOT NULL,
-                period_days INTEGER NOT NULL,
-                result_json TEXT,
-                calculated_at TEXT,
-                UNIQUE(bond1_isin, bond2_isin, period_days)
+                pair_key TEXT NOT NULL,
+                is_cointegrated INTEGER DEFAULT 0,
+                pvalue REAL,
+                half_life REAL,
+                hedge_ratio REAL,
+                data_days INTEGER DEFAULT 0,
+                adf_bond1_pvalue REAL,
+                adf_bond2_pvalue REAL,
+                both_nonstationary INTEGER DEFAULT 0,
+                low_data INTEGER DEFAULT 0,
+                error TEXT,
+                checked_at TEXT,
+                UNIQUE(pair_key)
             )
         ''')
+    
+    # Миграция: добавляем недостающие колонки
+    new_coint_columns = [
+        ('pair_key', 'TEXT'),
+        ('is_cointegrated', 'INTEGER DEFAULT 0'),
+        ('pvalue', 'REAL'),
+        ('half_life', 'REAL'),
+        ('hedge_ratio', 'REAL'),
+        ('data_days', 'INTEGER DEFAULT 0'),
+        ('adf_bond1_pvalue', 'REAL'),
+        ('adf_bond2_pvalue', 'REAL'),
+        ('both_nonstationary', 'INTEGER DEFAULT 0'),
+        ('low_data', 'INTEGER DEFAULT 0'),
+        ('error', 'TEXT'),
+        ('checked_at', 'TEXT'),
+    ]
+    
+    for col_name, col_type in new_coint_columns:
+        if col_name not in coint_columns:
+            try:
+                cursor.execute(f'ALTER TABLE cointegration_cache ADD COLUMN {col_name} {col_type}')
+                logger.info(f"Добавлена колонка {col_name} в таблицу cointegration_cache")
+            except Exception as e:
+                logger.debug(f"Колонка {col_name} уже существует: {e}")
     
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_cointegration_isins 
         ON cointegration_cache(bond1_isin, bond2_isin)
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_cointegration_pair_key 
+        ON cointegration_cache(pair_key)
     ''')
     
     # ==========================================

@@ -2381,3 +2381,77 @@ test_zcyc.py: 7 тестов
 ---
 
 *Обновление: 11.03.2026 UTC*
+
+---
+
+## v0.4.0-db-migration — Удаление старого database.py (08.03.2026)
+
+### Выполненная работа
+
+#### 1. Удалён старый модуль `core/database.py`
+
+Старый монолитный `DatabaseManager` (~1200 строк) заменён на модульную архитектуру `core/db/`:
+- `connection.py` — подключение и инициализация БД
+- `bonds_repo.py` — репозиторий облигаций
+- `ytm_repo.py` — репозиторий YTM
+- `spreads_repo.py` — репозиторий спредов
+- `g_spread_repo.py` — репозиторий G-spread
+- `facade.py` — унифицированный интерфейс `DatabaseFacade`
+
+#### 2. Добавлен `pair_key` в таблицу коинтеграции
+
+```sql
+ALTER TABLE cointegration_cache ADD COLUMN pair_key TEXT;
+CREATE INDEX idx_cointegration_pair_key ON cointegration_cache(pair_key);
+```
+
+Поле `pair_key` используется для уникальной идентификации пар облигаций: `{ISIN1}-{ISIN2}` (отсортированы).
+
+#### 3. Обновлены тесты
+
+| Файл | Изменение |
+|------|-----------|
+| `tests/test_database.py` | Миграция на `core.db` |
+| `tests/test_bonds.py` | Миграция на `core.db` |
+| `tests/test_sidebar.py` | Миграция на `core.db` |
+| `tests/test_period_slider.py` | Миграция на `core.db` |
+| `tests/test_db_migration.py` | Тесты совместимости старого/нового API |
+
+#### 4. Обратная совместимость
+
+Добавлен алиас `get_db()` в `core/db/__init__.py`:
+```python
+def get_db() -> DatabaseFacade:
+    """Алиас для get_db_facade()"""
+    return get_db_facade()
+```
+
+### Результаты тестирования
+
+```
+tests/test_database.py:    37/37 ✅
+tests/test_bonds.py:       22/22 ✅
+tests/test_sidebar.py:     14/14 ✅
+tests/test_period_slider.py: 9/9 ✅
+tests/test_db_migration.py: 14/14 ✅
+────────────────────────────────────
+Итого:                     96/96 ✅
+```
+
+### Изменённые файлы
+
+| Файл | Действие |
+|------|----------|
+| `core/database.py` | **Удалён** |
+| `core/db/__init__.py` | Добавлен `get_db()` алиас |
+| `core/db/connection.py` | Добавлен `pair_key` в cointegration_cache |
+| `core/db/facade.py` | Добавлены методы для совместимости: `save_candles`, `load_candles`, `save_snapshot`, `load_snapshots`, `cleanup_old_data`, `vacuum`, `clear_all_data` |
+| `tests/test_database.py` | Переписан на `core.db` |
+| `tests/test_bonds.py` | Переписан на `core.db` |
+| `tests/test_sidebar.py` | Переписан на `core.db` |
+| `tests/test_period_slider.py` | Переписан на `core.db` |
+| `tests/test_db_migration.py` | Переписан на `core.db` |
+
+---
+
+*Миграция завершена: 08.03.2026*

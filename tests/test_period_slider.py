@@ -26,7 +26,7 @@ class TestPeriodSliderIncrementalLoading:
     @pytest.fixture
     def temp_db(self):
         """Создаём временную БД для тестов"""
-        import core.database as db_module
+        import core.db.connection as db_module
         
         original_db_path = db_module.DB_PATH
         temp_dir = tempfile.mkdtemp()
@@ -70,9 +70,9 @@ class TestPeriodSliderIncrementalLoading:
 
     def test_load_data_for_30_days(self, temp_db, sample_daily_data_30_days):
         """Тест: начальная загрузка данных за 30 дней"""
-        from core.database import DatabaseManager
+        from core.db import get_db
         
-        db = DatabaseManager()
+        db = get_db()
         isin = 'TEST30DAYS'
         
         # Сохраняем данные за 30 дней
@@ -91,9 +91,9 @@ class TestPeriodSliderIncrementalLoading:
 
     def test_incremental_load_when_increasing_period(self, temp_db, sample_daily_data_30_days, sample_daily_data_60_days):
         """Тест: инкрементальная загрузка при увеличении периода с 30 до 60 дней"""
-        from core.database import DatabaseManager
+        from core.db import get_db
         
-        db = DatabaseManager()
+        db = get_db()
         isin = 'TEST60DAYS'
         
         # Шаг 1: Сохраняем данные за последние 30 дней (как будто уже были загружены)
@@ -138,9 +138,9 @@ class TestPeriodSliderIncrementalLoading:
 
     def test_data_concatenation_preserves_all_records(self, temp_db):
         """Тест: объединение данных сохраняет все записи"""
-        from core.database import DatabaseManager
+        from core.db import get_db
         
-        db = DatabaseManager()
+        db = get_db()
         isin = 'TEST_CONCAT'
         
         # Создаём данные за первые 30 дней
@@ -184,9 +184,9 @@ class TestPeriodSliderIncrementalLoading:
 
     def test_coverage_check_for_need_reload(self, temp_db):
         """Тест: проверка условия need_reload при недостаточном покрытии периода"""
-        from core.database import DatabaseManager
+        from core.db import get_db
         
-        db = DatabaseManager()
+        db = get_db()
         isin = 'TEST_COVERAGE'
         
         # Создаём данные за последние 30 дней
@@ -227,9 +227,9 @@ class TestPeriodSliderIncrementalLoading:
         3. Пользователь увеличивает период до 365 дней
         4. Данные дозагружаются инкрементально
         """
-        from core.database import DatabaseManager
+        from core.db import get_db
         
-        db = DatabaseManager()
+        db = get_db()
         isin = 'TEST_SLIDER'
         
         # Сценарий 1: Начальная загрузка за 30 дней
@@ -291,7 +291,7 @@ class TestCandlePeriodSlider:
     @pytest.fixture
     def temp_db(self):
         """Создаём временную БД для тестов"""
-        import core.database as db_module
+        import core.db.connection as db_module
         
         original_db_path = db_module.DB_PATH
         temp_dir = tempfile.mkdtemp()

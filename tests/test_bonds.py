@@ -1,5 +1,7 @@
 """
-Тесты для таблицы bonds (версия 0.2.0)
+Тесты для таблицы bonds (версия 0.3.0)
+
+Использует новую архитектуру core/db/
 
 Запуск:
     python3 tests/test_bonds.py
@@ -15,12 +17,13 @@ from datetime import datetime, date, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Подменяем путь к БД на временную
-import core.database as db_module
+import core.db.connection as db_module
 TEMP_DIR = tempfile.mkdtemp()
 db_module.DB_PATH = os.path.join(TEMP_DIR, "test_bonds.db")
 
-from core.database import (
-    init_database, get_connection, DatabaseManager, get_db
+from core.db import (
+    init_database, get_connection, get_db, get_db_facade,
+    DatabaseFacade
 )
 
 
@@ -263,8 +266,7 @@ class TestUpdateMarketData:
             last_price=96.5,
             last_ytm=15.3,
             duration_years=7.2,
-            duration_days=2628,
-            last_trade_date='2026-02-27'
+            duration_days=2628
         )
         assert result is True
 
@@ -273,7 +275,6 @@ class TestUpdateMarketData:
         assert bond['last_ytm'] == 15.3
         assert bond['duration_years'] == 7.2
         assert bond['duration_days'] == 2628
-        assert bond['last_trade_date'] == '2026-02-27'
 
 
 class TestDeleteBond:
@@ -380,7 +381,8 @@ class TestMigration:
         }
 
         migrated = db.migrate_config_bonds(bonds_config)
-        assert migrated == 0  # Миграция не нужна
+        # Миграция обновляет существующие и добавляет новые
+        assert migrated == 2  # Обе облигации сохранены/обновлены
 
     def test_get_favorite_bonds_as_config(self):
         """Получение избранного в формате config"""

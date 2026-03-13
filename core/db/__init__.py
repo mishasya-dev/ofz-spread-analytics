@@ -20,6 +20,7 @@ __all__ = [
     'GSpreadRepository',
     'DatabaseFacade',
     'get_db_facade',
+    'get_db',  # Алиас для обратной совместимости
     # Фабрики
     'get_bonds_repo',
     'get_ytm_repo',
@@ -47,3 +48,12 @@ def get_spreads_repo() -> SpreadsRepository:
 def get_g_spread_repo() -> GSpreadRepository:
     """Получить репозиторий G-spread"""
     return GSpreadRepository()
+
+
+def get_db() -> DatabaseFacade:
+    """
+    Получить фасад БД (алиас для get_db_facade).
+    
+    Для обратной совместимости с кодом, использовавшим core.database.get_db().
+    """
+    return get_db_facade()

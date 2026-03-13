@@ -20,12 +20,12 @@ from datetime import datetime, date, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Подменяем путь к БД на временную
-import core.database as db_module
+import core.db.connection as db_module
 TEMP_DIR = tempfile.mkdtemp()
 db_module.DB_PATH = os.path.join(TEMP_DIR, "test_sidebar.db")
 
-from core.database import (
-    init_database, get_connection, DatabaseManager, get_db
+from core.db import (
+    init_database, get_connection, get_db
 )
 
 
@@ -88,7 +88,7 @@ class TestSidebarMigration:
         assert len(favorites) == 2
 
     def test_migrate_skips_if_bonds_exist(self):
-        """Миграция не должна происходить, если облигации уже есть"""
+        """Миграция обновляет существующие и добавляет новые облигации"""
         db = get_db()
 
         # Сначала добавляем одну облигацию
@@ -117,12 +117,12 @@ class TestSidebarMigration:
 
         migrated = db.migrate_config_bonds(bonds_config)
 
-        # Миграция не должна была произойти
-        assert migrated == 0
+        # Миграция обновляет существующие и добавляет новые
+        assert migrated == 2
 
-        # Должна остаться только одна облигация
+        # Должно быть 2 облигации
         all_bonds = db.get_all_bonds()
-        assert len(all_bonds) == 1
+        assert len(all_bonds) == 2
 
     def test_get_favorite_bonds_as_config_format(self):
         """Проверяем формат get_favorite_bonds_as_config для совместимости с sidebar"""

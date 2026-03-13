@@ -247,6 +247,14 @@ class DatabaseFacade:
         cursor.execute('SELECT COUNT(*) as cnt FROM spreads')
         spreads_count = cursor.fetchone()['cnt']
 
+        # Свечи
+        cursor.execute('SELECT COUNT(*) as cnt FROM candles')
+        candles_count = cursor.fetchone()['cnt']
+
+        # Снимки
+        cursor.execute('SELECT COUNT(*) as cnt FROM snapshots')
+        snapshots_count = cursor.fetchone()['cnt']
+
         conn.close()
 
         return {
@@ -255,6 +263,8 @@ class DatabaseFacade:
             'daily_ytm_count': daily_ytm_count,
             'intraday_ytm_count': intraday_ytm_count,
             'spreads_count': spreads_count,
+            'candles_count': candles_count,
+            'snapshots_count': snapshots_count,
         }
 
     # ==========================================
@@ -586,6 +596,293 @@ class DatabaseFacade:
             **result
         }
         return self.save_cointegration_result(full_result)
+
+    # ==========================================
+    # СВЕЧИ (для совместимости)
+    # ==========================================
+
+    def save_candles(
+        self, 
+        isin: str, 
+        interval: str, 
+        df: pd.DataFrame
+    ) -> int:
+        """Сохранить свечи в БД"""
+        if df.empty:
+            return 0
+        
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        saved_count = 0
+        
+        for idx, row in df.iterrows():
+            try:
+                if isinstance(idx, pd.Timestamp):
+                    dt_str = idx.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    dt_str = str(idx)
+                
+                cursor.execute('''
+                    INSERT OR REPLACE INTO candles 
+                    (isin, interval, datetime, open, high, low, close, volume, 
+                     ytm_open, ytm_high, ytm_low, ytm_close)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    isin, interval, dt_str,
+                    row.get('open'), row.get('high'), row.get('low'),
+                    row.get('close'), row.get('volume'),
+                    None, None, None, row.get('ytm_close')
+                ))
+                saved_count += 1
+                
+            except Exception as e:
+                logger.warning(f"Ошибка сохранения свечи {dt_str}: {e}")
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"Сохранено {saved_count} свечей для {isin} (interval={interval})")
+        return saved_count
+    
+    def load_candles(
+        self,
+        isin: str,
+        interval: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> pd.DataFrame:
+        """Загрузить свечи из БД"""
+        conn = get_connection()
+        
+        query = '''
+            SELECT datetime, open, high, low, close, volume,
+                   ytm_close
+            FROM candles
+            WHERE isin = ? AND interval = ?
+        '''
+        params = [isin, interval]
+        
+        if start_date:
+            query += ' AND datetime >= ?'
+            params.append(start_date.strftime('%Y-%m-%d'))
+        
+        if end_date:
+            query += ' AND datetime <= ?'
+            params.append(end_date.strftime('%Y-%m-%d 23:59:59'))
+        
+        query += ' ORDER BY datetime'
+        
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        
+        if df.empty:
+            return pd.DataFrame()
+        
+        df['datetime'] = pd.to_datetime(df['datetime'])
+        df = df.set_index('datetime')
+        
+        if 'ytm_close' in df.columns:
+            df['ytm'] = df['ytm_close']
+        
+        return df
+    
+    def get_last_candle_datetime(
+        self,
+        isin: str,
+        interval: str
+    ) -> Optional[datetime]:
+        """Получить дату/время последней свечи в БД"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT MAX(datetime) as last_dt
+            FROM candles
+            WHERE isin = ? AND interval = ?
+        ''', (isin, interval))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row and row['last_dt']:
+            return datetime.strptime(row['last_dt'], '%Y-%m-%d %H:%M:%S')
+        return None
+    
+    def get_candles_count(
+        self,
+        isin: str,
+        interval: str
+    ) -> int:
+        """Получить количество свечей в БД"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT COUNT(*) as cnt
+            FROM candles
+            WHERE isin = ? AND interval = ?
+        ''', (isin, interval))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        return row['cnt'] if row else 0
+
+    # ==========================================
+    # СНИМКИ (SNAPSHOTS)
+    # ==========================================
+    
+    def save_snapshot(
+        self,
+        isin_1: str,
+        isin_2: str,
+        interval: str,
+        ytm_1: float,
+        ytm_2: float,
+        spread_bp: float,
+        signal: str,
+        price_1: float = None,
+        price_2: float = None,
+        p25: float = None,
+        p75: float = None
+    ) -> int:
+        """Сохранить снимок состояния"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO snapshots 
+            (isin_1, isin_2, interval, ytm_1, ytm_2, price_1, price_2, 
+             spread_bp, signal, p25, p75)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (isin_1, isin_2, interval, ytm_1, ytm_2, price_1, price_2,
+              spread_bp, signal, p25, p75))
+        
+        snapshot_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        return snapshot_id
+    
+    def load_snapshots(
+        self,
+        isin_1: str,
+        isin_2: str,
+        interval: str,
+        hours: int = 24
+    ) -> pd.DataFrame:
+        """Загрузить снимки за последние N часов"""
+        conn = get_connection()
+        
+        since = (datetime.now() - timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
+        
+        query = '''
+            SELECT * FROM snapshots
+            WHERE isin_1 = ? AND isin_2 = ? AND interval = ?
+            AND timestamp >= ?
+            ORDER BY timestamp
+        '''
+        
+        df = pd.read_sql_query(query, conn, params=[isin_1, isin_2, interval, since])
+        conn.close()
+        
+        if not df.empty:
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+        
+        return df
+
+    # ==========================================
+    # ОЧИСТКА ДАННЫХ
+    # ==========================================
+    
+    def clear_intraday_ytm(
+        self,
+        isin: str,
+        interval: str
+    ) -> int:
+        """Удалить intraday YTM данные для облигации"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            DELETE FROM intraday_ytm
+            WHERE isin = ? AND interval = ?
+        ''', (isin, interval))
+        
+        deleted = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        if deleted > 0:
+            logger.info(f"Удалено {deleted} intraday YTM для {isin} (interval={interval})")
+        
+        return deleted
+
+    def cleanup_old_data(self, days_to_keep: int = 90) -> int:
+        """
+        Удалить старые данные
+        
+        Args:
+            days_to_keep: Количество дней для хранения
+            
+        Returns:
+            Общее количество удалённых записей
+        """
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cutoff_date = (datetime.now() - timedelta(days=days_to_keep)).strftime('%Y-%m-%d')
+        
+        total_deleted = 0
+        
+        # Удаляем старые свечи
+        cursor.execute('DELETE FROM candles WHERE datetime < ?', (cutoff_date,))
+        total_deleted += cursor.rowcount
+        
+        # Удаляем старые intraday YTM
+        cursor.execute('DELETE FROM intraday_ytm WHERE datetime < ?', (cutoff_date,))
+        total_deleted += cursor.rowcount
+        
+        # Удаляем старые спреды
+        cursor.execute('DELETE FROM spreads WHERE datetime < ?', (cutoff_date,))
+        total_deleted += cursor.rowcount
+        
+        # Удаляем старые снимки
+        cutoff_datetime = (datetime.now() - timedelta(days=days_to_keep)).strftime('%Y-%m-%d %H:%M:%S')
+        cursor.execute('DELETE FROM snapshots WHERE timestamp < ?', (cutoff_datetime,))
+        total_deleted += cursor.rowcount
+        
+        conn.commit()
+        conn.close()
+        
+        if total_deleted > 0:
+            logger.info(f"Удалено {total_deleted} старых записей (старше {days_to_keep} дней)")
+        
+        return total_deleted
+
+    def vacuum(self):
+        """Оптимизировать БД (VACUUM)"""
+        conn = get_connection()
+        conn.execute('VACUUM')
+        conn.close()
+        logger.info("VACUUM выполнен")
+
+    def clear_all_data(self):
+        """Очистить все таблицы БД"""
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        tables = ['candles', 'daily_ytm', 'intraday_ytm', 'spreads', 'snapshots', 
+                  'cointegration_cache', 'ns_params', 'g_spreads', 'yearyields',
+                  'zcyc_cache', 'zcyc_empty_dates']
+        
+        for table in tables:
+            cursor.execute(f'DELETE FROM {table}')
+        
+        conn.commit()
+        conn.close()
+        logger.info("Все данные очищены")
 
 
 # Глобальный экземпляр фасада
