@@ -21,26 +21,16 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
-# =============================================================================
-# Функции логирования действий пользователей (DEBUG режим)
-# =============================================================================
-def log_widget_change(widget_name: str, details: str = None):
-    """Логирует изменение виджета в DEBUG режиме"""
-    import streamlit as st
-    value = st.session_state.get(widget_name)
-    msg = f"🎛️ {widget_name} = {value}"
-    if details:
-        msg += f" ({details})"
-    logger.debug(msg)
-
-
-def log_button_press(button_name: str, details: str = None):
-    """Логирует нажатие кнопки в DEBUG режиме"""
-    msg = f"🔘 Нажата кнопка: '{button_name}'"
-    if details:
-        msg += f" ({details})"
-    logger.debug(msg)
+# Импортируем унифицированные функции логирования
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.action_logger import (
+    log_widget_change, 
+    log_button_press, 
+    log_action,
+    LogBlock
+)
 
 
 def get_bond_manager():

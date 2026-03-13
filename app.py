@@ -57,41 +57,20 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Функции логирования действий пользователей (DEBUG режим)
-# =============================================================================
-def log_widget_change(widget_name: str, details: str = None):
-    """Логирует изменение виджета в DEBUG режиме"""
-    value = st.session_state.get(widget_name)
-    emoji_map = {
-        'selected_bond': '📌',
-        'period': '📏',
-        'spread_window': '📐',
-        'z_threshold': '🎯',
-        'g_spread': '📊',
-        'candle': '🕯️',
-        'refresh': '🔄',
-        'log_level': '📜',
-        'validation': '🔍',
-    }
-    emoji = '🎛️'
-    for key, e in emoji_map.items():
-        if key in widget_name:
-            emoji = e
-            break
-
-    msg = f"{emoji} {widget_name} = {value}"
-    if details:
-        msg += f" ({details})"
-    logger.debug(msg)
+# Импортируем унифицированные функции логирования
+from utils.action_logger import (
+    log_call, 
+    log_call_simple,
+    log_widget_change, 
+    log_button_press as log_button_press_action,
+    log_action,
+    LogBlock
+)
 
 
 def log_button_press(button_name: str, details: str = None):
-    """Логирует нажатие кнопки в DEBUG режиме"""
-    msg = f"🔘 Нажата кнопка: '{button_name}'"
-    if details:
-        msg += f" ({details})"
-    logger.debug(msg)
+    """Обёртка для совместимости с существующим кодом"""
+    log_button_press_action(button_name, details)
 
 
 # Конфигурация страницы
@@ -392,6 +371,7 @@ def _fetch_all_historical_data(secid: str) -> pd.DataFrame:
     return db_df
 
 
+@log_call()
 def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
     """
     Получить исторические данные за указанный период.
@@ -422,6 +402,7 @@ MAX_CANDLE_DAYS = {
 
 
 @st.cache_data(ttl=60)
+@log_call()
 def _fetch_all_candle_data(isin: str, interval: str) -> pd.DataFrame:
     """
     Загрузить ВСЕ свечи с YTM для ISIN и интервала.
@@ -535,6 +516,7 @@ def _fetch_all_candle_data(isin: str, interval: str) -> pd.DataFrame:
     return result_df
 
 
+@log_call()
 def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, days: int) -> pd.DataFrame:
     """
     Получить данные свечей за указанный период.
@@ -673,6 +655,7 @@ def _fetch_zcyc_cached(isin: str, start_date_str: str, end_date_str: str) -> pd.
     return zcyc_df
 
 
+@log_call()
 def calculate_bond_g_spread(
     isin: str,
     daily_df: pd.DataFrame,
@@ -1667,7 +1650,7 @@ def main():
                     
                     # График G-spread дашборд
                     fig_g_spread = create_g_spread_dashboard(df_res, z_threshold=st.session_state.g_spread_z_threshold)
-                    st.plotly_chart(fig_g_spread, width='stretch')
+                    st.plotly_chart(fig_g_spread, width='stretch', key=f'g_spread_dashboard_{bond1.isin}_{bond2.isin}')
                     
                     # График отдельных G-spread
                     col_chart1, col_chart2 = st.columns(2)
@@ -1677,14 +1660,14 @@ def main():
                             window=st.session_state.g_spread_window,
                             z_threshold=st.session_state.g_spread_z_threshold
                         )
-                        st.plotly_chart(fig_gs1, width='stretch')
+                        st.plotly_chart(fig_gs1, width='stretch', key=f'g_spread_chart1_{bond1.isin}')
                     with col_chart2:
                         fig_gs2 = create_g_spread_chart_single(
                             g_spread_df2, bond2.name, stats2, p_value2,
                             window=st.session_state.g_spread_window,
                             z_threshold=st.session_state.g_spread_z_threshold
                         )
-                        st.plotly_chart(fig_gs2, width='stretch')
+                        st.plotly_chart(fig_gs2, width='stretch', key=f'g_spread_chart2_{bond2.isin}')
             
             elif g_spread_df1.empty and g_spread_df2.empty:
                 st.warning("⚠️ Данные G-spread не найдены на MOEX ZCYC API")
