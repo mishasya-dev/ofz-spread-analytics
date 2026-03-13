@@ -1,16 +1,16 @@
-# Session Context - 11.03.2026
+# Session Context - 13.03.2026
 
 ## Project State
 
 ### Git Information
 - **Repository**: https://github.com/mishasya-dev/ofz-spread-analytics
 - **Branch**: `feature/g-spread-yearyields-method`
-- **Last Commit**: `f30c2e2` - docs: update README for v0.8.0, clean up tests
+- **Last Commit**: `5921830` - perf: optimize ZCYC loading - load all bonds at once
 
 ### Database Status
-- **Location**: `streamlit-app/data/ofz_data.db`
+- **Location**: `data/ofz_data.db`
 - **Tables**: bonds, daily_ytm, intraday_ytm, spreads, ns_params, g_spreads, zcyc_cache, zcyc_empty_dates
-- **Bonds Tracked**: 16+
+- **Bonds Tracked**: 32+ (все ОФЗ с ZCYC данными)
 
 ## Key Change: G-Spread Methodology (v0.8.0)
 
@@ -28,18 +28,81 @@
 ### API Endpoints
 ```
 GET /engines/stock/zcyc.json?date=YYYY-MM-DD
-Returns: securities data with trdyield, clcyield, crtduration
+Returns: securities data with trdyield, clcyield, crtduration (32 облигации!)
 ```
 
 ### Key Functions
 ```python
-from api.moex_zcyc import get_zcyc_data_for_date, get_zcyc_history_parallel
+from api.moex_zcyc import get_zcyc_history_parallel
+from core.db import get_g_spread_repo
 
-# G-spread за дату
-df = get_zcyc_data_for_date(date(2026, 3, 10))
+repo = get_g_spread_repo()
 
-# История с кэшированием
-df = get_zcyc_history_parallel(start_date, end_date, isin="SU26247RMFS5")
+# Загрузка ВСЕХ облигаций за период (оптимизировано!)
+df = get_zcyc_history_parallel(
+    start_date=start_date,
+    end_date=end_date,
+    isin=None,  # None = все облигации!
+    use_cache=True,
+    save_callback=repo.save_zcyc,
+    max_workers=5
+)
+
+# Фильтрация по конкретному ISIN (из кэша, мгновенно)
+df_filtered = get_zcyc_history_parallel(
+    start_date=start_date,
+    end_date=end_date,
+    isin="SU26224RMFS4",  # Конкретная облигация
+    use_cache=True
+)
+```
+
+## 🚀 Optimizations (13.03.2026)
+
+### ZCYC Loading Optimization
+**Проблема:** ZCYC загружался отдельно для каждой облигации = N × D запросов
+
+**Решение:** MOEX API возвращает ВСЕ 32 облигации за один запрос!
+```
+Было:  N облигаций × D дней запросов
+Стало: D дней запросов (все облигации вместе)
+```
+
+**Изменения в `api/moex_zcyc.py`:**
+1. Проверяем кэш БЕЗ фильтрации по ISIN (получаем все даты)
+2. Загружаем ВСЕ облигации с MOEX (не фильтруем при загрузке)
+3. Сохраняем ВСЕ облигации в БД (`zcyc_cache`)
+4. Фильтруем по ISIN только при возврате результата
+
+**Результат:**
+| Метрика | До | После |
+|---------|-----|-------|
+| Запросов для 5 облигаций, 250 дней | 1250 | 250 |
+| Сокращение | - | **5x** |
+
+## Weekend/Holiday Handling
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Генерация trading_days                                      │
+├─────────────────────────────────────────────────────────────┤
+│  - Только пн-пт (сб/вс исключаются)                         │
+│  - Праздничные будние дни включаются                        │
+└─────────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────────┐
+│  Загрузка с MOEX                                             │
+├─────────────────────────────────────────────────────────────┤
+│  - Рабочий день → данные в zcyc_cache                        │
+│  - Праздник → пустой ответ → дата в zcyc_empty_dates        │
+└─────────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────────┐
+│  Повторная загрузка                                          │
+├─────────────────────────────────────────────────────────────┤
+│  - Проверяем zcyc_empty_dates → исключаем праздники         │
+│  - Берём данные из zcyc_cache                               │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## Caching Architecture
@@ -48,18 +111,20 @@ df = get_zcyc_history_parallel(start_date, end_date, isin="SU26247RMFS5")
 ┌─────────────────────────────────────────────────────────────┐
 │  Первый запрос периода                                      │
 ├─────────────────────────────────────────────────────────────┤
-│  1. Проверка Streamlit кэша → пусто                         │
-│  2. Проверка БД → возврат имеющихся записей                 │
+│  1. Проверка zcyc_empty_dates → исключаем праздники         │
+│  2. Проверка zcyc_cache (все даты, без ISIN фильтра)        │
 │  3. Дозагрузка только недостающих дней с MOEX               │
-│  4. Сохранение праздников в zcyc_empty_dates                │
-│  5. Кэширование результата в Streamlit                      │
+│  4. Сохранение ВСЕХ облигаций в zcyc_cache                  │
+│  5. Сохранение праздников в zcyc_empty_dates                │
+│  6. Кэширование результата в Streamlit                      │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
-│  Повторный запрос (смена слайдера, те же даты)              │
+│  Повторный запрос (другой ISIN, те же даты)                 │
 ├─────────────────────────────────────────────────────────────┤
-│  1. Проверка Streamlit кэша → есть!                         │
-│  2. Мгновенный возврат (без БД и MOEX)                      │
+│  1. Проверка zcyc_cache → ВСЕ даты уже есть!                │
+│  2. Фильтрация по ISIN локально                              │
+│  3. Мгновенный возврат (0.00 сек)                           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -67,9 +132,9 @@ df = get_zcyc_history_parallel(start_date, end_date, isin="SU26247RMFS5")
 
 | Table | Purpose |
 |-------|---------|
-| `zcyc_cache` | Кэш ZCYC данных (G-spread) |
-| `zcyc_empty_dates` | Праздники (нет торгов) - NEW! |
-| `g_spreads` | Рассчитанные G-spread |
+| `zcyc_cache` | Кэш ZCYC данных (G-spread для ВСЕХ облигаций) |
+| `zcyc_empty_dates` | Праздники (нет торгов) |
+| `g_spreads` | Рассчитанные G-spread (deprecated, используем zcyc_cache) |
 | `ns_params` | Параметры Nelson-Siegel (deprecated) |
 
 ## Architecture
@@ -77,8 +142,8 @@ df = get_zcyc_history_parallel(start_date, end_date, isin="SU26247RMFS5")
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    API Layer                                 │
-│  api/moex_zcyc.py → ZCYC данные (G-spread от MOEX)          │
-│  api/moex_candles.py → только сырые свечи (OHLCV)           │
+│  api/moex_zcyc.py → ZCYC данные (ВСЕ облигации сразу)       │
+│  api/moex_client.py → Единый клиент с rate limiting         │
 └─────────────────────────────────────────────────────────────┘
                           ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -98,7 +163,8 @@ df = get_zcyc_history_parallel(start_date, end_date, isin="SU26247RMFS5")
 
 ### Core Files
 ```
-api/moex_zcyc.py                         - ZCYC API (G-spread from MOEX)
+api/moex_zcyc.py                         - ZCYC API (оптимизировано: все облигации)
+api/moex_client.py                       - Единый MOEX клиент с rate limiting
 core/db/g_spread_repo.py                 - ZCYC cache + empty dates
 services/g_spread_calculator.py          - G-spread stats & signals
 components/charts.py                     - Chart builders
@@ -107,8 +173,9 @@ app.py                                   - Main Streamlit application
 
 ### Tests
 ```
+tests/test_zcyc_optimization.py          - Тесты оптимизации ZCYC
 test_zcyc.py                             - 7 tests for ZCYC functionality
-tests/                                   - 398 tests total
+tests/                                   - 400+ tests total
 ```
 
 ## Deprecated Code (DO NOT USE)
@@ -126,8 +193,8 @@ from services.g_spread_calculator import calculate_g_spread_history
 
 ## Notes for Next Session
 
-- Working directory: `/home/z/my-project/streamlit-app/`
-- Run tests: `python3 test_zcyc.py`
+- Working directory: `/home/z/my-project/`
+- Run tests: `python tests/test_zcyc_optimization.py`
 - Start app: `streamlit run app.py`
 - Database: `data/ofz_data.db`
 
@@ -139,12 +206,16 @@ from services.g_spread_calculator import calculate_g_spread_history
 - [x] Add Streamlit cache for ZCYC (no TTL - historical data immutable)
 - [x] Update README with new architecture
 - [x] Create comprehensive test_zcyc.py
+- [x] **Optimize ZCYC loading - load ALL bonds at once (5x speedup)**
+- [x] **Fix duplicate element ID for G-spread charts**
+- [x] **Add warning when same bond selected in both dropdowns**
 
 ### Potential Future Tasks
 - [ ] Add daily snapshot job for ZCYC data
 - [ ] Implement G-spread alerts/notifications
 - [ ] Add more bond pairs for analysis
 - [ ] Create API documentation with OpenAPI
+- [ ] Merge feature branch to master
 
 ---
-*Session saved: 2026-03-11 UTC*
+*Session saved: 2026-03-13 UTC*
