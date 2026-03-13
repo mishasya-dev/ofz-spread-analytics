@@ -190,7 +190,12 @@ def init_session_state():
         new_keys = set(favorites.keys())
         if current_keys != new_keys:
             st.session_state.bonds = favorites
-            logger.info(f"Обновлён список облигаций: {len(favorites)} избранное")
+            if current_keys:
+                # Изменился список избранного
+                logger.info(f"Изменён список избранного: {len(current_keys)} → {len(favorites)}")
+            else:
+                # Первый запуск в сессии - загружаем из БД
+                logger.debug(f"Загружено {len(favorites)} избранных облигаций из БД")
     else:
         if 'bonds' not in st.session_state:
             config = st.session_state.config
