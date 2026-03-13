@@ -183,7 +183,8 @@ def test_fetch_candles_ytm_accuracy():
 
     Проверяем весь пайплайн: свечи → расчёт YTM → сравнение с MOEX.
     """
-    from api.moex_candles import CandleFetcher, CandleInterval
+    from api.moex_candles import CandleInterval, fetch_candles
+    from api.moex_client import MOEXClient
     from services.candle_processor_ytm_for_bonds import BondYTMProcessor
     from config import BondConfig
 
@@ -198,17 +199,15 @@ def test_fetch_candles_ytm_accuracy():
         day_count_convention="ACT/ACT"
     )
 
-    fetcher = CandleFetcher()
-
-    # Получаем дневные свечи (сырые, без YTM)
-    df = fetcher.fetch_candles(
-        bond_config.isin,
-        interval=CandleInterval.DAY,
-        start_date=date(2025, 2, 25),
-        end_date=date(2025, 2, 28)
-    )
-
-    fetcher.close()
+    # Получаем дневные свечи (сырые, без YTM) через новый API
+    with MOEXClient() as client:
+        df = fetch_candles(
+            bond_config.isin,
+            interval=CandleInterval.DAY,
+            start_date=date(2025, 2, 25),
+            end_date=date(2025, 2, 28),
+            client=client
+        )
 
     assert not df.empty, "DataFrame should not be empty"
 

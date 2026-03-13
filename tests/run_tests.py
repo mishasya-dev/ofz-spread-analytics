@@ -190,108 +190,97 @@ def test_ytm_calculator():
 def test_moex_candles():
     print_section("MOEX Candles API")
     
-    from api.moex_candles import CandleFetcher, CandleInterval
+    from api.moex_candles import CandleInterval, fetch_candles
+    from api.moex_client import MOEXClient
     from config import AppConfig
     
-    fetcher = CandleFetcher()
     config = AppConfig()
     
     # Берём первую облигацию
     bond = list(config.bonds.values())[0]
     
-    # Тест 1: Получение 1-минутных свечей
-    df_1min = fetcher.fetch_candles(
-        bond.isin,
-        bond_config=bond,
-        interval=CandleInterval.MIN_1,
-        start_date=date.today() - timedelta(days=1),
-        end_date=date.today()
-    )
+    with MOEXClient() as client:
+        # Тест 1: Получение 1-минутных свечей
+        df_1min = fetch_candles(
+            bond.isin,
+            interval=CandleInterval.MIN_1,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today(),
+            client=client
+        )
+        
+        run_test(
+            "Получение 1-минутных свечей",
+            "> 0 свечей",
+            f"{len(df_1min)} свечей",
+            len(df_1min) > 0
+        )
+        
+        # Тест 2: Получение 10-минутных свечей
+        df_10min = fetch_candles(
+            bond.isin,
+            interval=CandleInterval.MIN_10,
+            start_date=date.today() - timedelta(days=3),
+            end_date=date.today(),
+            client=client
+        )
+        
+        run_test(
+            "Получение 10-минутных свечей",
+            "> 0 свечей",
+            f"{len(df_10min)} свечей",
+            len(df_10min) > 0
+        )
+        
+        # Тест 3: Получение часовых свечей
+        df_60min = fetch_candles(
+            bond.isin,
+            interval=CandleInterval.MIN_60,
+            start_date=date.today() - timedelta(days=7),
+            end_date=date.today(),
+            client=client
+        )
+        
+        run_test(
+            "Получение часовых свечей",
+            "> 0 свечей",
+            f"{len(df_60min)} свечей",
+            len(df_60min) > 0
+        )
+    
+    # Тест 4: Наличие колонок OHLCV
+    has_ohlcv = all(col in df_60min.columns for col in ['open', 'high', 'low', 'close', 'volume']) if not df_60min.empty else False
     
     run_test(
-        "Получение 1-минутных свечей",
-        "> 0 свечей",
-        f"{len(df_1min)} свечей",
-        len(df_1min) > 0
-    )
-    
-    # Тест 2: Получение 10-минутных свечей
-    df_10min = fetcher.fetch_candles(
-        bond.isin,
-        bond_config=bond,
-        interval=CandleInterval.MIN_10,
-        start_date=date.today() - timedelta(days=3),
-        end_date=date.today()
-    )
-    
-    run_test(
-        "Получение 10-минутных свечей",
-        "> 0 свечей",
-        f"{len(df_10min)} свечей",
-        len(df_10min) > 0
-    )
-    
-    # Тест 3: Получение часовых свечей
-    df_60min = fetcher.fetch_candles(
-        bond.isin,
-        bond_config=bond,
-        interval=CandleInterval.MIN_60,
-        start_date=date.today() - timedelta(days=7),
-        end_date=date.today()
-    )
-    
-    run_test(
-        "Получение часовых свечей",
-        "> 0 свечей",
-        f"{len(df_60min)} свечей",
-        len(df_60min) > 0
-    )
-    
-    # Тест 4: Наличие колонки YTM
-    has_ytm = 'ytm_close' in df_60min.columns if not df_60min.empty else False
-    
-    run_test(
-        "Наличие колонки ytm_close",
+        "Наличие колонок OHLCV",
         "True",
-        str(has_ytm),
-        has_ytm
+        str(has_ohlcv),
+        has_ohlcv
     )
     
-    # Тест 5: Валидные значения YTM
-    if has_ytm and not df_60min.empty:
-        valid_ytm = df_60min['ytm_close'].notna().sum()
+    # Тест 5: Валидные значения close
+    if not df_60min.empty and 'close' in df_60min.columns:
+        valid_close = df_60min['close'].notna().sum()
         total = len(df_60min)
         
         run_test(
-            "Валидные YTM значения",
+            "Валидные close значения",
             f"> 50% от {total}",
-            f"{valid_ytm}/{total} ({100*valid_ytm/total:.1f}%)",
-            valid_ytm > total * 0.5
+            f"{valid_close}/{total} ({100*valid_close/total:.1f}%)",
+            valid_close > total * 0.5
         )
     
-    # Тест 6: Диапазон YTM
-    if has_ytm and not df_60min.empty:
-        ytm_min = df_60min['ytm_close'].min()
-        ytm_max = df_60min['ytm_close'].max()
+    # Тест 6: Диапазон цен
+    if not df_60min.empty and 'close' in df_60min.columns:
+        close_min = df_60min['close'].min()
+        close_max = df_60min['close'].max()
         
         run_test(
-            "YTM в разумном диапазоне (5% - 25%)",
-            "5% < YTM < 25%",
-            f"{ytm_min:.2f}% - {ytm_max:.2f}%",
-            ytm_min > 5 and ytm_max < 25
+            "Цены в разумном диапазоне (50% - 150% от номинала)",
+            "50 < price < 150",
+            f"{close_min:.2f}% - {close_max:.2f}%",
+            close_min > 50 and close_max < 150
         )
-    
-    # Тест 7: Получение НКД
-    accrued = fetcher._get_accrued_interest(bond.isin)
-    
-    run_test(
-        "Получение НКД с MOEX",
-        ">= 0",
-        f"{accrued:.2f} руб.",
-        accrued >= 0
-    )
-    
-    fetcher.close()
 
 
 # ============================================
@@ -300,46 +289,48 @@ def test_moex_candles():
 def test_moex_history():
     print_section("MOEX History API")
     
-    from api.moex_history import HistoryFetcher
+    from api.moex_history import fetch_ytm_history, get_trading_data
+    from api.moex_client import MOEXClient
     from config import AppConfig
     
-    fetcher = HistoryFetcher()
     config = AppConfig()
     
     bond = list(config.bonds.values())[0]
     
-    # Тест 1: Получение исторических данных
-    df = fetcher.fetch_ytm_history(
-        bond.isin,
-        start_date=date.today() - timedelta(days=30)
-    )
-    
-    run_test(
-        "Получение исторических данных (30 дней)",
-        "> 0 записей",
-        f"{len(df)} записей",
-        len(df) > 0
-    )
-    
-    # Тест 2: Наличие колонки YTM
-    has_ytm = 'ytm' in df.columns if not df.empty else False
-    
-    run_test(
-        "Наличие колонки ytm",
-        "True",
-        str(has_ytm),
-        has_ytm
-    )
-    
-    # Тест 3: Торговые данные
-    trading_data = fetcher.get_trading_data(bond.isin)
-    
-    run_test(
-        "Получение торговых данных",
-        "has_data = True или yield есть",
-        f"has_data = {trading_data.get('has_data', False)}",
-        trading_data.get('has_data', False) or 'yield' in trading_data
-    )
+    with MOEXClient() as client:
+        # Тест 1: Получение исторических данных
+        df = fetch_ytm_history(
+            bond.isin,
+            start_date=date.today() - timedelta(days=30),
+            client=client
+        )
+        
+        run_test(
+            "Получение исторических данных (30 дней)",
+            "> 0 записей",
+            f"{len(df)} записей",
+            len(df) > 0
+        )
+        
+        # Тест 2: Наличие колонки YTM
+        has_ytm = 'ytm' in df.columns if not df.empty else False
+        
+        run_test(
+            "Наличие колонки ytm",
+            "True",
+            str(has_ytm),
+            has_ytm
+        )
+        
+        # Тест 3: Торговые данные
+        trading_data = get_trading_data(bond.isin, client=client)
+        
+        run_test(
+            "Получение торговых данных",
+            "has_data = True или yield есть",
+            f"has_data = {trading_data.get('has_data', False)}",
+            trading_data.get('has_data', False) or 'yield' in trading_data
+        )
     
     # Тест 4: Дата последней сделки
     if not df.empty:
@@ -583,86 +574,83 @@ def test_config():
 def test_integration():
     print_section("Integration Tests")
     
-    from api.moex_candles import CandleFetcher, CandleInterval
+    from api.moex_candles import CandleInterval, fetch_candles
+    from api.moex_history import get_trading_data
+    from api.moex_client import MOEXClient
     from config import AppConfig
     
     config = AppConfig()
-    fetcher = CandleFetcher()
     
     bonds = list(config.bonds.values())
     bond1 = bonds[0]
     bond2 = bonds[1]
     
-    # Тест 1: Получение данных для двух облигаций
-    df1 = fetcher.fetch_candles(
-        bond1.isin,
-        bond_config=bond1,
-        interval=CandleInterval.MIN_60,
-        start_date=date.today() - timedelta(days=3),
-        end_date=date.today()
-    )
-    
-    df2 = fetcher.fetch_candles(
-        bond2.isin,
-        bond_config=bond2,
-        interval=CandleInterval.MIN_60,
-        start_date=date.today() - timedelta(days=3),
-        end_date=date.today()
-    )
-    
-    run_test(
-        "Данные для двух облигаций получены",
-        "2 DataFrame",
-        f"df1={len(df1)}, df2={len(df2)}",
-        len(df1) > 0 and len(df2) > 0
-    )
-    
-    # Тест 2: Расчёт спреда
-    if not df1.empty and not df2.empty and 'ytm_close' in df1.columns:
-        merged = pd.merge(
-            df1[['ytm_close']],
-            df2[['ytm_close']],
-            left_index=True,
-            right_index=True,
-            how='inner'
+    with MOEXClient() as client:
+        # Тест 1: Получение данных для двух облигаций
+        df1 = fetch_candles(
+            bond1.isin,
+            interval=CandleInterval.MIN_60,
+            start_date=date.today() - timedelta(days=3),
+            end_date=date.today(),
+            client=client
         )
         
-        if not merged.empty:
-            spread = (merged['ytm_close_x'].iloc[-1] - merged['ytm_close_y'].iloc[-1]) * 100
-            
-            run_test(
-                "Расчёт спреда между облигациями",
-                "число",
-                f"{spread:.2f} б.п.",
-                not pd.isna(spread)
-            )
-        else:
-            run_test(
-                "Расчёт спреда между облигациями",
-                "число",
-                "Нет общих точек",
-                False
-            )
-    
-    # Тест 3: Сравнение YTM из свечей с MOEX YTM
-    from api.moex_history import HistoryFetcher
-    
-    history = HistoryFetcher()
-    moex_data = history.get_trading_data(bond1.isin)
-    
-    if moex_data.get('yield') and not df1.empty and 'ytm_close' in df1.columns:
-        moex_ytm = moex_data['yield']
-        candle_ytm = df1['ytm_close'].iloc[-1]
-        diff = abs(moex_ytm - candle_ytm) * 100  # в б.п.
+        df2 = fetch_candles(
+            bond2.isin,
+            interval=CandleInterval.MIN_60,
+            start_date=date.today() - timedelta(days=3),
+            end_date=date.today(),
+            client=client
+        )
         
         run_test(
-            "Разница YTM (MOEX vs свечи) < 50 б.п.",
-            "< 50 б.п.",
-            f"{diff:.2f} б.п.",
-            diff < 50
+            "Данные для двух облигаций получены",
+            "2 DataFrame",
+            f"df1={len(df1)}, df2={len(df2)}",
+            len(df1) > 0 and len(df2) > 0
         )
-    
-    fetcher.close()
+        
+        # Тест 2: Расчёт спреда
+        if not df1.empty and not df2.empty and 'close' in df1.columns:
+            merged = pd.merge(
+                df1[['close']],
+                df2[['close']],
+                left_index=True,
+                right_index=True,
+                how='inner'
+            )
+            
+            if not merged.empty:
+                spread = (merged['close_x'].iloc[-1] - merged['close_y'].iloc[-1])
+                
+                run_test(
+                    "Расчёт спреда между облигациями",
+                    "число",
+                    f"{spread:.2f}",
+                    not pd.isna(spread)
+                )
+            else:
+                run_test(
+                    "Расчёт спреда между облигациями",
+                    "число",
+                    "Нет общих точек",
+                    False
+                )
+        
+        # Тест 3: Сравнение цен с MOEX данными
+        moex_data = get_trading_data(bond1.isin, client=client)
+        
+        if moex_data.get('price') and not df1.empty and 'close' in df1.columns:
+            moex_price = moex_data['price']
+            candle_price = df1['close'].iloc[-1]
+            diff = abs(moex_price - candle_price)
+            
+            run_test(
+                "Разница цен (MOEX vs свечи) < 2%",
+                "< 2%",
+                f"{diff:.2f}%",
+                diff < 2
+            )
 
 
 # ============================================

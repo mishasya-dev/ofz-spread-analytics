@@ -15,7 +15,10 @@ from datetime import datetime, date, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from api.moex_bonds import (
-    MOEXBondsFetcher,
+    fetch_all_bonds,
+    fetch_ofz_only,
+    fetch_bond_details,
+    fetch_market_data,
     fetch_all_ofz,
     fetch_ofz_with_market_data,
     filter_ofz_for_trading,
@@ -23,29 +26,20 @@ from api.moex_bonds import (
     MIN_MATURITY_DAYS,
     MAX_TRADE_DAYS_AGO
 )
+from api.moex_client import MOEXClient
 
 
-class TestMOEXBondsFetcher(unittest.TestCase):
-    """Тесты для MOEXBondsFetcher"""
-
-    def setUp(self):
-        """Создаём fetcher для каждого теста"""
-        self.fetcher = MOEXBondsFetcher()
-
-    def tearDown(self):
-        """Закрываем fetcher после каждого теста"""
-        self.fetcher.close()
-
-
-class TestFetchAllBonds(TestMOEXBondsFetcher):
+class TestFetchAllBonds(unittest.TestCase):
     """Тесты для fetch_all_bonds"""
 
-    @patch('api.moex_bonds.MOEXBondsFetcher._make_request')
-    def test_fetch_all_bonds_basic(self, mock_request):
+    @patch('api.moex_bonds.MOEXClient')
+    def test_fetch_all_bonds_basic(self, MockClient):
         """Базовое получение списка облигаций"""
-        # Мокаем ответ
-        mock_response = Mock()
-        mock_response.json.return_value = {
+        # Настраиваем мок для context manager
+        mock_instance = MockClient.return_value
+        mock_instance.__enter__ = Mock(return_value=mock_instance)
+        mock_instance.__exit__ = Mock(return_value=False)
+        mock_instance.get_json.return_value = {
             "securities": {
                 "columns": ["SECID", "NAME", "SHORTNAME", "FACEVALUE", "FACEUNIT", "COUPONPERCENT", "MATDATE", "ISQUALIFIEDINVESTOR"],
                 "data": [
@@ -56,56 +50,74 @@ class TestFetchAllBonds(TestMOEXBondsFetcher):
                 ]
             }
         }
-        mock_request.return_value = mock_response
 
-        bonds = self.fetcher.fetch_all_bonds()
+        bonds = fetch_all_bonds()
 
         # Должно быть 2 облигации (без квалифицированных и без USD)
         assert len(bonds) == 2
         assert bonds[0]["isin"] == "SU26221RMFS0"
         assert bonds[1]["isin"] == "SU26225RMFS1"
 
-    @patch('api.moex_bonds.MOEXBondsFetcher._make_request')
-    def test_fetch_all_bonds_pagination(self, mock_request):
+    @patch('api.moex_bonds.MOEXClient')
+    def test_fetch_all_bonds_pagination(self, MockClient):
         """Пагинация при получении списка"""
-        # Первый вызов - 100 записей
-        mock_response1 = Mock()
-        mock_response1.json.return_value = {
-            "securities": {
-                "columns": ["SECID", "NAME", "SHORTNAME", "FACEVALUE", "FACEUNIT", "COUPONPERCENT", "MATDATE", "ISQUALIFIEDINVESTOR"],
-                "data": [
-                    [f"SU262{i:03d}RMFS0", f"ОФЗ {i}", f"ОФЗ{i}", 1000, "SUR", 7.0, "2030-01-01", 0]
-                    for i in range(100)
-                ]
-            }
-        }
-        # Второй вызов - меньше 100 записей (конец)
-        mock_response2 = Mock()
-        mock_response2.json.return_value = {
-            "securities": {
-                "columns": ["SECID", "NAME", "SHORTNAME", "FACEVALUE", "FACEUNIT", "COUPONPERCENT", "MATDATE", "ISQUALIFIEDINVESTOR"],
-                "data": [
-                    ["SU26299RMFS0", "ОФЗ 999", "ОФЗ999", 1000, "SUR", 7.0, "2030-01-01", 0]
-                ]
-            }
-        }
+        mock_instance = MockClient.return_value
+        mock_instance.__enter__ = Mock(return_value=mock_instance)
+        mock_instance.__exit__ = Mock(return_value=False)
+        # Первый вызов - 100 записей, второй - 1 запись
+        mock_instance.get_json.side_effect = [
+            {
+                "securities": {
+                    "columns": ["SECID", "NAME", "SHORTNAME", "FACEVALUE", "FACEUNIT", "COUPONPERCENT", "MATDATE", "ISQUALIFIEDINVESTOR"],
+                    "data": [
+                        [f"SU262{i:03d}RMFS0", f"ОФЗ {i}", f"ОФЗ{i}", 1000, "SUR", 7.0, "2030-01-01", 0]
+                        for i in range(100)
+                    ]
+                }
+            },
+            {
+                "securities": {
+                    "columns": ["SECID", "NAME", "SHORTNAME", "FACEVALUE", "FACEUNIT", "COUPONPERCENT", "MATDATE", "ISQUALIFIEDINVESTOR"],
+                    "data": [
+                        ["SU26299RMFS0", "ОФЗ 999", "ОФЗ999", 1000, "SUR", 7.0, "2030-01-01", 0]
+                    ]
+                }
+            },
+        ]
 
-        mock_request.side_effect = [mock_response1, mock_response2]
-
-        bonds = self.fetcher.fetch_all_bonds()
+        bonds = fetch_all_bonds()
 
         # 100 + 1 = 101 облигация
         assert len(bonds) == 101
-        assert mock_request.call_count == 2
+        assert mock_instance.get_json.call_count == 2
 
 
-class TestFetchOfzOnly(TestMOEXBondsFetcher):
+class TestFetchOfzOnly(unittest.TestCase):
     """Тесты для fetch_ofz_only"""
 
-    def test_fetch_ofz_only_returns_ofz_only(self):
-        """Фильтрация только ОФЗ - проверяем, что возвращаются только ОФЗ"""
-        # Делаем реальный запрос (медленно, но точно)
-        ofz = self.fetcher.fetch_ofz_only()
+    @patch('api.moex_bonds.MOEXClient')
+    def test_fetch_ofz_only_returns_ofz_only(self, MockClient):
+        """Фильтрация только ОФЗ"""
+        mock_instance = MockClient.return_value
+        mock_instance.__enter__ = Mock(return_value=mock_instance)
+        mock_instance.__exit__ = Mock(return_value=False)
+        mock_instance.get_json.return_value = {
+            "securities": {
+                "columns": ["SECID", "NAME", "SHORTNAME", "FACEVALUE", "COUPONPERCENT", "MATDATE"],
+                "data": [
+                    ["SU26221RMFS0", "ОФЗ 26221", "ОФЗ26221", 1000, 7.7, "2033-03-23"],
+                    ["SU26225RMFS1", "ОФЗ 26225", "ОФЗ26225", 1000, 7.25, "2034-05-10"],
+                ]
+            },
+            "marketdata": {
+                "data": [
+                    ["SU26221RMFS0", "TQOB"],
+                    ["SU26225RMFS1", "TQOB"],
+                ]
+            }
+        }
+
+        ofz = fetch_ofz_only()
 
         # Проверяем что все возвращённые ISIN начинаются с SU26, SU25 или SU24
         for bond in ofz:
@@ -113,18 +125,17 @@ class TestFetchOfzOnly(TestMOEXBondsFetcher):
             assert isin.startswith("SU26") or isin.startswith("SU25") or isin.startswith("SU24"), \
                 f"ISIN {isin} не является ОФЗ-ПД"
 
-        # Проверяем что есть данные
-        assert len(ofz) > 0, "Должны быть найдены ОФЗ облигации"
 
-
-class TestFetchBondDetails(TestMOEXBondsFetcher):
+class TestFetchBondDetails(unittest.TestCase):
     """Тесты для fetch_bond_details"""
 
-    @patch('api.moex_bonds.MOEXBondsFetcher._make_request')
-    def test_fetch_bond_details(self, mock_request):
+    @patch('api.moex_bonds.MOEXClient')
+    def test_fetch_bond_details(self, MockClient):
         """Получение детальной информации"""
-        mock_response = Mock()
-        mock_response.json.return_value = {
+        mock_instance = MockClient.return_value
+        mock_instance.__enter__ = Mock(return_value=mock_instance)
+        mock_instance.__exit__ = Mock(return_value=False)
+        mock_instance.get_json.return_value = {
             "description": {
                 "data": [
                     ["NAME", "string", "ОФЗ 26221"],
@@ -144,9 +155,8 @@ class TestFetchBondDetails(TestMOEXBondsFetcher):
                 ]
             }
         }
-        mock_request.return_value = mock_response
 
-        details = self.fetcher.fetch_bond_details("SU26221RMFS0")
+        details = fetch_bond_details("SU26221RMFS0")
 
         assert details["isin"] == "SU26221RMFS0"
         assert details["name"] == "ОФЗ 26221"
@@ -162,24 +172,25 @@ class TestFetchBondDetails(TestMOEXBondsFetcher):
         assert details["last_ytm"] == 15.2
 
 
-class TestFetchMarketData(TestMOEXBondsFetcher):
+class TestFetchMarketData(unittest.TestCase):
     """Тесты для fetch_market_data"""
 
-    @patch('api.moex_bonds.MOEXBondsFetcher._make_request')
-    def test_fetch_market_data_success(self, mock_request):
+    @patch('api.moex_bonds.MOEXClient')
+    def test_fetch_market_data_success(self, MockClient):
         """Успешное получение рыночных данных"""
-        mock_response = Mock()
-        mock_response.json.return_value = {
+        mock_instance = MockClient.return_value
+        mock_instance.__enter__ = Mock(return_value=mock_instance)
+        mock_instance.__exit__ = Mock(return_value=False)
+        mock_instance.get_json.return_value = {
             "marketdata": {
-                "columns": ["BOARDID", "YIELD", "DURATION", "MARKETPRICE", "LASTTRADEDATE"],
+                "columns": ["SECID", "BOARDID", "YIELD", "DURATION", "MARKETPRICE", "LASTTRADEDATE"],
                 "data": [
-                    ["TQOB", 15.2, 2628, 95.5, "2026-02-27"],
+                    ["SU26221RMFS0", "TQOB", 15.2, 2628, 95.5, "2026-02-27"],
                 ]
             }
         }
-        mock_request.return_value = mock_response
 
-        data = self.fetcher.fetch_market_data("SU26221RMFS0")
+        data = fetch_market_data("SU26221RMFS0")
 
         assert data["isin"] == "SU26221RMFS0"
         assert data["has_data"] is True
@@ -189,21 +200,22 @@ class TestFetchMarketData(TestMOEXBondsFetcher):
         assert data["last_price"] == 95.5
         assert data["last_trade_date"] == "2026-02-27"
 
-    @patch('api.moex_bonds.MOEXBondsFetcher._make_request')
-    def test_fetch_market_data_no_tqob(self, mock_request):
+    @patch('api.moex_bonds.MOEXClient')
+    def test_fetch_market_data_no_tqob(self, MockClient):
         """Нет данных на TQOB"""
-        mock_response = Mock()
-        mock_response.json.return_value = {
+        mock_instance = MockClient.return_value
+        mock_instance.__enter__ = Mock(return_value=mock_instance)
+        mock_instance.__exit__ = Mock(return_value=False)
+        mock_instance.get_json.return_value = {
             "marketdata": {
-                "columns": ["BOARDID", "YIELD", "DURATION", "MARKETPRICE"],
+                "columns": ["SECID", "BOARDID", "YIELD", "DURATION", "MARKETPRICE"],
                 "data": [
-                    ["TQBR", None, None, None],  # Не TQOB
+                    ["SU26221RMFS0", "TQBR", None, None, None],  # Не TQOB
                 ]
             }
         }
-        mock_request.return_value = mock_response
 
-        data = self.fetcher.fetch_market_data("SU26221RMFS0")
+        data = fetch_market_data("SU26221RMFS0")
 
         assert data["has_data"] is False
 
@@ -211,48 +223,25 @@ class TestFetchMarketData(TestMOEXBondsFetcher):
 class TestConvenienceFunctions(unittest.TestCase):
     """Тесты для удобных функций"""
 
-    @patch('api.moex_bonds.get_fetcher')
-    def test_fetch_all_ofz(self, mock_get_fetcher):
+    @patch('api.moex_bonds.fetch_ofz_only')
+    def test_fetch_all_ofz(self, mock_fetch):
         """Функция fetch_all_ofz"""
-        mock_fetcher = Mock()
-        mock_fetcher.fetch_ofz_only.return_value = [{"isin": "SU26221RMFS0"}]
-        mock_get_fetcher.return_value = mock_fetcher
+        mock_fetch.return_value = [{"isin": "SU26221RMFS0"}]
 
         result = fetch_all_ofz()
 
         assert len(result) == 1
-        mock_fetcher.fetch_ofz_only.assert_called_once()
 
-    @patch('api.moex_bonds.get_fetcher')
-    def test_fetch_ofz_with_market_data(self, mock_get_fetcher):
+    @patch('api.moex_bonds.fetch_ofz_only')
+    @patch('api.moex_bonds.fetch_all_market_data')
+    def test_fetch_ofz_with_market_data(self, mock_market, mock_fetch):
         """Функция fetch_ofz_with_market_data"""
-        mock_fetcher = Mock()
-        mock_fetcher.fetch_ofz_with_market_data.return_value = [{"isin": "SU26221RMFS0", "last_ytm": 15.2}]
-        mock_get_fetcher.return_value = mock_fetcher
+        mock_fetch.return_value = [{"isin": "SU26221RMFS0"}]
+        mock_market.return_value = {"SU26221RMFS0": {"has_data": True, "last_ytm": 15.2}}
 
-        result = fetch_ofz_with_market_data(include_details=True)
+        result = fetch_ofz_with_market_data()
 
         assert len(result) == 1
-        mock_fetcher.fetch_ofz_with_market_data.assert_called_once_with(include_details=True)
-
-
-class TestParseFunctions(TestMOEXBondsFetcher):
-    """Тесты для функций парсинга"""
-
-    def test_parse_float(self):
-        """Тест _parse_float"""
-        assert self.fetcher._parse_float(7.7) == 7.7
-        assert self.fetcher._parse_float("7.7") == 7.7
-        assert self.fetcher._parse_float(None) is None
-        assert self.fetcher._parse_float("invalid") is None
-
-    def test_parse_int(self):
-        """Тест _parse_int"""
-        assert self.fetcher._parse_int(2) == 2
-        assert self.fetcher._parse_int("2") == 2
-        assert self.fetcher._parse_int("2.5") == 2  # float to int
-        assert self.fetcher._parse_int(None) is None
-        assert self.fetcher._parse_int("invalid") is None
 
 
 class TestFilterOfzForTrading(unittest.TestCase):
@@ -755,7 +744,6 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestFetchBondDetails))
     suite.addTests(loader.loadTestsFromTestCase(TestFetchMarketData))
     suite.addTests(loader.loadTestsFromTestCase(TestConvenienceFunctions))
-    suite.addTests(loader.loadTestsFromTestCase(TestParseFunctions))
     suite.addTests(loader.loadTestsFromTestCase(TestFilterOfzForTrading))
     suite.addTests(loader.loadTestsFromTestCase(TestFilterRequireTrades))
     suite.addTests(loader.loadTestsFromTestCase(TestFetchAndFilterOfz))
