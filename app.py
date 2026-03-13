@@ -205,11 +205,17 @@ def init_session_state():
                 for isin, bond in config.bonds.items()
             }
     
-    if 'selected_bond1' not in st.session_state:
-        st.session_state.selected_bond1 = 0
+    # Выбранные облигации храним по ISIN (не по индексу!)
+    # Это гарантирует сохранение выбора при изменении списка
+    if 'selected_bond1_isin' not in st.session_state:
+        # Инициализируем первой облигацией из списка
+        first_isin = next(iter(st.session_state.get('bonds', {}).keys()), None)
+        st.session_state.selected_bond1_isin = first_isin
     
-    if 'selected_bond2' not in st.session_state:
-        st.session_state.selected_bond2 = 1
+    if 'selected_bond2_isin' not in st.session_state:
+        # Инициализируем второй облигацией из списка
+        isins = list(st.session_state.get('bonds', {}).keys())
+        st.session_state.selected_bond2_isin = isins[1] if len(isins) > 1 else isins[0] if isins else None
     
     # Единый период (30 дней - 2 года, по умолчанию 1 год)
     if 'period' not in st.session_state:
@@ -260,7 +266,7 @@ def init_session_state():
 
 
 def get_bonds_list() -> List:
-    """Получить список облигаций для отображения"""
+    """Получить список облигаций для отображения (отсортированный по дюрации)"""
     bonds_dict = st.session_state.get('bonds', {})
     
     class BondItem:
@@ -274,8 +280,24 @@ def get_bonds_list() -> List:
             self.coupon_frequency = data.get('coupon_frequency', 2)
             self.issue_date = data.get('issue_date', '')
             self.day_count_convention = data.get('day_count_convention', 'ACT/ACT')
+            # Для сортировки
+            self._duration_years = data.get('duration_years')
     
-    return [BondItem(bond_data) for bond_data in bonds_dict.values()]
+    # Сортируем по duration_years для СТАБИЛЬНОГО порядка
+    # Это критично для сохранения выбора пользователя
+    def get_duration(bond_data):
+        # Сначала пробуем duration_years
+        if bond_data.get('duration_years') is not None:
+            return bond_data['duration_years']
+        # Иначе вычисляем по maturity_date
+        try:
+            maturity = datetime.strptime(bond_data.get('maturity_date', ''), '%Y-%m-%d')
+            return (maturity - datetime.now()).days / 365.25
+        except:
+            return 999  # В конец списка
+    
+    sorted_bonds = sorted(bonds_dict.values(), key=get_duration)
+    return [BondItem(bond_data) for bond_data in sorted_bonds]
 
 
 @st.cache_resource
@@ -947,6 +969,7 @@ def main():
         # Получаем данные для dropdown
         bond_labels = []
         bond_trading_data = {}
+        bond_isins = [b.isin for b in bonds]  # Список ISIN в том же порядке
         
         for b in bonds:
             data = fetch_trading_data_cached(b.isin)
@@ -956,25 +979,51 @@ def main():
             else:
                 bond_labels.append(format_bond_label(b))
         
-        # Проверка и корректировка индексов (гарантируем валидный диапазон)
-        max_idx = len(bonds) - 1
-        st.session_state.selected_bond1 = max(0, min(st.session_state.selected_bond1, max_idx))
-        st.session_state.selected_bond2 = max(0, min(st.session_state.selected_bond2, max_idx))
+        # Находим индексы по ISIN (с валидацией)
+        selected_isin1 = st.session_state.get('selected_bond1_isin')
+        selected_isin2 = st.session_state.get('selected_bond2_isin')
         
-        # Выбор облигаций
+        # Если ISIN не найден в списке - берём первый
+        if selected_isin1 not in bond_isins:
+            selected_isin1 = bond_isins[0] if bond_isins else None
+            st.session_state.selected_bond1_isin = selected_isin1
+        if selected_isin2 not in bond_isins:
+            selected_isin2 = bond_isins[1] if len(bond_isins) > 1 else bond_isins[0] if bond_isins else None
+            st.session_state.selected_bond2_isin = selected_isin2
+        
+        bond1_idx = bond_isins.index(selected_isin1) if selected_isin1 else 0
+        bond2_idx = bond_isins.index(selected_isin2) if selected_isin2 else 0
+        
+        # Выбор облигаций (сохраняем ISIN, а не индекс!)
+        def on_bond1_change():
+            idx = st.session_state.selected_bond1_idx
+            st.session_state.selected_bond1_isin = bond_isins[idx] if 0 <= idx < len(bond_isins) else None
+        
+        def on_bond2_change():
+            idx = st.session_state.selected_bond2_idx
+            st.session_state.selected_bond2_isin = bond_isins[idx] if 0 <= idx < len(bond_isins) else None
+        
         bond1_idx = st.selectbox(
             "Облигация 1",
             range(len(bonds)),
             format_func=lambda i: bond_labels[i],
-            key="selected_bond1"  # Автоматическая синхронизация с session_state
+            index=bond1_idx,
+            key="selected_bond1_idx",
+            on_change=on_bond1_change
         )
         
         bond2_idx = st.selectbox(
             "Облигация 2",
             range(len(bonds)),
             format_func=lambda i: bond_labels[i],
-            key="selected_bond2"  # Автоматическая синхронизация с session_state
+            index=bond2_idx,
+            key="selected_bond2_idx",
+            on_change=on_bond2_change
         )
+        
+        # Синхронизируем ISIN (на случай если изменилось напрямую)
+        st.session_state.selected_bond1_isin = bond_isins[bond1_idx] if 0 <= bond1_idx < len(bond_isins) else None
+        st.session_state.selected_bond2_isin = bond_isins[bond2_idx] if 0 <= bond2_idx < len(bond_isins) else None
         
         st.divider()
         
