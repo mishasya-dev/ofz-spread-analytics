@@ -659,6 +659,8 @@ def calculate_bond_g_spread(
     """
     from statsmodels.tsa.stattools import adfuller
     
+    g_spread_repo = get_g_spread_repo()
+    
     # Определяем период по данным daily_df
     if not daily_df.empty:
         daily_df_copy = daily_df.reset_index() if daily_df.index.name else daily_df
@@ -674,6 +676,34 @@ def calculate_bond_g_spread(
         start_date = date.today() - timedelta(days=365)
         end_date = date.today()
     
+    # Проверяем есть ли данные в БД
+    last_db_date = g_spread_repo.get_last_g_spread_date(isin)
+    
+    # Если данные актуальны (за вчера), загружаем из БД
+    if last_db_date and last_db_date >= end_date - timedelta(days=1):
+        logger.info(f"Загрузка G-spread для {isin} из БД (актуально до {last_db_date})")
+        result_df = g_spread_repo.load_g_spreads(isin, start_date, end_date)
+        
+        if not result_df.empty:
+            # Добавляем rolling значения для Z-score
+            roll = result_df['g_spread_bp'].rolling(window=window)
+            result_df['rolling_mean'] = roll.mean()
+            result_df['rolling_std'] = roll.std()
+            result_df['z_score'] = (result_df['g_spread_bp'] - result_df['rolling_mean']) / result_df['rolling_std']
+            
+            # ADF тест
+            p_value = 1.0
+            try:
+                g_spread_clean = result_df['g_spread_bp'].dropna()
+                if len(g_spread_clean) >= 20:
+                    adf_result = adfuller(g_spread_clean)
+                    p_value = adf_result[1]
+            except Exception as e:
+                logger.warning(f"ADF тест не удался: {e}")
+            
+            return result_df, p_value
+    
+    # Данных нет или устарели - загружаем с MOEX
     logger.info(f"Загрузка ZCYC для {isin} за {start_date} - {end_date}")
     
     # Кэшированная загрузка ZCYC (TTL 5 минут)
@@ -1311,9 +1341,13 @@ def main():
         daily_df1 = fetch_historical_data_cached(bond1.isin, period)
         daily_df2 = fetch_historical_data_cached(bond2.isin, period)
         
-        # Дневные данные для G-Spread (с отдельным периодом)
-        g_spread_df1_raw = fetch_historical_data_cached(bond1.isin, st.session_state.g_spread_period)
-        g_spread_df2_raw = fetch_historical_data_cached(bond2.isin, st.session_state.g_spread_period)
+        # Дневные данные для G-Spread - используем те же если период совпадает
+        if st.session_state.g_spread_period == period:
+            g_spread_df1_raw = daily_df1
+            g_spread_df2_raw = daily_df2
+        else:
+            g_spread_df1_raw = fetch_historical_data_cached(bond1.isin, st.session_state.g_spread_period)
+            g_spread_df2_raw = fetch_historical_data_cached(bond2.isin, st.session_state.g_spread_period)
         
         # Intraday данные
         # candle_days уже установлен в sidebar
