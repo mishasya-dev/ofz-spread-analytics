@@ -1067,11 +1067,20 @@ def main():
         # Выбор облигаций (сохраняем ISIN, а не индекс!)
         def on_bond1_change():
             idx = st.session_state.selected_bond1_idx
-            st.session_state.selected_bond1_isin = bond_isins[idx] if 0 <= idx < len(bond_isins) else None
+            # idx может быть int или str - приводим к int
+            try:
+                idx = int(idx)
+                st.session_state.selected_bond1_isin = bond_isins[idx] if 0 <= idx < len(bond_isins) else None
+            except (ValueError, TypeError):
+                st.session_state.selected_bond1_isin = bond_isins[0] if bond_isins else None
         
         def on_bond2_change():
             idx = st.session_state.selected_bond2_idx
-            st.session_state.selected_bond2_isin = bond_isins[idx] if 0 <= idx < len(bond_isins) else None
+            try:
+                idx = int(idx)
+                st.session_state.selected_bond2_isin = bond_isins[idx] if 0 <= idx < len(bond_isins) else None
+            except (ValueError, TypeError):
+                st.session_state.selected_bond2_isin = bond_isins[0] if bond_isins else None
         
         bond1_idx = st.selectbox(
             "Облигация 1",
@@ -1091,9 +1100,14 @@ def main():
             on_change=on_bond2_change
         )
         
-        # Синхронизируем ISIN (на случай если изменилось напрямую)
-        st.session_state.selected_bond1_isin = bond_isins[bond1_idx] if 0 <= bond1_idx < len(bond_isins) else None
-        st.session_state.selected_bond2_isin = bond_isins[bond2_idx] if 0 <= bond2_idx < len(bond_isins) else None
+        # Синхронизируем ISIN
+        try:
+            idx1 = int(bond1_idx)
+            idx2 = int(bond2_idx)
+            st.session_state.selected_bond1_isin = bond_isins[idx1] if 0 <= idx1 < len(bond_isins) else None
+            st.session_state.selected_bond2_isin = bond_isins[idx2] if 0 <= idx2 < len(bond_isins) else None
+        except (ValueError, TypeError):
+            pass
         
         st.divider()
         
