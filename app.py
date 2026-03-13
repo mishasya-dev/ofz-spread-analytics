@@ -724,15 +724,21 @@ def calculate_bond_g_spread(
     if last_db_date and last_db_date >= end_date - timedelta(days=1):
         # Данные в БД актуальны - загружаем оттуда
         db_df = g_spread_repo.load_g_spreads(isin, start_date, end_date)
-        if not db_df.empty and 'z_score' in db_df.columns:
+        if not db_df.empty:
             logger.info(f"Загрузка G-spread для {isin} из БД (актуально до {last_db_date})")
+            # Рассчитываем Z-score (не хранится в БД, т.к. зависит от окна)
+            df = db_df.sort_values('date').reset_index(drop=True) if 'date' in db_df.columns else db_df.reset_index()
+            roll = df['g_spread_bp'].rolling(window=window)
+            df['rolling_mean'] = roll.mean()
+            df['rolling_std'] = roll.std()
+            df['z_score'] = (df['g_spread_bp'] - df['rolling_mean']) / df['rolling_std']
             # Рассчитываем p_value для ADF теста
             try:
-                adf_result = adfuller(db_df['g_spread_bp'].dropna())
+                adf_result = adfuller(df['g_spread_bp'].dropna())
                 p_value = adf_result[1]
             except:
                 p_value = 1.0
-            return db_df, p_value
+            return df, p_value
     
     logger.info(f"Загрузка ZCYC для {isin} за {start_date} - {end_date}")
     
