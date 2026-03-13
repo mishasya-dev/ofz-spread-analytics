@@ -1650,7 +1650,7 @@ def main():
                     
                     # График G-spread дашборд
                     fig_g_spread = create_g_spread_dashboard(df_res, z_threshold=st.session_state.g_spread_z_threshold)
-                    st.plotly_chart(fig_g_spread, width='stretch')
+                    st.plotly_chart(fig_g_spread, width='stretch', key=f'g_spread_dashboard_{bond1.isin}_{bond2.isin}')
                     
                     # График отдельных G-spread
                     col_chart1, col_chart2 = st.columns(2)
@@ -1660,14 +1660,14 @@ def main():
                             window=st.session_state.g_spread_window,
                             z_threshold=st.session_state.g_spread_z_threshold
                         )
-                        st.plotly_chart(fig_gs1, width='stretch')
+                        st.plotly_chart(fig_gs1, width='stretch', key=f'g_spread_chart1_{bond1.isin}')
                     with col_chart2:
                         fig_gs2 = create_g_spread_chart_single(
                             g_spread_df2, bond2.name, stats2, p_value2,
                             window=st.session_state.g_spread_window,
                             z_threshold=st.session_state.g_spread_z_threshold
                         )
-                        st.plotly_chart(fig_gs2, width='stretch')
+                        st.plotly_chart(fig_gs2, width='stretch', key=f'g_spread_chart2_{bond2.isin}')
             
             elif g_spread_df1.empty and g_spread_df2.empty:
                 st.warning("⚠️ Данные G-spread не найдены на MOEX ZCYC API")
