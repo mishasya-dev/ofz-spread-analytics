@@ -162,7 +162,7 @@ def format_bond_label(bond, ytm: float = None, duration_years: float = None) -> 
 
 
 def init_session_state():
-    """Инициализация состояния сессии"""
+    """Инициализация состояния сессии с сохранением в URL"""
     # Инициализация БД (создание таблиц при необходимости)
     init_database()
     
@@ -205,32 +205,51 @@ def init_session_state():
                 for isin, bond in config.bonds.items()
             }
     
-    # Выбранные облигации храним по ISIN (не по индексу!)
-    # Это гарантирует сохранение выбора при изменении списка
+    # ==========================================
+    # ЗАГРУЗКА НАСТРОЕК ИЗ URL
+    # ==========================================
+    params = st.query_params
+    isins = list(st.session_state.get('bonds', {}).keys())
+    
+    # Выбранные облигации (из URL или дефолт)
     if 'selected_bond1_isin' not in st.session_state:
-        # Инициализируем первой облигацией из списка
-        first_isin = next(iter(st.session_state.get('bonds', {}).keys()), None)
-        st.session_state.selected_bond1_isin = first_isin
+        url_bond1 = params.get("b1")
+        if url_bond1 and url_bond1 in isins:
+            st.session_state.selected_bond1_isin = url_bond1
+        else:
+            first_isin = next(iter(isins), None) if isins else None
+            st.session_state.selected_bond1_isin = first_isin
     
     if 'selected_bond2_isin' not in st.session_state:
-        # Инициализируем второй облигацией из списка
-        isins = list(st.session_state.get('bonds', {}).keys())
-        st.session_state.selected_bond2_isin = isins[1] if len(isins) > 1 else isins[0] if isins else None
+        url_bond2 = params.get("b2")
+        if url_bond2 and url_bond2 in isins:
+            st.session_state.selected_bond2_isin = url_bond2
+        else:
+            st.session_state.selected_bond2_isin = isins[1] if len(isins) > 1 else isins[0] if isins else None
     
-    # Единый период (30 дней - 2 года, по умолчанию 1 год)
+    # Период (из URL или дефолт)
     if 'period' not in st.session_state:
-        st.session_state.period = 365
+        try:
+            st.session_state.period = int(params.get("p", "365"))
+        except:
+            st.session_state.period = 365
     
-    # Интервал свечей для intraday графиков
+    # Интервал свечей (из URL или дефолт)
     if 'candle_interval' not in st.session_state:
-        st.session_state.candle_interval = "60"
+        ci = params.get("ci", "60")
+        if ci in ["1", "10", "60"]:
+            st.session_state.candle_interval = ci
+        else:
+            st.session_state.candle_interval = "60"
     
-    # Период свечей (динамический, зависит от интервала)
+    # Период свечей (из URL или дефолт)
     if 'candle_days' not in st.session_state:
-        st.session_state.candle_days = 30  # дефолт для 1 час
+        try:
+            st.session_state.candle_days = int(params.get("cd", "30"))
+        except:
+            st.session_state.candle_days = 30
     
-
-    
+    # Остальные параметры (без URL, дефолты)
     if 'auto_refresh' not in st.session_state:
         st.session_state.auto_refresh = False
     
@@ -243,26 +262,77 @@ def init_session_state():
     if 'updating_db' not in st.session_state:
         st.session_state.updating_db = False
     
-    # Параметры для Spread Analytics
+    # Параметры для Spread Analytics (из URL или дефолт)
     if 'spread_window' not in st.session_state:
-        st.session_state.spread_window = 30
+        try:
+            st.session_state.spread_window = int(params.get("sw", "30"))
+        except:
+            st.session_state.spread_window = 30
     
     if 'z_threshold' not in st.session_state:
-        st.session_state.z_threshold = 2.0
+        try:
+            st.session_state.z_threshold = float(params.get("zt", "2.0"))
+        except:
+            st.session_state.z_threshold = 2.0
 
-    # Параметры для G-Spread Analytics
+    # Параметры для G-Spread Analytics (из URL или дефолт)
     if 'g_spread_period' not in st.session_state:
-        st.session_state.g_spread_period = 365
+        try:
+            st.session_state.g_spread_period = int(params.get("gp", "365"))
+        except:
+            st.session_state.g_spread_period = 365
     
     if 'g_spread_window' not in st.session_state:
-        st.session_state.g_spread_window = 30
+        try:
+            st.session_state.g_spread_window = int(params.get("gw", "30"))
+        except:
+            st.session_state.g_spread_window = 30
     
     if 'g_spread_z_threshold' not in st.session_state:
-        st.session_state.g_spread_z_threshold = 2.0
+        try:
+            st.session_state.g_spread_z_threshold = float(params.get("gzt", "2.0"))
+        except:
+            st.session_state.g_spread_z_threshold = 2.0
 
     # Результат валидации YTM
     if 'ytm_validation' not in st.session_state:
         st.session_state.ytm_validation = None
+
+
+def save_settings_to_url():
+    """Сохранить текущие настройки в URL"""
+    params = {}
+    
+    # Облигации
+    if st.session_state.get('selected_bond1_isin'):
+        params["b1"] = st.session_state.selected_bond1_isin
+    if st.session_state.get('selected_bond2_isin'):
+        params["b2"] = st.session_state.selected_bond2_isin
+    
+    # Периоды
+    if st.session_state.get('period'):
+        params["p"] = str(st.session_state.period)
+    if st.session_state.get('candle_interval'):
+        params["ci"] = st.session_state.candle_interval
+    if st.session_state.get('candle_days'):
+        params["cd"] = str(st.session_state.candle_days)
+    
+    # Spread Analytics
+    if st.session_state.get('spread_window'):
+        params["sw"] = str(st.session_state.spread_window)
+    if st.session_state.get('z_threshold'):
+        params["zt"] = str(st.session_state.z_threshold)
+    
+    # G-Spread
+    if st.session_state.get('g_spread_period'):
+        params["gp"] = str(st.session_state.g_spread_period)
+    if st.session_state.get('g_spread_window'):
+        params["gw"] = str(st.session_state.g_spread_window)
+    if st.session_state.get('g_spread_z_threshold'):
+        params["gzt"] = str(st.session_state.g_spread_z_threshold)
+    
+    # Обновляем URL
+    st.query_params.from_dict(params)
 
 
 def get_bonds_list() -> List:
@@ -1673,6 +1743,10 @@ def main():
     # ==========================================
     # АВТООБНОВЛЕНИЕ
     # ==========================================
+    
+    # Сохраняем настройки в URL (для восстановления при F5)
+    save_settings_to_url()
+    
     if st.session_state.auto_refresh:
         interval = st.session_state.refresh_interval or 60
         time.sleep(interval)
