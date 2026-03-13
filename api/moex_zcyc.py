@@ -659,28 +659,35 @@ def get_zcyc_history_parallel(
     dates_to_fetch = trading_days.copy()
 
     # Проверяем кэш
+    # ВАЖНО: Проверяем кэш БЕЗ фильтрации по ISIN!
+    # ZCYC API возвращает данные для ВСЕХ облигаций сразу,
+    # поэтому кэшируем глобально, а фильтруем только при возврате
     if use_cache:
         try:
             from core.db import get_g_spread_repo
             repo = get_g_spread_repo()
 
-            cached_df = repo.load_zcyc(isin=isin, start_date=start_date, end_date=end_date)
-            cached_dates_for_isin = repo.get_zcyc_cached_dates(
-                isin=isin,
+            # Загружаем ВСЕ даты, для которых есть данные в кэше (без фильтрации по ISIN)
+            all_cached_dates = repo.get_zcyc_cached_dates(
+                isin=None,  # Без фильтрации!
                 start_date=start_date,
                 end_date=end_date
             )
 
+            # Загружаем кэшированные данные для нужного ISIN
+            cached_df = repo.load_zcyc(isin=isin, start_date=start_date, end_date=end_date)
+
             if not cached_df.empty:
                 all_data.append(cached_df)
 
-            dates_to_fetch = [d for d in trading_days if d not in cached_dates_for_isin]
+            # Загружаем только те даты, которых нет в кэше
+            dates_to_fetch = [d for d in trading_days if d not in all_cached_dates]
 
             empty_dates = repo.load_empty_dates(start_date=start_date, end_date=end_date)
             if empty_dates:
                 dates_to_fetch = [d for d in dates_to_fetch if d not in empty_dates]
 
-            logger.info(f"Из кэша: {len(cached_df)} записей, нужно загрузить: {len(dates_to_fetch)} дней")
+            logger.info(f"Из кэша: {len(cached_df)} записей для ISIN, дат в кэше: {len(all_cached_dates)}, нужно загрузить: {len(dates_to_fetch)} дней")
         except Exception as e:
             logger.warning(f"Ошибка при чтении кэша: {e}")
 
@@ -740,9 +747,8 @@ def get_zcyc_history_parallel(
                         })
                         result_df['g_spread_bp'] = (result_df['trdyield'] - result_df['clcyield']) * 100
 
-                        if isin:
-                            result_df = result_df[result_df['secid'] == isin]
-
+                        # ОПТИМИЗАЦИЯ: НЕ фильтруем по ISIN при загрузке!
+                        # Сохраняем ВСЕ облигации в БД, фильтруем только при возврате
                         if not result_df.empty:
                             new_data.append(result_df)
                 else:
@@ -783,7 +789,11 @@ def get_zcyc_history_parallel(
         result = pd.concat(all_data, ignore_index=True)
         result = result.sort_values('date').reset_index(drop=True)
 
-        logger.info(f"Всего загружено {len(result)} записей ZCYC за {len(trading_days)} дней")
+        # Фильтруем по ISIN только при возврате (если нужно)
+        if isin:
+            result = result[result['secid'] == isin]
+
+        logger.info(f"Всего загружено {len(result)} записей ZCYC за {len(trading_days)} дней" + (f" (отфильтровано по {isin})" if isin else " (все облигации)"))
 
         return result
 
