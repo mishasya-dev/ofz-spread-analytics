@@ -1032,6 +1032,10 @@ def main():
             on_change=lambda: log_widget_change("selected_bond2", bonds[st.session_state.selected_bond2].isin if st.session_state.selected_bond2 < len(bonds) else None)
         )
         
+        # Предупреждение при выборе одинаковых облигаций
+        if bond1_idx == bond2_idx:
+            st.warning("⚠️ Выбраны одинаковые облигации. Спред всегда будет равен 0. Выберите разные облигации для анализа.")
+        
         st.divider()
         
         # Единый период (1 месяц - 2 года)
