@@ -171,14 +171,20 @@ def show_bond_manager_dialog():
         if st.button("🗑️ Очистить", width="stretch"):
             # Очищаем текущий набор (без сохранения в БД)
             st.session_state.bond_manager_current_favorites = set()
-            # Удаляем DataFrame чтобы пересоздать с очищенными чекбоксами
+            
+            # Обновляем DataFrame напрямую - снимаем все галочки
             if 'bond_manager_df' in st.session_state:
-                del st.session_state.bond_manager_df
-            # Увеличиваем версию data_editor для принудительного пересоздания
-            st.session_state.bond_editor_version = st.session_state.get('bond_editor_version', 0) + 1
-            # Генерируем новый UUID для reopen диалога (НЕ сбрасываем last_shown_id)
-            st.session_state.bond_manager_open_id = str(uuid.uuid4())
-            st.rerun()
+                df = st.session_state.bond_manager_df.copy()
+                df["⭐"] = False  # Снимаем все галочки
+                st.session_state.bond_manager_df = df
+            
+            # Сбрасываем состояние data_editor
+            editor_version = st.session_state.get('bond_editor_version', 0)
+            editor_key = f"bonds_table_editor_{editor_version}"
+            if editor_key in st.session_state:
+                del st.session_state[editor_key]
+            
+            # БЕЗ st.rerun() - данные обновятся при следующем взаимодействии
 
     # ========================================
     # ТАБЛИЦА С ГАЛОЧКАМИ
