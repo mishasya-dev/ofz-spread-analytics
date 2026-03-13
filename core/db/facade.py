@@ -172,7 +172,7 @@ class DatabaseFacade:
 
     def migrate_config_bonds(self, bonds_config: Dict[str, Any]) -> int:
         """
-        Мигрировать облигации из config.py в БД.
+        Мигрировать облигации из config.py в БД (только новые!).
 
         Args:
             bonds_config: Словарь {isin: BondConfig}
@@ -182,6 +182,11 @@ class DatabaseFacade:
         """
         migrated = 0
         for isin, bond in bonds_config.items():
+            # Проверяем, есть ли уже в БД
+            existing = self._bonds_repo.load(isin)
+            if existing:
+                continue  # Уже есть - пропускаем
+            
             bond_data = {
                 'isin': isin,
                 'name': bond.name,
