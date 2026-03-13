@@ -2,35 +2,18 @@
 Сервис загрузки данных для OFZ Spread Analytics
 
 Содержит функции для загрузки данных с MOEX API и кэширования.
+Использует MOEXClient для запросов.
 """
 import pandas as pd
 from datetime import datetime, date, timedelta
 from typing import Dict, Optional
 import logging
 
+from api.moex_client import MOEXClient
+from api.moex_history import fetch_ytm_history, get_trading_data
+from api.moex_candles import fetch_candles, CandleInterval
+
 logger = logging.getLogger(__name__)
-
-# Глобальные экземпляры fetcher'ов (кэшируются)
-_history_fetcher = None
-_candle_fetcher = None
-
-
-def get_history_fetcher():
-    """Получить экземпляр HistoryFetcher (кэшируется)"""
-    global _history_fetcher
-    if _history_fetcher is None:
-        from api.moex_history import HistoryFetcher
-        _history_fetcher = HistoryFetcher()
-    return _history_fetcher
-
-
-def get_candle_fetcher():
-    """Получить экземпляр CandleFetcher (кэшируется)"""
-    global _candle_fetcher
-    if _candle_fetcher is None:
-        from api.moex_candles import CandleFetcher
-        _candle_fetcher = CandleFetcher()
-    return _candle_fetcher
 
 
 def fetch_trading_data(secid: str) -> Dict:
@@ -43,8 +26,8 @@ def fetch_trading_data(secid: str) -> Dict:
     Returns:
         Dict с торговыми данными или {'has_data': False}
     """
-    fetcher = get_history_fetcher()
-    return fetcher.get_trading_data(secid)
+    with MOEXClient() as client:
+        return get_trading_data(secid, client=client)
 
 
 def fetch_historical_data(
@@ -68,7 +51,6 @@ def fetch_historical_data(
     Returns:
         DataFrame с колонками: ytm, price, duration_days
     """
-    fetcher = get_history_fetcher()
     start_date = date.today() - timedelta(days=days)
 
     if db is None:
@@ -96,7 +78,9 @@ def fetch_historical_data(
         else:
             # Инкрементальное обновление
             new_start = last_db_date + timedelta(days=1)
-            new_df = fetcher.fetch_ytm_history(secid, start_date=new_start)
+            
+            with MOEXClient() as client:
+                new_df = fetch_ytm_history(secid, start_date=new_start, client=client)
 
             if not new_df.empty:
                 db.save_daily_ytm(secid, new_df)
@@ -104,7 +88,8 @@ def fetch_historical_data(
                 db_df = db_df[~db_df.index.duplicated(keep='last')]
     else:
         # Полная загрузка
-        db_df = fetcher.fetch_ytm_history(secid, start_date=start_date)
+        with MOEXClient() as client:
+            db_df = fetch_ytm_history(secid, start_date=start_date, client=client)
 
         if not db_df.empty:
             db.save_daily_ytm(secid, db_df)
@@ -137,10 +122,8 @@ def fetch_candle_data(
         DataFrame с колонками: close, ytm_close, accrued_interest, volume, value
     """
     from config import BondConfig
-    from api.moex_candles import CandleInterval
     from services.candle_processor_ytm_for_bonds import BondYTMProcessor
 
-    fetcher = get_candle_fetcher()
     ytm_processor = BondYTMProcessor()
 
     if db is None:
@@ -161,75 +144,79 @@ def fetch_candle_data(
     # Загружаем из БД (история)
     db_ytm_df = db.load_intraday_ytm(isin, interval, start_date=start_date, end_date=date.today() - timedelta(days=1))
 
-    # Запрашиваем текущий день - сырые свечи
-    raw_today_df = fetcher.fetch_candles(
-        isin,
-        interval=candle_interval,
-        start_date=date.today(),
-        end_date=date.today()
-    )
-    
-    # Рассчитываем YTM для текущего дня
-    today_df = pd.DataFrame()
-    if not raw_today_df.empty:
-        today_df = ytm_processor.add_ytm_to_candles(raw_today_df, bond_config)
+    with MOEXClient() as client:
+        # Запрашиваем текущий день - сырые свечи
+        raw_today_df = fetch_candles(
+            isin,
+            interval=candle_interval,
+            start_date=date.today(),
+            end_date=date.today(),
+            client=client
+        )
+        
+        # Рассчитываем YTM для текущего дня
+        today_df = pd.DataFrame()
+        if not raw_today_df.empty:
+            today_df = ytm_processor.add_ytm_to_candles(raw_today_df, bond_config)
 
-    # Проверяем нужно ли обновить историю
-    need_history = False
-    history_start = start_date
-    history_end = None
+        # Проверяем нужно ли обновить историю
+        need_history = False
+        history_start = start_date
+        history_end = None
 
-    if days > 1:
-        if db_ytm_df.empty:
-            need_history = True
-        else:
-            # Проверяем покрытие периода
-            db_min_date = db_ytm_df.index.min().date() if hasattr(db_ytm_df.index.min(), 'date') else db_ytm_df.index.min()
-            if db_min_date > start_date:
+        if days > 1:
+            if db_ytm_df.empty:
                 need_history = True
-                # ОПТИМИЗАЦИЯ: загружаем только недостающий период
-                history_start = start_date
-                history_end = db_min_date - timedelta(days=1)
-                logger.info(f"Данные в БД с {db_min_date}, нужно с {start_date} - дозагружаем")
+            else:
+                # Проверяем покрытие периода
+                db_min_date = db_ytm_df.index.min().date() if hasattr(db_ytm_df.index.min(), 'date') else db_ytm_df.index.min()
+                if db_min_date > start_date:
+                    need_history = True
+                    # ОПТИМИЗАЦИЯ: загружаем только недостающий период
+                    history_start = start_date
+                    history_end = db_min_date - timedelta(days=1)
+                    logger.info(f"Данные в БД с {db_min_date}, нужно с {start_date} - дозагружаем")
 
-    if need_history:
-        if not db_ytm_df.empty and history_end:
-            # Дозагрузка недостающего периода - сырые свечи
-            raw_history_df = fetcher.fetch_candles(
-                isin,
-                interval=candle_interval,
-                start_date=history_start,
-                end_date=history_end
-            )
-            
-            # Рассчитываем YTM
-            history_df = pd.DataFrame()
-            if not raw_history_df.empty:
-                history_df = ytm_processor.add_ytm_to_candles(raw_history_df, bond_config)
+        if need_history:
+            if not db_ytm_df.empty and history_end:
+                # Дозагрузка недостающего периода - сырые свечи
+                raw_history_df = fetch_candles(
+                    isin,
+                    interval=candle_interval,
+                    start_date=history_start,
+                    end_date=history_end,
+                    client=client
+                )
+                
+                # Рассчитываем YTM
+                history_df = pd.DataFrame()
+                if not raw_history_df.empty:
+                    history_df = ytm_processor.add_ytm_to_candles(raw_history_df, bond_config)
 
-            if not history_df.empty and 'ytm_close' in history_df.columns:
-                db.save_intraday_ytm(isin, interval, history_df)
-                db_ytm_df = pd.concat([history_df, db_ytm_df])
-                db_ytm_df = db_ytm_df[~db_ytm_df.index.duplicated(keep='last')]
-                logger.info(f"Дозагружены intraday YTM для {isin}: {len(history_df)} записей")
-        else:
-            # Полная загрузка истории - сырые свечи
-            raw_history_df = fetcher.fetch_candles(
-                isin,
-                interval=candle_interval,
-                start_date=start_date,
-                end_date=date.today() - timedelta(days=1)
-            )
-            
-            # Рассчитываем YTM
-            history_df = pd.DataFrame()
-            if not raw_history_df.empty:
-                history_df = ytm_processor.add_ytm_to_candles(raw_history_df, bond_config)
+                if not history_df.empty and 'ytm_close' in history_df.columns:
+                    db.save_intraday_ytm(isin, interval, history_df)
+                    db_ytm_df = pd.concat([history_df, db_ytm_df])
+                    db_ytm_df = db_ytm_df[~db_ytm_df.index.duplicated(keep='last')]
+                    logger.info(f"Дозагружены intraday YTM для {isin}: {len(history_df)} записей")
+            else:
+                # Полная загрузка истории - сырые свечи
+                raw_history_df = fetch_candles(
+                    isin,
+                    interval=candle_interval,
+                    start_date=start_date,
+                    end_date=date.today() - timedelta(days=1),
+                    client=client
+                )
+                
+                # Рассчитываем YTM
+                history_df = pd.DataFrame()
+                if not raw_history_df.empty:
+                    history_df = ytm_processor.add_ytm_to_candles(raw_history_df, bond_config)
 
-            if not history_df.empty and 'ytm_close' in history_df.columns:
-                db.save_intraday_ytm(isin, interval, history_df)
-                db_ytm_df = history_df
-                logger.info(f"Сохранены intraday YTM в БД для {isin}: {len(history_df)} записей")
+                if not history_df.empty and 'ytm_close' in history_df.columns:
+                    db.save_intraday_ytm(isin, interval, history_df)
+                    db_ytm_df = history_df
+                    logger.info(f"Сохранены intraday YTM в БД для {isin}: {len(history_df)} записей")
 
     # Сохраняем текущие данные
     if not today_df.empty and 'ytm_close' in today_df.columns:
@@ -266,12 +253,9 @@ def update_database_full(
     Returns:
         Dict со статистикой: daily_ytm_saved, intraday_ytm_saved, errors
     """
-    from api.moex_candles import CandleInterval
     from core.db import get_db_facade
     from services.candle_processor_ytm_for_bonds import BondYTMProcessor
 
-    fetcher = get_history_fetcher()
-    candle_fetcher = get_candle_fetcher()
     ytm_processor = BondYTMProcessor()
     db = get_db_facade()
 
@@ -287,54 +271,57 @@ def update_database_full(
     total_steps = len(bonds_list) * 4
     current_step = 0
 
-    # Дневные YTM
-    for bond in bonds_list:
-        try:
-            if progress_callback:
-                progress_callback(current_step / total_steps, f"Загрузка дневных YTM: {bond.name}")
-
-            df = fetcher.fetch_ytm_history(bond.isin, start_date=date.today() - timedelta(days=730))
-            if not df.empty:
-                saved = db.save_daily_ytm(bond.isin, df)
-                stats['daily_ytm_saved'] += saved
-        except Exception as e:
-            stats['errors'].append(f"Daily YTM {bond.name}: {str(e)}")
-
-        current_step += 1
-
-    # Intraday YTM
-    intervals = [
-        ("60", CandleInterval.MIN_60, 30),
-        ("10", CandleInterval.MIN_10, 7),
-        ("1", CandleInterval.MIN_1, 3),
-    ]
-
-    for bond in bonds_list:
-        for interval_str, interval_enum, days in intervals:
+    # Используем один MOEXClient для всех запросов
+    with MOEXClient() as client:
+        # Дневные YTM
+        for bond in bonds_list:
             try:
                 if progress_callback:
-                    progress_callback(current_step / total_steps, f"Загрузка {interval_str}мин свечей: {bond.name}")
+                    progress_callback(current_step / total_steps, f"Загрузка дневных YTM: {bond.name}")
 
-                # Получаем сырые свечи
-                raw_df = candle_fetcher.fetch_candles(
-                    bond.isin,
-                    interval=interval_enum,
-                    start_date=date.today() - timedelta(days=days),
-                    end_date=date.today()
-                )
-                
-                # Рассчитываем YTM
-                df = pd.DataFrame()
-                if not raw_df.empty:
-                    df = ytm_processor.add_ytm_to_candles(raw_df, bond)
-
-                if not df.empty and 'ytm_close' in df.columns:
-                    saved = db.save_intraday_ytm(bond.isin, interval_str, df)
-                    stats['intraday_ytm_saved'] += saved
+                df = fetch_ytm_history(bond.isin, start_date=date.today() - timedelta(days=730), client=client)
+                if not df.empty:
+                    saved = db.save_daily_ytm(bond.isin, df)
+                    stats['daily_ytm_saved'] += saved
             except Exception as e:
-                stats['errors'].append(f"Intraday YTM {bond.name} {interval_str}min: {str(e)}")
+                stats['errors'].append(f"Daily YTM {bond.name}: {str(e)}")
 
             current_step += 1
+
+        # Intraday YTM
+        intervals = [
+            ("60", CandleInterval.MIN_60, 30),
+            ("10", CandleInterval.MIN_10, 7),
+            ("1", CandleInterval.MIN_1, 3),
+        ]
+
+        for bond in bonds_list:
+            for interval_str, interval_enum, days in intervals:
+                try:
+                    if progress_callback:
+                        progress_callback(current_step / total_steps, f"Загрузка {interval_str}мин свечей: {bond.name}")
+
+                    # Получаем сырые свечи через новый API
+                    raw_df = fetch_candles(
+                        bond.isin,
+                        interval=interval_enum,
+                        start_date=date.today() - timedelta(days=days),
+                        end_date=date.today(),
+                        client=client
+                    )
+                    
+                    # Рассчитываем YTM
+                    df = pd.DataFrame()
+                    if not raw_df.empty:
+                        df = ytm_processor.add_ytm_to_candles(raw_df, bond)
+
+                    if not df.empty and 'ytm_close' in df.columns:
+                        saved = db.save_intraday_ytm(bond.isin, interval_str, df)
+                        stats['intraday_ytm_saved'] += saved
+                except Exception as e:
+                    stats['errors'].append(f"Intraday YTM {bond.name} {interval_str}min: {str(e)}")
+
+                current_step += 1
 
     if progress_callback:
         progress_callback(1.0, "Готово!")

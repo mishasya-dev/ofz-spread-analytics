@@ -1,5 +1,7 @@
 """
 Режим работы с дневными данными (базовый режим)
+
+Использует MOEXClient для запросов к MOEX API.
 """
 import pandas as pd
 import numpy as np
@@ -12,8 +14,9 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from api.moex_trading import TradingChecker, TradingStatus, ExchangeInfo
-from api.moex_history import HistoryFetcher
+from api.moex_trading import TradingStatus, ExchangeInfo, check_comprehensive
+from api.moex_history import fetch_ytm_history, fetch_multi_bonds_history, get_trading_data
+from api.moex_client import MOEXClient
 from core.spread import SpreadCalculator, SpreadStats, SpreadData
 from core.signals import SignalGenerator, TradingSignal, SignalType
 from core.backtest import Backtester, BacktestResult
@@ -92,8 +95,7 @@ class DailyMode:
             config: Конфигурация приложения
         """
         self.config = config or AppConfig()
-        self.trading_checker = TradingChecker()
-        self.history_fetcher = HistoryFetcher()
+        # MOEXClient создаётся при каждом запросе (context manager)
         self.spread_calculator = SpreadCalculator(self.config.signals.percentile_window)
         self.signal_generator = SignalGenerator()
         self.backtester = Backtester(self.config.backtest)
@@ -119,27 +121,28 @@ class DailyMode:
         )
         
         # 1. Проверяем статус биржи
-        exchange_info = self.trading_checker.check_comprehensive()
+        exchange_info = check_comprehensive()
         result.exchange_status = exchange_info.status
         result.is_trading = exchange_info.is_trading
         result.exchange_message = exchange_info.message
         
         logger.info(f"Exchange status: {exchange_info.status.value}, trading: {exchange_info.is_trading}")
         
-        # 2. Загружаем данные
-        if exchange_info.is_trading:
-            # Пробуем торговые данные
-            ytm_data = self._fetch_trading_data()
-            result.data_source = "trading"
-            
-            # Если торговых данных нет, берём исторические
-            if not ytm_data:
-                ytm_data = self._fetch_history_data()
+        # 2. Загружаем данные с MOEXClient
+        with MOEXClient() as client:
+            if exchange_info.is_trading:
+                # Пробуем торговые данные
+                ytm_data = self._fetch_trading_data(client)
+                result.data_source = "trading"
+                
+                # Если торговых данных нет, берём исторические
+                if not ytm_data:
+                    ytm_data = self._fetch_history_data(client)
+                    result.data_source = "history"
+            else:
+                # Биржа закрыта - исторические данные
+                ytm_data = self._fetch_history_data(client)
                 result.data_source = "history"
-        else:
-            # Биржа закрыта - исторические данные
-            ytm_data = self._fetch_history_data()
-            result.data_source = "history"
         
         result.ytm_history = ytm_data
         self._ytm_cache = ytm_data
@@ -257,10 +260,13 @@ class DailyMode:
         self._last_fetch = None
         return self.run()
     
-    def _fetch_trading_data(self) -> Dict[str, pd.DataFrame]:
+    def _fetch_trading_data(self, client: MOEXClient) -> Dict[str, pd.DataFrame]:
         """
         Загрузить торговые данные
         
+        Args:
+            client: MOEXClient
+            
         Returns:
             Словарь {ISIN: DataFrame}
         """
@@ -271,7 +277,7 @@ class DailyMode:
         
         for isin in isins:
             try:
-                trading_data = self.history_fetcher.get_trading_data(isin)
+                trading_data = get_trading_data(isin, client=client)
                 
                 if trading_data.get("has_data") and trading_data.get("yield"):
                     # Создаём DataFrame с одним значением
@@ -292,10 +298,13 @@ class DailyMode:
         self._last_fetch = datetime.now()
         return ytm_data
     
-    def _fetch_history_data(self) -> Dict[str, pd.DataFrame]:
+    def _fetch_history_data(self, client: MOEXClient) -> Dict[str, pd.DataFrame]:
         """
         Загрузить исторические данные
         
+        Args:
+            client: MOEXClient
+            
         Returns:
             Словарь {ISIN: DataFrame}
         """
@@ -303,9 +312,11 @@ class DailyMode:
         
         start_date = date.today() - timedelta(days=self.config.lookback_days)
         
-        ytm_data = self.history_fetcher.fetch_multi_bonds_history(
+        # Используем параллельную загрузку
+        ytm_data = fetch_multi_bonds_history(
             list(self.config.bonds.keys()),
-            start_date=start_date
+            start_date=start_date,
+            client=client
         )
         
         self._last_fetch = datetime.now()
@@ -367,9 +378,8 @@ class DailyMode:
         return bonds_info
     
     def close(self):
-        """Закрыть соединения"""
-        self.trading_checker.close()
-        self.history_fetcher.close()
+        """Закрыть соединения (для совместимости, ничего не делает)"""
+        pass
 
 
 def run_daily_analysis(lookback_days: int = 500) -> DailyModeResult:

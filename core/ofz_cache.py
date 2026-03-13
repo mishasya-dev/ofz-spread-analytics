@@ -204,12 +204,13 @@ class OFZCache:
         Returns:
             Количество загруженных облигаций
         """
-        from api.moex_bonds import MOEXBondsFetcher, filter_ofz_for_trading
+        from api.moex_bonds import fetch_ofz_with_market_data, filter_ofz_for_trading
+        from api.moex_client import MOEXClient
 
-        fetcher = MOEXBondsFetcher()
         try:
-            # Загружаем все ОФЗ
-            all_bonds = fetcher.fetch_ofz_with_market_data(include_details=False)
+            # Загружаем все ОФЗ с рыночными данными
+            with MOEXClient() as client:
+                all_bonds = fetch_ofz_with_market_data(client=client, include_details=False)
 
             # Фильтруем для торговли
             filtered = filter_ofz_for_trading(all_bonds, require_trades=False)
@@ -222,8 +223,9 @@ class OFZCache:
 
             return count
 
-        finally:
-            fetcher.close()
+        except Exception as e:
+            logger.error(f"Ошибка загрузки ОФЗ: {e}")
+            return 0
 
     def _save_to_db(self, bonds: List[Dict]) -> int:
         """Сохранить список ОФЗ в БД"""

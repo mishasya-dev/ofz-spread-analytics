@@ -2,6 +2,7 @@
 Компонент панели управления базой данных
 
 Содержит статистику БД и кнопки управления.
+Использует MOEXClient для запросов к MOEX API.
 """
 import streamlit as st
 from typing import Dict, List
@@ -45,18 +46,18 @@ def update_database_full(bonds_list: List = None, progress_callback=None) -> Dic
     Returns:
         Статистика обновления
     """
-    from api.moex_candles import CandleInterval
-    from api.moex_history import HistoryFetcher
-    from api.moex_candles import CandleFetcher
+    from api.moex_candles import CandleInterval, fetch_candles
+    from api.moex_history import fetch_ytm_history
+    from api.moex_client import MOEXClient
     from core.db import get_db_facade
     from components.sidebar import get_bonds_list
+    from services.candle_processor_ytm_for_bonds import BondYTMProcessor
     import logging
     
     logger = logging.getLogger(__name__)
     
-    fetcher = HistoryFetcher()
-    candle_fetcher = CandleFetcher()
     db = get_db_facade()
+    ytm_processor = BondYTMProcessor()
     
     if bonds_list is None:
         bonds_list = get_bonds_list()
@@ -74,56 +75,60 @@ def update_database_full(bonds_list: List = None, progress_callback=None) -> Dic
     total_steps = len(bonds) * 4
     current_step = 0
     
-    # 1. Дневные YTM для всех облигаций (1 год)
-    for bond in bonds:
-        try:
-            if progress_callback:
-                progress_callback(current_step / total_steps, f"Загрузка дневных YTM: {bond.name}")
-            
-            df = fetcher.fetch_ytm_history(bond.isin, start_date=date.today() - timedelta(days=365))
-            if not df.empty:
-                saved = db.save_daily_ytm(bond.isin, df)
-                stats['daily_ytm_saved'] += saved
-        except Exception as e:
-            stats['errors'].append(f"Daily YTM {bond.name}: {str(e)}")
-        
-        current_step += 1
-    
-    # 2. Intraday YTM для всех облигаций и интервалов
-    intervals = [
-        ("60", CandleInterval.MIN_60, 30),
-        ("10", CandleInterval.MIN_10, 7),
-        ("1", CandleInterval.MIN_1, 3),
-    ]
-    
-    for bond in bonds:
-        for interval_str, interval_enum, days in intervals:
+    # Используем один MOEXClient для всех запросов
+    with MOEXClient() as client:
+        # 1. Дневные YTM для всех облигаций (1 год)
+        for bond in bonds:
             try:
                 if progress_callback:
-                    progress_callback(current_step / total_steps, f"Загрузка {interval_str}мин свечей: {bond.name}")
+                    progress_callback(current_step / total_steps, f"Загрузка дневных YTM: {bond.name}")
                 
-                df = candle_fetcher.fetch_candles(
-                    bond.isin,
-                    bond_config=bond,
-                    interval=interval_enum,
-                    start_date=date.today() - timedelta(days=days),
-                    end_date=date.today()
-                )
-                
-                if not df.empty and 'ytm_close' in df.columns:
-                    saved = db.save_intraday_ytm(bond.isin, interval_str, df)
-                    stats['intraday_ytm_saved'] += saved
+                df = fetch_ytm_history(bond.isin, start_date=date.today() - timedelta(days=365), client=client)
+                if not df.empty:
+                    saved = db.save_daily_ytm(bond.isin, df)
+                    stats['daily_ytm_saved'] += saved
             except Exception as e:
-                stats['errors'].append(f"Intraday YTM {bond.name} {interval_str}min: {str(e)}")
+                stats['errors'].append(f"Daily YTM {bond.name}: {str(e)}")
             
             current_step += 1
+        
+        # 2. Intraday YTM для всех облигаций и интервалов
+        intervals = [
+            ("60", CandleInterval.MIN_60, 30),
+            ("10", CandleInterval.MIN_10, 7),
+            ("1", CandleInterval.MIN_1, 3),
+        ]
+        
+        for bond in bonds:
+            for interval_str, interval_enum, days in intervals:
+                try:
+                    if progress_callback:
+                        progress_callback(current_step / total_steps, f"Загрузка {interval_str}мин свечей: {bond.name}")
+                    
+                    # Получаем сырые свечи через новый API
+                    raw_df = fetch_candles(
+                        bond.isin,
+                        interval=interval_enum,
+                        start_date=date.today() - timedelta(days=days),
+                        end_date=date.today(),
+                        client=client
+                    )
+                    
+                    # Рассчитываем YTM
+                    df = pd.DataFrame()
+                    if not raw_df.empty:
+                        df = ytm_processor.add_ytm_to_candles(raw_df, bond)
+                    
+                    if not df.empty and 'ytm_close' in df.columns:
+                        saved = db.save_intraday_ytm(bond.isin, interval_str, df)
+                        stats['intraday_ytm_saved'] += saved
+                except Exception as e:
+                    stats['errors'].append(f"Intraday YTM {bond.name} {interval_str}min: {str(e)}")
+                
+                current_step += 1
     
     if progress_callback:
         progress_callback(1.0, "Готово!")
-    
-    # Закрываем соединения
-    fetcher.close()
-    candle_fetcher.close()
     
     return stats
 

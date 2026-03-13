@@ -2,11 +2,10 @@
 Сервисы для OFZ Spread Analytics
 
 Сервисы инкапсулируют бизнес-логику и работу с внешними API.
+Используют MOEXClient для запросов к MOEX.
 """
 from .candle_service import CandleService, get_candle_service
 from .data_loader import (
-    get_history_fetcher,
-    get_candle_fetcher,
     fetch_trading_data,
     fetch_historical_data,
     fetch_candle_data,
@@ -35,9 +34,7 @@ __all__ = [
     # CandleService
     'CandleService',
     'get_candle_service',
-    # DataLoader
-    'get_history_fetcher',
-    'get_candle_fetcher',
+    # DataLoader (новая архитектура без fetcher классов)
     'fetch_trading_data',
     'fetch_historical_data',
     'fetch_candle_data',

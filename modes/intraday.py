@@ -1,5 +1,7 @@
 """
 Режим работы с внутридневными данными
+
+Использует MOEXClient для запросов к MOEX API.
 """
 import pandas as pd
 import numpy as np
@@ -12,9 +14,10 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from api.moex_trading import TradingChecker, TradingStatus
-from api.moex_candles import CandleFetcher, CandleInterval
-from api.moex_history import HistoryFetcher
+from api.moex_trading import TradingStatus, check_comprehensive
+from api.moex_candles import CandleInterval, fetch_candles
+from api.moex_history import fetch_ytm_history, fetch_multi_bonds_history
+from api.moex_client import MOEXClient
 from core.spread import SpreadCalculator, SpreadStats
 from core.signals import SignalGenerator, TradingSignal
 from config import AppConfig
@@ -88,9 +91,7 @@ class IntradayMode:
             config: Конфигурация приложения
         """
         self.config = config or AppConfig()
-        self.trading_checker = TradingChecker()
-        self.candle_fetcher = CandleFetcher()
-        self.history_fetcher = HistoryFetcher()
+        # MOEXClient создаётся при каждом запросе (context manager)
         self.spread_calculator = SpreadCalculator()
         self.signal_generator = SignalGenerator()
         
@@ -112,7 +113,7 @@ class IntradayMode:
         )
         
         # 1. Проверяем статус биржи
-        exchange_info = self.trading_checker.check_comprehensive()
+        exchange_info = check_comprehensive()
         result.exchange_status = exchange_info.status
         result.is_trading = exchange_info.is_trading
         
@@ -120,27 +121,31 @@ class IntradayMode:
             result.data_available = False
             return result
         
-        # 2. Загружаем часовые свечи
-        isins = self._get_all_isins()
-        
-        try:
-            self._candles_cache = self.candle_fetcher.fetch_multi_bonds_candles(
+        # 2. Загружаем данные с MOEXClient
+        with MOEXClient() as client:
+            # Загружаем часовые свечи
+            isins = self._get_all_isins()
+            
+            try:
+                self._candles_cache = self._fetch_multi_bonds_candles(
+                    client,
+                    isins,
+                    interval=CandleInterval.MIN_60,
+                    start_date=date.today(),
+                    end_date=date.today()
+                )
+            except Exception as e:
+                logger.error(f"Error fetching candles: {e}")
+                result.data_available = False
+                return result
+            
+            # 3. Загружаем историю для перцентилей
+            start_date = date.today() - timedelta(days=self.config.lookback_days)
+            self._history_cache = fetch_multi_bonds_history(
                 isins,
-                interval=CandleInterval.MIN_60,
-                start_date=date.today(),
-                end_date=date.today()
+                start_date=start_date,
+                client=client
             )
-        except Exception as e:
-            logger.error(f"Error fetching candles: {e}")
-            result.data_available = False
-            return result
-        
-        # 3. Загружаем историю для перцентилей
-        start_date = date.today() - timedelta(days=self.config.lookback_days)
-        self._history_cache = self.history_fetcher.fetch_multi_bonds_history(
-            isins,
-            start_date=start_date
-        )
         
         # 4. Обрабатываем каждую пару
         for bond_long, bond_short in self.config.spread_pairs:
@@ -162,6 +167,47 @@ class IntradayMode:
         result.signals = self._generate_intraday_signals()
         
         result.last_update = datetime.now()
+        
+        return result
+    
+    def _fetch_multi_bonds_candles(
+        self,
+        client: MOEXClient,
+        isins: List[str],
+        interval: CandleInterval,
+        start_date: date,
+        end_date: date
+    ) -> Dict[str, pd.DataFrame]:
+        """
+        Загрузить свечи для нескольких облигаций
+        
+        Args:
+            client: MOEXClient
+            isins: Список ISIN
+            interval: Интервал свечей
+            start_date: Начальная дата
+            end_date: Конечная дата
+            
+        Returns:
+            Словарь {ISIN: DataFrame}
+        """
+        result = {}
+        
+        for isin in isins:
+            try:
+                df = fetch_candles(
+                    isin,
+                    interval=interval,
+                    start_date=start_date,
+                    end_date=end_date,
+                    client=client
+                )
+                
+                if not df.empty:
+                    result[isin] = df
+                    
+            except Exception as e:
+                logger.warning(f"Error fetching candles for {isin}: {e}")
         
         return result
     
@@ -212,7 +258,7 @@ class IntradayMode:
         Returns:
             Словарь с информацией о статусе
         """
-        exchange_info = self.trading_checker.check_comprehensive()
+        exchange_info = check_comprehensive()
         
         return {
             "is_trading": exchange_info.is_trading,
@@ -402,10 +448,8 @@ class IntradayMode:
         return signals
     
     def close(self):
-        """Закрыть соединения"""
-        self.trading_checker.close()
-        self.candle_fetcher.close()
-        self.history_fetcher.close()
+        """Закрыть соединения (для совместимости, ничего не делает)"""
+        pass
 
 
 def run_intraday_analysis() -> IntradayModeResult:
