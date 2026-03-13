@@ -22,7 +22,7 @@ TEMP_DIR = tempfile.mkdtemp()
 db_module.DB_PATH = os.path.join(TEMP_DIR, "test_bonds.db")
 
 from core.db import (
-    init_database, get_connection, get_db, get_db_facade,
+    init_database, get_db_connection, get_db_cursor, get_db, get_db_facade,
     DatabaseFacade
 )
 
@@ -39,11 +39,9 @@ def teardown_module():
 
 def reset_db():
     """Сбросить таблицу bonds между тестами"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM bonds')
-    conn.commit()
-    conn.close()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM bonds')
 
 
 class TestBondsTableStructure:
@@ -55,11 +53,9 @@ class TestBondsTableStructure:
 
     def test_table_exists(self):
         """Таблица bonds существует"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bonds'")
-        result = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bonds'")
+            result = cursor.fetchone()
         assert result is not None, "Таблица bonds не найдена"
 
     def test_all_columns_exist(self):
@@ -71,25 +67,21 @@ class TestBondsTableStructure:
             'duration_days', 'last_trade_date', 'last_updated', 'created_at'
         ]
 
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(bonds)")
-        existing_columns = {row[1] for row in cursor.fetchall()}
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute("PRAGMA table_info(bonds)")
+            existing_columns = {row[1] for row in cursor.fetchall()}
 
         for col in required_columns:
             assert col in existing_columns, f"Колонка {col} отсутствует"
 
     def test_isin_primary_key(self):
         """ISIN является первичным ключом"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(bonds)")
-        for row in cursor.fetchall():
-            if row[1] == 'isin':
-                assert row[5] == 1, "ISIN должен быть PRIMARY KEY"
-                break
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute("PRAGMA table_info(bonds)")
+            for row in cursor.fetchall():
+                if row[1] == 'isin':
+                    assert row[5] == 1, "ISIN должен быть PRIMARY KEY"
+                    break
 
     def test_default_values(self):
         """Проверка значений по умолчанию"""

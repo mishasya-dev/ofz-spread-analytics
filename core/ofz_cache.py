@@ -25,7 +25,7 @@ import threading
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
-from .db.connection import get_connection
+from .db.connection import get_db_connection, get_db_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -54,21 +54,18 @@ class OFZCache:
         Returns:
             {'updated_at': datetime, 'is_expired': bool, 'count': int} или None
         """
-        conn = get_connection()
-        cursor = conn.cursor()
+        with get_db_cursor() as cursor:
+            # Количество облигаций в кэше
+            cursor.execute('SELECT COUNT(*) as cnt FROM bonds')
+            count = cursor.fetchone()['cnt']
 
-        # Количество облигаций в кэше
-        cursor.execute('SELECT COUNT(*) as cnt FROM bonds')
-        count = cursor.fetchone()['cnt']
+            cursor.execute('''
+                SELECT updated_at, ttl_seconds
+                FROM cache_metadata
+                WHERE cache_type = ?
+            ''', (self.CACHE_TYPE,))
 
-        cursor.execute('''
-            SELECT updated_at, ttl_seconds
-            FROM cache_metadata
-            WHERE cache_type = ?
-        ''', (self.CACHE_TYPE,))
-
-        row = cursor.fetchone()
-        conn.close()
+            row = cursor.fetchone()
 
         # Если есть облигации, но нет метаданных - считаем валидным
         if not row and count > 0:
@@ -128,19 +125,16 @@ class OFZCache:
 
     def _load_from_db(self) -> List[Dict[str, Any]]:
         """Загрузить список ОФЗ из БД"""
-        conn = get_connection()
-        cursor = conn.cursor()
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT isin, name, short_name, coupon_rate, maturity_date,
+                       issue_date, face_value, coupon_frequency, day_count,
+                       last_price, last_ytm, duration_years, duration_days
+                FROM bonds
+                ORDER BY duration_years ASC
+            ''')
 
-        cursor.execute('''
-            SELECT isin, name, short_name, coupon_rate, maturity_date,
-                   issue_date, face_value, coupon_frequency, day_count,
-                   last_price, last_ytm, duration_years, duration_days
-            FROM bonds
-            ORDER BY duration_years ASC
-        ''')
-
-        rows = cursor.fetchall()
-        conn.close()
+            rows = cursor.fetchall()
 
         return [dict(row) for row in rows]
 
@@ -233,64 +227,58 @@ class OFZCache:
 
     def _save_to_db(self, bonds: List[Dict]) -> int:
         """Сохранить список ОФЗ в БД"""
-        conn = get_connection()
-        cursor = conn.cursor()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
 
-        # Очищаем старые данные (кроме избранных)
-        cursor.execute('DELETE FROM bonds WHERE is_favorite = 0')
+            # Очищаем старые данные (кроме избранных)
+            cursor.execute('DELETE FROM bonds WHERE is_favorite = 0')
 
-        # Получаем список избранных ISIN
-        cursor.execute('SELECT isin FROM bonds WHERE is_favorite = 1')
-        favorite_isins = {row['isin'] for row in cursor.fetchall()}
+            # Получаем список избранных ISIN
+            cursor.execute('SELECT isin FROM bonds WHERE is_favorite = 1')
+            favorite_isins = {row['isin'] for row in cursor.fetchall()}
 
-        count = 0
-        for bond in bonds:
-            isin = bond.get('isin')
-            is_favorite = isin in favorite_isins
+            count = 0
+            for bond in bonds:
+                isin = bond.get('isin')
+                is_favorite = isin in favorite_isins
 
-            cursor.execute('''
-                INSERT OR REPLACE INTO bonds (
-                    isin, name, short_name, coupon_rate, maturity_date,
-                    issue_date, face_value, coupon_frequency, day_count,
-                    last_price, last_ytm, duration_years, duration_days,
-                    is_favorite, last_updated
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ''', (
-                isin,
-                bond.get('name') or bond.get('short_name') or isin,
-                bond.get('short_name'),
-                bond.get('coupon_rate'),
-                bond.get('maturity_date'),
-                bond.get('issue_date'),
-                bond.get('face_value', 1000),
-                bond.get('coupon_frequency', 2),
-                bond.get('day_count', 'ACT/ACT'),
-                bond.get('last_price'),
-                bond.get('last_ytm'),
-                bond.get('duration_years'),
-                bond.get('duration_days'),
-                1 if is_favorite else 0,  # Сохраняем статус избранного
-            ))
-            count += 1
-
-        conn.commit()
-        conn.close()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO bonds (
+                        isin, name, short_name, coupon_rate, maturity_date,
+                        issue_date, face_value, coupon_frequency, day_count,
+                        last_price, last_ytm, duration_years, duration_days,
+                        is_favorite, last_updated
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (
+                    isin,
+                    bond.get('name') or bond.get('short_name') or isin,
+                    bond.get('short_name'),
+                    bond.get('coupon_rate'),
+                    bond.get('maturity_date'),
+                    bond.get('issue_date'),
+                    bond.get('face_value', 1000),
+                    bond.get('coupon_frequency', 2),
+                    bond.get('day_count', 'ACT/ACT'),
+                    bond.get('last_price'),
+                    bond.get('last_ytm'),
+                    bond.get('duration_years'),
+                    bond.get('duration_days'),
+                    1 if is_favorite else 0,  # Сохраняем статус избранного
+                ))
+                count += 1
 
         logger.info(f"Сохранено {count} облигаций в кэш")
         return count
 
     def _update_cache_metadata(self):
         """Обновить метаданные кэша"""
-        conn = get_connection()
-        cursor = conn.cursor()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute('''
-            INSERT OR REPLACE INTO cache_metadata (cache_type, updated_at, ttl_seconds)
-            VALUES (?, CURRENT_TIMESTAMP, ?)
-        ''', (self.CACHE_TYPE, self.ttl_seconds))
-
-        conn.commit()
-        conn.close()
+            cursor.execute('''
+                INSERT OR REPLACE INTO cache_metadata (cache_type, updated_at, ttl_seconds)
+                VALUES (?, CURRENT_TIMESTAMP, ?)
+            ''', (self.CACHE_TYPE, self.ttl_seconds))
 
 
 # Глобальный экземпляр

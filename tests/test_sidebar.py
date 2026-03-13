@@ -25,7 +25,7 @@ TEMP_DIR = tempfile.mkdtemp()
 db_module.DB_PATH = os.path.join(TEMP_DIR, "test_sidebar.db")
 
 from core.db import (
-    init_database, get_connection, get_db
+    init_database, get_db_connection, get_db_cursor, get_db
 )
 
 
@@ -41,11 +41,9 @@ def teardown_module():
 
 def reset_db():
     """Сбросить таблицу bonds между тестами"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM bonds')
-    conn.commit()
-    conn.close()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM bonds')
 
 
 # ==========================================

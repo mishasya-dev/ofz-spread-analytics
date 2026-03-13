@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Any
 import logging
 
-from .connection import get_connection
+from .connection import get_connection, get_db_connection, get_db_cursor
 from .bonds_repo import BondsRepository
 from .ytm_repo import YTMRepository
 from .spreads_repo import SpreadsRepository
@@ -224,38 +224,34 @@ class DatabaseFacade:
 
     def get_stats(self) -> Dict:
         """Получить статистику базы данных"""
-        conn = get_connection()
-        cursor = conn.cursor()
+        with get_db_cursor() as cursor:
+            # Облигации
+            cursor.execute('SELECT COUNT(*) as cnt FROM bonds')
+            bonds_count = cursor.fetchone()['cnt']
 
-        # Облигации
-        cursor.execute('SELECT COUNT(*) as cnt FROM bonds')
-        bonds_count = cursor.fetchone()['cnt']
+            # Избранные
+            cursor.execute('SELECT COUNT(*) as cnt FROM bonds WHERE is_favorite = 1')
+            favorites_count = cursor.fetchone()['cnt']
 
-        # Избранные
-        cursor.execute('SELECT COUNT(*) as cnt FROM bonds WHERE is_favorite = 1')
-        favorites_count = cursor.fetchone()['cnt']
+            # Дневные YTM
+            cursor.execute('SELECT COUNT(*) as cnt FROM daily_ytm')
+            daily_ytm_count = cursor.fetchone()['cnt']
 
-        # Дневные YTM
-        cursor.execute('SELECT COUNT(*) as cnt FROM daily_ytm')
-        daily_ytm_count = cursor.fetchone()['cnt']
+            # Intraday YTM
+            cursor.execute('SELECT COUNT(*) as cnt FROM intraday_ytm')
+            intraday_ytm_count = cursor.fetchone()['cnt']
 
-        # Intraday YTM
-        cursor.execute('SELECT COUNT(*) as cnt FROM intraday_ytm')
-        intraday_ytm_count = cursor.fetchone()['cnt']
+            # Спреды
+            cursor.execute('SELECT COUNT(*) as cnt FROM spreads')
+            spreads_count = cursor.fetchone()['cnt']
 
-        # Спреды
-        cursor.execute('SELECT COUNT(*) as cnt FROM spreads')
-        spreads_count = cursor.fetchone()['cnt']
+            # Свечи
+            cursor.execute('SELECT COUNT(*) as cnt FROM candles')
+            candles_count = cursor.fetchone()['cnt']
 
-        # Свечи
-        cursor.execute('SELECT COUNT(*) as cnt FROM candles')
-        candles_count = cursor.fetchone()['cnt']
-
-        # Снимки
-        cursor.execute('SELECT COUNT(*) as cnt FROM snapshots')
-        snapshots_count = cursor.fetchone()['cnt']
-
-        conn.close()
+            # Снимки
+            cursor.execute('SELECT COUNT(*) as cnt FROM snapshots')
+            snapshots_count = cursor.fetchone()['cnt']
 
         return {
             'bonds_count': bonds_count,
@@ -298,47 +294,44 @@ class DatabaseFacade:
         Returns:
             True если сохранено успешно
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-        
         try:
-            pair_key = f"{result['bond1_isin']}-{result['bond2_isin']}"
-            # Сортируем ISIN для key
-            isins = sorted([result['bond1_isin'], result['bond2_isin']])
-            pair_key = f"{isins[0]}-{isins[1]}"
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                pair_key = f"{result['bond1_isin']}-{result['bond2_isin']}"
+                # Сортируем ISIN для key
+                isins = sorted([result['bond1_isin'], result['bond2_isin']])
+                pair_key = f"{isins[0]}-{isins[1]}"
+                
+                cursor.execute('''
+                    INSERT OR REPLACE INTO cointegration_cache (
+                        bond1_isin, bond2_isin, pair_key,
+                        is_cointegrated, pvalue, half_life, hedge_ratio,
+                        data_days, adf_bond1_pvalue, adf_bond2_pvalue,
+                        both_nonstationary, low_data, error, checked_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    isins[0],
+                    isins[1],
+                    pair_key,
+                    1 if result.get('is_cointegrated') else 0,
+                    result.get('pvalue'),
+                    result.get('half_life'),
+                    result.get('hedge_ratio'),
+                    result.get('data_days', 0),
+                    result.get('adf_bond1_pvalue'),
+                    result.get('adf_bond2_pvalue'),
+                    1 if result.get('both_nonstationary') else 0,
+                    1 if result.get('low_data') else 0,
+                    result.get('error'),
+                    result.get('checked_at', datetime.now().isoformat())
+                ))
             
-            cursor.execute('''
-                INSERT OR REPLACE INTO cointegration_cache (
-                    bond1_isin, bond2_isin, pair_key,
-                    is_cointegrated, pvalue, half_life, hedge_ratio,
-                    data_days, adf_bond1_pvalue, adf_bond2_pvalue,
-                    both_nonstationary, low_data, error, checked_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                isins[0],
-                isins[1],
-                pair_key,
-                1 if result.get('is_cointegrated') else 0,
-                result.get('pvalue'),
-                result.get('half_life'),
-                result.get('hedge_ratio'),
-                result.get('data_days', 0),
-                result.get('adf_bond1_pvalue'),
-                result.get('adf_bond2_pvalue'),
-                1 if result.get('both_nonstationary') else 0,
-                1 if result.get('low_data') else 0,
-                result.get('error'),
-                result.get('checked_at', datetime.now().isoformat())
-            ))
-            
-            conn.commit()
             return True
             
         except Exception as e:
             logger.error(f"Ошибка сохранения коинтеграции: {e}")
             return False
-        finally:
-            conn.close()
 
     def load_cointegration_result(self, isin1: str, isin2: str) -> Optional[Dict]:
         """
@@ -351,42 +344,38 @@ class DatabaseFacade:
         Returns:
             Словарь с результатами или None
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-        
         try:
-            isins = sorted([isin1, isin2])
-            pair_key = f"{isins[0]}-{isins[1]}"
-            
-            cursor.execute('''
-                SELECT * FROM cointegration_cache WHERE pair_key = ?
-            ''', (pair_key,))
-            
-            row = cursor.fetchone()
-            
-            if row:
-                return {
-                    'bond1_isin': row['bond1_isin'],
-                    'bond2_isin': row['bond2_isin'],
-                    'is_cointegrated': bool(row['is_cointegrated']),
-                    'pvalue': row['pvalue'],
-                    'half_life': row['half_life'],
-                    'hedge_ratio': row['hedge_ratio'],
-                    'data_days': row['data_days'],
-                    'adf_bond1_pvalue': row['adf_bond1_pvalue'],
-                    'adf_bond2_pvalue': row['adf_bond2_pvalue'],
-                    'both_nonstationary': bool(row['both_nonstationary']),
-                    'low_data': bool(row['low_data']),
-                    'error': row['error'],
-                    'checked_at': row['checked_at']
-                }
-            return None
+            with get_db_cursor() as cursor:
+                isins = sorted([isin1, isin2])
+                pair_key = f"{isins[0]}-{isins[1]}"
+                
+                cursor.execute('''
+                    SELECT * FROM cointegration_cache WHERE pair_key = ?
+                ''', (pair_key,))
+                
+                row = cursor.fetchone()
+                
+                if row:
+                    return {
+                        'bond1_isin': row['bond1_isin'],
+                        'bond2_isin': row['bond2_isin'],
+                        'is_cointegrated': bool(row['is_cointegrated']),
+                        'pvalue': row['pvalue'],
+                        'half_life': row['half_life'],
+                        'hedge_ratio': row['hedge_ratio'],
+                        'data_days': row['data_days'],
+                        'adf_bond1_pvalue': row['adf_bond1_pvalue'],
+                        'adf_bond2_pvalue': row['adf_bond2_pvalue'],
+                        'both_nonstationary': bool(row['both_nonstationary']),
+                        'low_data': bool(row['low_data']),
+                        'error': row['error'],
+                        'checked_at': row['checked_at']
+                    }
+                return None
             
         except Exception as e:
             logger.error(f"Ошибка загрузки коинтеграции: {e}")
             return None
-        finally:
-            conn.close()
 
     def load_all_cointegration_results(self, max_age_hours: int = 24) -> Dict[str, Dict]:
         """
@@ -398,42 +387,38 @@ class DatabaseFacade:
         Returns:
             Словарь {pair_key: result}
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-        
         try:
-            cursor.execute('''
-                SELECT * FROM cointegration_cache 
-                WHERE datetime(checked_at) >= datetime('now', ?)
-            ''', (f'-{max_age_hours} hours',))
-            
-            rows = cursor.fetchall()
-            results = {}
-            
-            for row in rows:
-                results[row['pair_key']] = {
-                    'bond1_isin': row['bond1_isin'],
-                    'bond2_isin': row['bond2_isin'],
-                    'is_cointegrated': bool(row['is_cointegrated']),
-                    'pvalue': row['pvalue'],
-                    'half_life': row['half_life'],
-                    'hedge_ratio': row['hedge_ratio'],
-                    'data_days': row['data_days'],
-                    'adf_bond1_pvalue': row['adf_bond1_pvalue'],
-                    'adf_bond2_pvalue': row['adf_bond2_pvalue'],
-                    'both_nonstationary': bool(row['both_nonstationary']),
-                    'low_data': bool(row['low_data']),
-                    'error': row['error'],
-                    'checked_at': row['checked_at']
-                }
-            
-            return results
+            with get_db_cursor() as cursor:
+                cursor.execute('''
+                    SELECT * FROM cointegration_cache 
+                    WHERE datetime(checked_at) >= datetime('now', ?)
+                ''', (f'-{max_age_hours} hours',))
+                
+                rows = cursor.fetchall()
+                results = {}
+                
+                for row in rows:
+                    results[row['pair_key']] = {
+                        'bond1_isin': row['bond1_isin'],
+                        'bond2_isin': row['bond2_isin'],
+                        'is_cointegrated': bool(row['is_cointegrated']),
+                        'pvalue': row['pvalue'],
+                        'half_life': row['half_life'],
+                        'hedge_ratio': row['hedge_ratio'],
+                        'data_days': row['data_days'],
+                        'adf_bond1_pvalue': row['adf_bond1_pvalue'],
+                        'adf_bond2_pvalue': row['adf_bond2_pvalue'],
+                        'both_nonstationary': bool(row['both_nonstationary']),
+                        'low_data': bool(row['low_data']),
+                        'error': row['error'],
+                        'checked_at': row['checked_at']
+                    }
+                
+                return results
             
         except Exception as e:
             logger.error(f"Ошибка загрузки всех результатов: {e}")
             return {}
-        finally:
-            conn.close()
 
     def get_cointegrated_pairs(self) -> List[Dict]:
         """
@@ -442,39 +427,35 @@ class DatabaseFacade:
         Returns:
             Список пар с is_cointegrated = True
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-        
         try:
-            cursor.execute('''
-                SELECT * FROM cointegration_cache 
-                WHERE is_cointegrated = 1
-                ORDER BY pvalue ASC
-            ''')
-            
-            rows = cursor.fetchall()
-            results = []
-            
-            for row in rows:
-                results.append({
-                    'bond1_isin': row['bond1_isin'],
-                    'bond2_isin': row['bond2_isin'],
-                    'pair_key': row['pair_key'],
-                    'pvalue': row['pvalue'],
-                    'half_life': row['half_life'],
-                    'hedge_ratio': row['hedge_ratio'],
-                    'data_days': row['data_days'],
-                    'low_data': bool(row['low_data']),
-                    'checked_at': row['checked_at']
-                })
-            
-            return results
+            with get_db_cursor() as cursor:
+                cursor.execute('''
+                    SELECT * FROM cointegration_cache 
+                    WHERE is_cointegrated = 1
+                    ORDER BY pvalue ASC
+                ''')
+                
+                rows = cursor.fetchall()
+                results = []
+                
+                for row in rows:
+                    results.append({
+                        'bond1_isin': row['bond1_isin'],
+                        'bond2_isin': row['bond2_isin'],
+                        'pair_key': row['pair_key'],
+                        'pvalue': row['pvalue'],
+                        'half_life': row['half_life'],
+                        'hedge_ratio': row['hedge_ratio'],
+                        'data_days': row['data_days'],
+                        'low_data': bool(row['low_data']),
+                        'checked_at': row['checked_at']
+                    })
+                
+                return results
             
         except Exception as e:
             logger.error(f"Ошибка получения коинтегрированных пар: {e}")
             return []
-        finally:
-            conn.close()
 
     def clear_cointegration_cache(
         self,
@@ -493,36 +474,34 @@ class DatabaseFacade:
         Returns:
             Количество удалённых записей
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-
         try:
-            if bond1_isin and bond2_isin:
-                isins = sorted([bond1_isin, bond2_isin])
-                if period_days:
-                    cursor.execute('''
-                        DELETE FROM cointegration_cache
-                        WHERE bond1_isin = ? AND bond2_isin = ? AND period_days = ?
-                    ''', (isins[0], isins[1], period_days))
-                else:
-                    cursor.execute('''
-                        DELETE FROM cointegration_cache
-                        WHERE bond1_isin = ? AND bond2_isin = ?
-                    ''', (isins[0], isins[1]))
-            elif period_days:
-                cursor.execute('DELETE FROM cointegration_cache WHERE period_days = ?', (period_days,))
-            else:
-                cursor.execute('DELETE FROM cointegration_cache')
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
 
-            deleted = cursor.rowcount
-            conn.commit()
+                if bond1_isin and bond2_isin:
+                    isins = sorted([bond1_isin, bond2_isin])
+                    if period_days:
+                        cursor.execute('''
+                            DELETE FROM cointegration_cache
+                            WHERE bond1_isin = ? AND bond2_isin = ? AND period_days = ?
+                        ''', (isins[0], isins[1], period_days))
+                    else:
+                        cursor.execute('''
+                            DELETE FROM cointegration_cache
+                            WHERE bond1_isin = ? AND bond2_isin = ?
+                        ''', (isins[0], isins[1]))
+                elif period_days:
+                    cursor.execute('DELETE FROM cointegration_cache WHERE period_days = ?', (period_days,))
+                else:
+                    cursor.execute('DELETE FROM cointegration_cache')
+
+                deleted = cursor.rowcount
+
             return deleted
 
         except Exception as e:
             logger.error(f"Ошибка очистки кэша коинтеграции: {e}")
             return 0
-        finally:
-            conn.close()
 
     # ==========================================
     # СТАРЫЙ API КОИНТЕГРАЦИИ (для совместимости)
@@ -611,36 +590,33 @@ class DatabaseFacade:
         if df.empty:
             return 0
         
-        conn = get_connection()
-        cursor = conn.cursor()
-        
         saved_count = 0
         
-        for idx, row in df.iterrows():
-            try:
-                if isinstance(idx, pd.Timestamp):
-                    dt_str = idx.strftime('%Y-%m-%d %H:%M:%S')
-                else:
-                    dt_str = str(idx)
-                
-                cursor.execute('''
-                    INSERT OR REPLACE INTO candles 
-                    (isin, interval, datetime, open, high, low, close, volume, 
-                     ytm_open, ytm_high, ytm_low, ytm_close)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    isin, interval, dt_str,
-                    row.get('open'), row.get('high'), row.get('low'),
-                    row.get('close'), row.get('volume'),
-                    None, None, None, row.get('ytm_close')
-                ))
-                saved_count += 1
-                
-            except Exception as e:
-                logger.warning(f"Ошибка сохранения свечи {dt_str}: {e}")
-        
-        conn.commit()
-        conn.close()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            for idx, row in df.iterrows():
+                try:
+                    if isinstance(idx, pd.Timestamp):
+                        dt_str = idx.strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        dt_str = str(idx)
+                    
+                    cursor.execute('''
+                        INSERT OR REPLACE INTO candles 
+                        (isin, interval, datetime, open, high, low, close, volume, 
+                         ytm_open, ytm_high, ytm_low, ytm_close)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        isin, interval, dt_str,
+                        row.get('open'), row.get('high'), row.get('low'),
+                        row.get('close'), row.get('volume'),
+                        None, None, None, row.get('ytm_close')
+                    ))
+                    saved_count += 1
+                    
+                except Exception as e:
+                    logger.warning(f"Ошибка сохранения свечи {dt_str}: {e}")
         
         logger.info(f"Сохранено {saved_count} свечей для {isin} (interval={interval})")
         return saved_count
@@ -653,28 +629,26 @@ class DatabaseFacade:
         end_date: Optional[date] = None
     ) -> pd.DataFrame:
         """Загрузить свечи из БД"""
-        conn = get_connection()
-        
-        query = '''
-            SELECT datetime, open, high, low, close, volume,
-                   ytm_close
-            FROM candles
-            WHERE isin = ? AND interval = ?
-        '''
-        params = [isin, interval]
-        
-        if start_date:
-            query += ' AND datetime >= ?'
-            params.append(start_date.strftime('%Y-%m-%d'))
-        
-        if end_date:
-            query += ' AND datetime <= ?'
-            params.append(end_date.strftime('%Y-%m-%d 23:59:59'))
-        
-        query += ' ORDER BY datetime'
-        
-        df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
+        with get_db_connection() as conn:
+            query = '''
+                SELECT datetime, open, high, low, close, volume,
+                       ytm_close
+                FROM candles
+                WHERE isin = ? AND interval = ?
+            '''
+            params = [isin, interval]
+            
+            if start_date:
+                query += ' AND datetime >= ?'
+                params.append(start_date.strftime('%Y-%m-%d'))
+            
+            if end_date:
+                query += ' AND datetime <= ?'
+                params.append(end_date.strftime('%Y-%m-%d 23:59:59'))
+            
+            query += ' ORDER BY datetime'
+            
+            df = pd.read_sql_query(query, conn, params=params)
         
         if df.empty:
             return pd.DataFrame()
@@ -693,17 +667,14 @@ class DatabaseFacade:
         interval: str
     ) -> Optional[datetime]:
         """Получить дату/время последней свечи в БД"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT MAX(datetime) as last_dt
-            FROM candles
-            WHERE isin = ? AND interval = ?
-        ''', (isin, interval))
-        
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT MAX(datetime) as last_dt
+                FROM candles
+                WHERE isin = ? AND interval = ?
+            ''', (isin, interval))
+            
+            row = cursor.fetchone()
         
         if row and row['last_dt']:
             return datetime.strptime(row['last_dt'], '%Y-%m-%d %H:%M:%S')
@@ -715,17 +686,14 @@ class DatabaseFacade:
         interval: str
     ) -> int:
         """Получить количество свечей в БД"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT COUNT(*) as cnt
-            FROM candles
-            WHERE isin = ? AND interval = ?
-        ''', (isin, interval))
-        
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT COUNT(*) as cnt
+                FROM candles
+                WHERE isin = ? AND interval = ?
+            ''', (isin, interval))
+            
+            row = cursor.fetchone()
         
         return row['cnt'] if row else 0
 
@@ -748,20 +716,18 @@ class DatabaseFacade:
         p75: float = None
     ) -> int:
         """Сохранить снимок состояния"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO snapshots 
-            (isin_1, isin_2, interval, ytm_1, ytm_2, price_1, price_2, 
-             spread_bp, signal, p25, p75)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (isin_1, isin_2, interval, ytm_1, ytm_2, price_1, price_2,
-              spread_bp, signal, p25, p75))
-        
-        snapshot_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO snapshots 
+                (isin_1, isin_2, interval, ytm_1, ytm_2, price_1, price_2, 
+                 spread_bp, signal, p25, p75)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (isin_1, isin_2, interval, ytm_1, ytm_2, price_1, price_2,
+                  spread_bp, signal, p25, p75))
+            
+            snapshot_id = cursor.lastrowid
         
         return snapshot_id
     
@@ -773,19 +739,17 @@ class DatabaseFacade:
         hours: int = 24
     ) -> pd.DataFrame:
         """Загрузить снимки за последние N часов"""
-        conn = get_connection()
-        
-        since = (datetime.now() - timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
-        
-        query = '''
-            SELECT * FROM snapshots
-            WHERE isin_1 = ? AND isin_2 = ? AND interval = ?
-            AND timestamp >= ?
-            ORDER BY timestamp
-        '''
-        
-        df = pd.read_sql_query(query, conn, params=[isin_1, isin_2, interval, since])
-        conn.close()
+        with get_db_connection() as conn:
+            since = (datetime.now() - timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M:%S')
+            
+            query = '''
+                SELECT * FROM snapshots
+                WHERE isin_1 = ? AND isin_2 = ? AND interval = ?
+                AND timestamp >= ?
+                ORDER BY timestamp
+            '''
+            
+            df = pd.read_sql_query(query, conn, params=[isin_1, isin_2, interval, since])
         
         if not df.empty:
             df['timestamp'] = pd.to_datetime(df['timestamp'])
@@ -802,17 +766,15 @@ class DatabaseFacade:
         interval: str
     ) -> int:
         """Удалить intraday YTM данные для облигации"""
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            DELETE FROM intraday_ytm
-            WHERE isin = ? AND interval = ?
-        ''', (isin, interval))
-        
-        deleted = cursor.rowcount
-        conn.commit()
-        conn.close()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                DELETE FROM intraday_ytm
+                WHERE isin = ? AND interval = ?
+            ''', (isin, interval))
+            
+            deleted = cursor.rowcount
         
         if deleted > 0:
             logger.info(f"Удалено {deleted} intraday YTM для {isin} (interval={interval})")
@@ -829,32 +791,29 @@ class DatabaseFacade:
         Returns:
             Общее количество удалённых записей
         """
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        cutoff_date = (datetime.now() - timedelta(days=days_to_keep)).strftime('%Y-%m-%d')
-        
-        total_deleted = 0
-        
-        # Удаляем старые свечи
-        cursor.execute('DELETE FROM candles WHERE datetime < ?', (cutoff_date,))
-        total_deleted += cursor.rowcount
-        
-        # Удаляем старые intraday YTM
-        cursor.execute('DELETE FROM intraday_ytm WHERE datetime < ?', (cutoff_date,))
-        total_deleted += cursor.rowcount
-        
-        # Удаляем старые спреды
-        cursor.execute('DELETE FROM spreads WHERE datetime < ?', (cutoff_date,))
-        total_deleted += cursor.rowcount
-        
-        # Удаляем старые снимки
-        cutoff_datetime = (datetime.now() - timedelta(days=days_to_keep)).strftime('%Y-%m-%d %H:%M:%S')
-        cursor.execute('DELETE FROM snapshots WHERE timestamp < ?', (cutoff_datetime,))
-        total_deleted += cursor.rowcount
-        
-        conn.commit()
-        conn.close()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            cutoff_date = (datetime.now() - timedelta(days=days_to_keep)).strftime('%Y-%m-%d')
+            
+            total_deleted = 0
+            
+            # Удаляем старые свечи
+            cursor.execute('DELETE FROM candles WHERE datetime < ?', (cutoff_date,))
+            total_deleted += cursor.rowcount
+            
+            # Удаляем старые intraday YTM
+            cursor.execute('DELETE FROM intraday_ytm WHERE datetime < ?', (cutoff_date,))
+            total_deleted += cursor.rowcount
+            
+            # Удаляем старые спреды
+            cursor.execute('DELETE FROM spreads WHERE datetime < ?', (cutoff_date,))
+            total_deleted += cursor.rowcount
+            
+            # Удаляем старые снимки
+            cutoff_datetime = (datetime.now() - timedelta(days=days_to_keep)).strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute('DELETE FROM snapshots WHERE timestamp < ?', (cutoff_datetime,))
+            total_deleted += cursor.rowcount
         
         if total_deleted > 0:
             logger.info(f"Удалено {total_deleted} старых записей (старше {days_to_keep} дней)")
@@ -863,25 +822,22 @@ class DatabaseFacade:
 
     def vacuum(self):
         """Оптимизировать БД (VACUUM)"""
-        conn = get_connection()
-        conn.execute('VACUUM')
-        conn.close()
+        with get_db_connection() as conn:
+            conn.execute('VACUUM')
         logger.info("VACUUM выполнен")
 
     def clear_all_data(self):
         """Очистить все таблицы БД"""
-        conn = get_connection()
-        cursor = conn.cursor()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            tables = ['candles', 'daily_ytm', 'intraday_ytm', 'spreads', 'snapshots', 
+                      'cointegration_cache', 'ns_params', 'g_spreads', 'yearyields',
+                      'zcyc_cache', 'zcyc_empty_dates']
+            
+            for table in tables:
+                cursor.execute(f'DELETE FROM {table}')
         
-        tables = ['candles', 'daily_ytm', 'intraday_ytm', 'spreads', 'snapshots', 
-                  'cointegration_cache', 'ns_params', 'g_spreads', 'yearyields',
-                  'zcyc_cache', 'zcyc_empty_dates']
-        
-        for table in tables:
-            cursor.execute(f'DELETE FROM {table}')
-        
-        conn.commit()
-        conn.close()
         logger.info("Все данные очищены")
 
 
