@@ -659,18 +659,27 @@ def get_zcyc_history_parallel(
     dates_to_fetch = trading_days.copy()
 
     # Проверяем кэш
-    # ВАЖНО: Проверяем кэш ДЛЯ КОНКРЕТНОГО ISIN!
-    # MOEX ZCYC API возвращает данные для ВСЕХ облигаций сразу,
-    # но нам нужно знать: есть ли данные для ЭТОГО ISIN на эти даты?
-    # Если нет - загружаем (получим все облигации) и сохраняем все в БД
+    # ЛОГИКА:
+    # 1. Проверяем данные КОНКРЕТНО для ISIN - эти даты уже готовы
+    # 2. Проверяем ГЛОБАЛЬНЫЙ кэш - если дата есть для ЛЮБОЙ облигации,
+    #    значит торги были, но этот ISIN не торговался
+    # 3. Загружаем только даты, которых нет в ГЛОБАЛЬНОМ кэше
+    # 4. Сохраняем ВСЕ облигации, фильтруем только при возврате
     if use_cache:
         try:
             from core.db import get_g_spread_repo
             repo = get_g_spread_repo()
 
-            # Загружаем даты, для которых есть данные в кэше ДЛЯ ЭТОГО ISIN
-            cached_dates_for_isin = repo.get_zcyc_cached_dates(
-                isin=isin,  # Фильтруем по ISIN!
+            # Даты, для которых есть данные КОНКРЕТНО для этого ISIN
+            isin_cached_dates = repo.get_zcyc_cached_dates(
+                isin=isin,
+                start_date=start_date,
+                end_date=end_date
+            )
+
+            # Даты, для которых есть данные для ЛЮБОЙ облигации (глобальный кэш)
+            global_cached_dates = repo.get_zcyc_cached_dates(
+                isin=None,
                 start_date=start_date,
                 end_date=end_date
             )
@@ -681,14 +690,17 @@ def get_zcyc_history_parallel(
             if not cached_df.empty:
                 all_data.append(cached_df)
 
-            # Загружаем только те даты, которых нет в кэше ДЛЯ ЭТОГО ISIN
-            dates_to_fetch = [d for d in trading_days if d not in cached_dates_for_isin]
+            # Даты для загрузки = нет в ГЛОБАЛЬНОМ кэше (данные ещё не загружались)
+            dates_to_fetch = [d for d in trading_days if d not in global_cached_dates]
 
+            # Исключаем пустые даты (праздники, когда торгов не было)
             empty_dates = repo.load_empty_dates(start_date=start_date, end_date=end_date)
             if empty_dates:
                 dates_to_fetch = [d for d in dates_to_fetch if d not in empty_dates]
 
-            logger.info(f"Из кэша: {len(cached_df)} записей для {isin}, дат в кэше для ISIN: {len(cached_dates_for_isin)}, нужно загрузить: {len(dates_to_fetch)} дней")
+            # Статистика для лога
+            dates_isin_not_traded = len(global_cached_dates - isin_cached_dates)
+            logger.info(f"Кэш ISIN {isin}: {len(isin_cached_dates)} дат, глобально: {len(global_cached_dates)}, ISIN не торговался: {dates_isin_not_traded}, нужно загрузить: {len(dates_to_fetch)} дней")
         except Exception as e:
             logger.warning(f"Ошибка при чтении кэша: {e}")
 
