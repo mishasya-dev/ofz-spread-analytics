@@ -481,8 +481,12 @@ def init_database():
     # ==========================================
     # ТАБЛИЦА ZCYC_HISTORY_RAW (сырые данные ZCYC от MOEX)
     # ==========================================
-    # Переименовано из zcyc_cache для ясности
-    cursor.execute('DROP TABLE IF EXISTS zcyc_cache')  # Удаляем старую таблицу
+    # Миграция: переименование zcyc_cache -> zcyc_history_raw (один раз)
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='zcyc_cache'")
+    if cursor.fetchone() and not cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='zcyc_history_raw'").fetchone():
+        cursor.execute('ALTER TABLE zcyc_cache RENAME TO zcyc_history_raw')
+        logger.info("Миграция: zcyc_cache переименована в zcyc_history_raw")
+    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS zcyc_history_raw (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
