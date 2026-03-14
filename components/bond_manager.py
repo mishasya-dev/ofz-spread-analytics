@@ -362,6 +362,24 @@ def show_bond_manager_dialog():
                 del st.session_state[editor_key]
             st.session_state.cached_favorites_count = len(new_favorites)
             
+            # Обновляем bonds в session_state для текущей вкладки
+            # Это позволяет каждой вкладке иметь независимый список избранного
+            from config import BondConfig
+            updated_bonds = {}
+            for isin in new_favorites:
+                bond_data = next((b for b in bonds if b.get('isin') == isin), None)
+                if bond_data:
+                    updated_bonds[isin] = BondConfig(
+                        isin=isin,
+                        name=bond_data.get('name') or bond_data.get('short_name') or isin,
+                        maturity_date=bond_data.get('maturity_date'),
+                        coupon_rate=bond_data.get('coupon_rate'),
+                        duration_years=bond_data.get('duration_years'),
+                        duration_days=bond_data.get('duration_days'),
+                    )
+            st.session_state.bonds = updated_bonds
+            logger.info(f"Обновлено bonds в session_state: {len(updated_bonds)} избранное")
+            
             # Запускаем анализ коинтеграции для нового набора избранного
             if len(new_favorites) >= 2:
                 st.session_state.cointegration_needs_update = True
@@ -371,6 +389,25 @@ def show_bond_manager_dialog():
             if added_count or removed_count:
                 st.toast(f"✅ Добавлено: {added_count}, Убрано: {removed_count}")
             st.rerun()
+
+
+def refresh_favorites_from_db():
+    """
+    Принудительно обновить список избранного из БД.
+    Использовать для синхронизации между вкладками.
+    """
+    from core.db import get_db_facade
+    from config import BondConfig
+    
+    db = get_db_facade()
+    favorites = db.get_favorite_bonds_as_config()
+    
+    if favorites:
+        st.session_state.bonds = favorites
+        st.session_state.favorites_loaded = True
+        logger.info(f"Обновлено избранное из БД: {len(favorites)} облигаций")
+        return len(favorites)
+    return 0
 
 
 def render_bond_manager_button():

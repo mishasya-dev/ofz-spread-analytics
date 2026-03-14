@@ -182,26 +182,24 @@ def init_session_state():
     if 'config' not in st.session_state:
         st.session_state.config = AppConfig()
     
-    # Загрузка облигаций из БД
-    # При первом запуске OFZCache загрузит список с MOEX и пометит все как избранные
-    db = get_db_facade()
-    favorites = db.get_favorite_bonds_as_config()
-
-    if not favorites:
-        # Первый запуск - загружаем список ОФЗ с MOEX
-        # OFZCache пометит все как избранные при первой загрузке
-        from core.ofz_cache import OFZCache
-        cache = OFZCache()
-        cache.get_ofz_list()  # Загрузит и пометит все как избранные
+    # Загрузка облигаций из БД (только один раз при старте сессии)
+    # Это prevents конфликты между вкладками - каждая вкладка имеет свой список
+    if 'bonds' not in st.session_state or 'favorites_loaded' not in st.session_state:
+        db = get_db_facade()
         favorites = db.get_favorite_bonds_as_config()
-        logger.info(f"Первый запуск: загружено {len(favorites)} облигаций как избранные")
 
-    if favorites:
-        current_keys = set(st.session_state.get('bonds', {}).keys())
-        new_keys = set(favorites.keys())
-        if current_keys != new_keys:
-            st.session_state.bonds = favorites
-            logger.info(f"Обновлён список облигаций: {len(favorites)} избранное")
+        if not favorites:
+            # Первый запуск - загружаем список ОФЗ с MOEX
+            # OFZCache пометит все как избранные при первой загрузке
+            from core.ofz_cache import OFZCache
+            cache = OFZCache()
+            cache.get_ofz_list()  # Загрузит и пометит все как избранные
+            favorites = db.get_favorite_bonds_as_config()
+            logger.info(f"Первый запуск: загружено {len(favorites)} облигаций как избранные")
+
+        st.session_state.bonds = favorites
+        st.session_state.favorites_loaded = True
+        logger.info(f"Загружено облигаций: {len(favorites)} избранное")
     
     # Восстановление последней пары облигаций из localStorage
     if 'selected_bond1' not in st.session_state or 'selected_bond2' not in st.session_state:
@@ -557,8 +555,19 @@ def main():
         st.header("⚙️ Настройки")
         
         # Кнопка управления облигациями
-        from components.bond_manager import render_bond_manager_button
+        from components.bond_manager import render_bond_manager_button, refresh_favorites_from_db
         render_bond_manager_button()
+        
+        # Кнопка обновления избранного (для синхронизации между вкладками)
+        col_refresh, col_count = st.columns([1, 2])
+        with col_refresh:
+            if st.button("🔄", help="Обновить избранное из БД"):
+                count = refresh_favorites_from_db()
+                if count > 0:
+                    st.toast(f"✅ Загружено {count} облигаций")
+                st.rerun()
+        with col_count:
+            st.caption(f"⭐ {len(st.session_state.get('bonds', {}))} облигаций")
         
         st.divider()
         
