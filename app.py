@@ -36,6 +36,11 @@ from services.g_spread_calculator import (
     calculate_g_spread_stats,
     generate_g_spread_signal
 )
+from services.spread_calculator import (
+    calculate_spread_stats,
+    generate_signal,
+    prepare_spread_dataframe
+)
 from core.db import get_g_spread_repo, init_database
 from version import format_version_badge
 from core.cointegration import CointegrationAnalyzer, format_cointegration_report
@@ -787,59 +792,6 @@ def calculate_bond_g_spread(
     return result_df, p_value
 
 
-def calculate_spread_stats(spread_series: pd.Series) -> Dict:
-    """Вычисляет статистику спреда"""
-    if spread_series.empty:
-        return {}
-    
-    # Удаляем NaN для статистики
-    clean_series = spread_series.dropna()
-    
-    if clean_series.empty:
-        return {}
-    
-    return {
-        'mean': clean_series.mean(),
-        'median': clean_series.median(),
-        'std': clean_series.std(),
-        'min': clean_series.min(),
-        'max': clean_series.max(),
-        'p10': clean_series.quantile(0.10),
-        'p25': clean_series.quantile(0.25),
-        'p75': clean_series.quantile(0.75),
-        'p90': clean_series.quantile(0.90),
-        'current': clean_series.iloc[-1] if len(clean_series) > 0 else 0
-    }
-
-
-def generate_signal(current_spread: float, p10: float, p25: float, p75: float, p90: float) -> Dict:
-    """Генерирует торговый сигнал"""
-    if current_spread < p25:
-        return {
-            'signal': 'SELL_BUY',
-            'action': 'ПРОДАТЬ Облигацию 1, КУПИТЬ Облигацию 2',
-            'reason': f'Спред {current_spread:.2f} б.п. ниже P25 ({p25:.2f} б.п.)',
-            'color': '#FF6B6B',
-            'strength': 'Сильный' if current_spread < p10 else 'Средний'
-        }
-    elif current_spread > p75:
-        return {
-            'signal': 'BUY_SELL',
-            'action': 'КУПИТЬ Облигацию 1, ПРОДАТЬ Облигацию 2',
-            'reason': f'Спред {current_spread:.2f} б.п. выше P75 ({p75:.2f} б.п.)',
-            'color': '#4ECDC4',
-            'strength': 'Сильный' if current_spread > p90 else 'Средний'
-        }
-    else:
-        return {
-            'signal': 'NEUTRAL',
-            'action': 'Удерживать позиции',
-            'reason': f'Спред {current_spread:.2f} б.п. в диапазоне [P25={p25:.2f}, P75={p75:.2f}]',
-            'color': '#95A5A6',
-            'strength': 'Нет сигнала'
-        }
-
-
 def bond_config_to_dict(bond) -> Dict:
     """Конвертировать BondConfig в словарь для кэширования"""
     return {
@@ -852,44 +804,6 @@ def bond_config_to_dict(bond) -> Dict:
         'issue_date': bond.issue_date,
         'day_count_convention': getattr(bond, 'day_count_convention', 'ACT/ACT')
     }
-
-
-def prepare_spread_dataframe(df1: pd.DataFrame, df2: pd.DataFrame, is_intraday: bool = False) -> pd.DataFrame:
-    """Подготовить DataFrame со спредом"""
-    if df1.empty or df2.empty:
-        return pd.DataFrame()
-    
-    ytm_col = 'ytm_close' if is_intraday else 'ytm'
-    
-    if ytm_col not in df1.columns or ytm_col not in df2.columns:
-        return pd.DataFrame()
-    
-    # Удаляем дубликаты в индексах перед объединением
-    df1_clean = df1[~df1.index.duplicated(keep='last')][[ytm_col]].copy()
-    df2_clean = df2[~df2.index.duplicated(keep='last')][[ytm_col]].copy()
-    
-    # Объединяем по индексу с помощью join
-    merged = df1_clean.join(df2_clean, lsuffix='_1', rsuffix='_2', how='inner')
-    
-    # Переименовываем колонки
-    merged.columns = ['ytm1', 'ytm2']
-    
-    # Удаляем NaN
-    merged = merged.dropna()
-    
-    if merged.empty:
-        return pd.DataFrame()
-    
-    # Спред в базисных пунктах
-    merged['spread'] = (merged['ytm1'] - merged['ytm2']) * 100
-    
-    # Добавляем колонки для графиков
-    if is_intraday:
-        merged['datetime'] = merged.index
-    else:
-        merged['date'] = merged.index
-    
-    return merged
 
 
 def update_database_full(bonds_list: List = None, progress_callback=None) -> Dict:
