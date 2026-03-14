@@ -1399,6 +1399,11 @@ def main():
         - G-spread > 0: Облигация дороже кривой → ПРОДАЖА
         """)
         
+        # Проверка на одинаковые облигации
+        same_bonds = (bond1.isin == bond2.isin)
+        if same_bonds:
+            st.info(f"📊 Показан G-spread для одной облигации: **{bond1.name}**")
+        
         try:
             # Рассчитываем G-spread для обеих облигаций
             # Используем точные данные MOEX (trdyield - clcyield)
@@ -1408,17 +1413,22 @@ def main():
                 window=st.session_state.g_spread_window,
                 zcyc_period=st.session_state.g_spread_period
             )
-            g_spread_df2, p_value2 = calculate_bond_g_spread(
-                bond2.isin, g_spread_df2_raw, pd.DataFrame(),
-                window=st.session_state.g_spread_window,
-                zcyc_period=st.session_state.g_spread_period
-            )
+            
+            # Если облигации одинаковые, не загружаем данные дважды
+            if same_bonds:
+                g_spread_df2 = pd.DataFrame()  # Пустой, чтобы не дублировать
+                p_value2 = 1.0
+            else:
+                g_spread_df2, p_value2 = calculate_bond_g_spread(
+                    bond2.isin, g_spread_df2_raw, pd.DataFrame(),
+                    window=st.session_state.g_spread_window,
+                    zcyc_period=st.session_state.g_spread_period
+                )
             
             # Метрики G-spread
             if not g_spread_df1.empty or not g_spread_df2.empty:
-                col_gs1, col_gs2 = st.columns(2)
-                
-                with col_gs1:
+                # При одинаковых облигациях показываем только одну метрику
+                if same_bonds:
                     if not g_spread_df1.empty:
                         gs1_series = g_spread_df1['g_spread_bp']
                         if isinstance(gs1_series, pd.DataFrame):
@@ -1438,30 +1448,54 @@ def main():
                             delta=f"Mean: {stats1.get('mean', 0):.1f}"
                         )
                         st.markdown(f"<span style='color:{signal1['color']}'>{signal1['signal']}: {signal1['action']}</span>", unsafe_allow_html=True)
+                else:
+                    # Разные облигации - показываем две метрики
+                    col_gs1, col_gs2 = st.columns(2)
+                    
+                    with col_gs1:
+                        if not g_spread_df1.empty:
+                            gs1_series = g_spread_df1['g_spread_bp']
+                            if isinstance(gs1_series, pd.DataFrame):
+                                gs1_series = gs1_series.iloc[:, 0]
+                            stats1 = calculate_g_spread_stats(gs1_series)
+                            current_gs1 = stats1.get('current', 0)
+                            signal1 = generate_g_spread_signal(
+                                current_gs1, 
+                                stats1.get('p10', -50), 
+                                stats1.get('p25', -25), 
+                                stats1.get('p75', 25), 
+                                stats1.get('p90', 50)
+                            )
+                            st.metric(
+                                f"G-Spread {bond1.name}", 
+                                f"{current_gs1:.1f} б.п.",
+                                delta=f"Mean: {stats1.get('mean', 0):.1f}"
+                            )
+                            st.markdown(f"<span style='color:{signal1['color']}'>{signal1['signal']}: {signal1['action']}</span>", unsafe_allow_html=True)
+                    
+                    with col_gs2:
+                        if not g_spread_df2.empty:
+                            gs2_series = g_spread_df2['g_spread_bp']
+                            if isinstance(gs2_series, pd.DataFrame):
+                                gs2_series = gs2_series.iloc[:, 0]
+                            stats2 = calculate_g_spread_stats(gs2_series)
+                            current_gs2 = stats2.get('current', 0)
+                            signal2 = generate_g_spread_signal(
+                                current_gs2, 
+                                stats2.get('p10', -50), 
+                                stats2.get('p25', -25), 
+                                stats2.get('p75', 25), 
+                                stats2.get('p90', 50)
+                            )
+                            st.metric(
+                                f"G-Spread {bond2.name}", 
+                                f"{current_gs2:.1f} б.п.",
+                                delta=f"Mean: {stats2.get('mean', 0):.1f}"
+                            )
+                            st.markdown(f"<span style='color:{signal2['color']}'>{signal2['signal']}: {signal2['action']}</span>", unsafe_allow_html=True)
                 
-                with col_gs2:
-                    if not g_spread_df2.empty:
-                        gs2_series = g_spread_df2['g_spread_bp']
-                        if isinstance(gs2_series, pd.DataFrame):
-                            gs2_series = gs2_series.iloc[:, 0]
-                        stats2 = calculate_g_spread_stats(gs2_series)
-                        current_gs2 = stats2.get('current', 0)
-                        signal2 = generate_g_spread_signal(
-                            current_gs2, 
-                            stats2.get('p10', -50), 
-                            stats2.get('p25', -25), 
-                            stats2.get('p75', 25), 
-                            stats2.get('p90', 50)
-                        )
-                        st.metric(
-                            f"G-Spread {bond2.name}", 
-                            f"{current_gs2:.1f} б.п.",
-                            delta=f"Mean: {stats2.get('mean', 0):.1f}"
-                        )
-                        st.markdown(f"<span style='color:{signal2['color']}'>{signal2['signal']}: {signal2['action']}</span>", unsafe_allow_html=True)
-                
-                # Подготовка данных для дашборда
-                if not g_spread_df1.empty and not g_spread_df2.empty:
+                # Подготовка данных для дашборда (БЕЗ дубликатов при same_bonds)
+                if not g_spread_df1.empty and (same_bonds or not g_spread_df2.empty):
                     df_res = pd.DataFrame()
                     
                     # Облигация 1
@@ -1470,40 +1504,54 @@ def main():
                     df1_data['ytm'] = df1_data['ytm_bond']
                     df1_data['ytm_theor'] = df1_data['ytm_kbd']
                     df1_data['g_spread'] = df1_data['g_spread_bp']
-                    # Используем уже рассчитанный rolling Z-score (зависит от g_spread_window)
                     df1_data['zscore'] = df1_data['z_score']
                     
-                    # Облигация 2
-                    df2_data = g_spread_df2.reset_index()
-                    df2_data['ticker'] = bond2.name
-                    df2_data['ytm'] = df2_data['ytm_bond']
-                    df2_data['ytm_theor'] = df2_data['ytm_kbd']
-                    df2_data['g_spread'] = df2_data['g_spread_bp']
-                    # Используем уже рассчитанный rolling Z-score (зависит от g_spread_window)
-                    df2_data['zscore'] = df2_data['z_score']
-                    
-                    df_res = pd.concat([df1_data, df2_data], ignore_index=True)
+                    if not same_bonds and not g_spread_df2.empty:
+                        # Облигация 2 (только если разные)
+                        df2_data = g_spread_df2.reset_index()
+                        df2_data['ticker'] = bond2.name
+                        df2_data['ytm'] = df2_data['ytm_bond']
+                        df2_data['ytm_theor'] = df2_data['ytm_kbd']
+                        df2_data['g_spread'] = df2_data['g_spread_bp']
+                        df2_data['zscore'] = df2_data['z_score']
+                        
+                        df_res = pd.concat([df1_data, df2_data], ignore_index=True)
+                    else:
+                        df_res = df1_data
                     
                     # График G-spread дашборд
                     fig_g_spread = create_g_spread_dashboard(df_res, z_threshold=st.session_state.g_spread_z_threshold)
                     st.plotly_chart(fig_g_spread, width='stretch', key=f'g_spread_dashboard_{bond1.isin}_{bond2.isin}')
                     
                     # График отдельных G-spread
-                    col_chart1, col_chart2 = st.columns(2)
-                    with col_chart1:
-                        fig_gs1 = create_g_spread_chart_single(
-                            g_spread_df1, bond1.name, stats1, p_value1,
-                            window=st.session_state.g_spread_window,
-                            z_threshold=st.session_state.g_spread_z_threshold
-                        )
-                        st.plotly_chart(fig_gs1, width='stretch', key=f'g_spread_chart1_{bond1.isin}')
-                    with col_chart2:
-                        fig_gs2 = create_g_spread_chart_single(
-                            g_spread_df2, bond2.name, stats2, p_value2,
-                            window=st.session_state.g_spread_window,
-                            z_threshold=st.session_state.g_spread_z_threshold
-                        )
-                        st.plotly_chart(fig_gs2, width='stretch', key=f'g_spread_chart2_{bond2.isin}')
+                    if same_bonds:
+                        # Только один график
+                        if not g_spread_df1.empty:
+                            fig_gs1 = create_g_spread_chart_single(
+                                g_spread_df1, bond1.name, stats1, p_value1,
+                                window=st.session_state.g_spread_window,
+                                z_threshold=st.session_state.g_spread_z_threshold
+                            )
+                            st.plotly_chart(fig_gs1, width='stretch', key=f'g_spread_chart1_{bond1.isin}')
+                    else:
+                        # Два графика
+                        col_chart1, col_chart2 = st.columns(2)
+                        with col_chart1:
+                            if not g_spread_df1.empty:
+                                fig_gs1 = create_g_spread_chart_single(
+                                    g_spread_df1, bond1.name, stats1, p_value1,
+                                    window=st.session_state.g_spread_window,
+                                    z_threshold=st.session_state.g_spread_z_threshold
+                                )
+                                st.plotly_chart(fig_gs1, width='stretch', key=f'g_spread_chart1_{bond1.isin}')
+                        with col_chart2:
+                            if not g_spread_df2.empty:
+                                fig_gs2 = create_g_spread_chart_single(
+                                    g_spread_df2, bond2.name, stats2, p_value2,
+                                    window=st.session_state.g_spread_window,
+                                    z_threshold=st.session_state.g_spread_z_threshold
+                                )
+                                st.plotly_chart(fig_gs2, width='stretch', key=f'g_spread_chart2_{bond2.isin}')
             
             elif g_spread_df1.empty and g_spread_df2.empty:
                 st.warning("⚠️ Данные G-spread не найдены на MOEX ZCYC API")
