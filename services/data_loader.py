@@ -240,7 +240,7 @@ def fetch_candle_data(
 
 
 def update_database_full(
-    bonds_list: list,
+    bonds_list: list = None,
     progress_callback=None
 ) -> Dict:
     """
