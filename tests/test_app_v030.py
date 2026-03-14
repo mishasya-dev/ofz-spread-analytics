@@ -350,43 +350,49 @@ class TestFormatBondLabel:
     
     def test_format_with_all_data(self):
         """Полная метка с YTM и дюрацией"""
-        from app import format_bond_label
+        from utils.bond_utils import BondItem
         
-        bond = Mock(
-            isin='RU000A1038V6',
-            name='ОФЗ 26240'
-        )
+        bond = BondItem({
+            'isin': 'RU000A1038V6',
+            'name': 'ОФЗ 26240',
+            'maturity_date': '2040-05-16'
+        })
         
-        result = format_bond_label(bond, ytm=14.5, duration_years=15.5)
+        result = bond.format_label(ytm=14.5, duration_years=15.5)
         
         assert 'ОФЗ 26240' in result
-        assert '14.5' in result or '14,5' in result
+        assert '14.50%' in result
+        assert '15.5г.' in result
     
     def test_format_without_ytm(self):
         """Метка без YTM"""
-        from app import format_bond_label
+        from utils.bond_utils import BondItem
         
-        bond = Mock(
-            isin='RU000A1038V6',
-            name='ОФЗ 26240'
-        )
+        bond = BondItem({
+            'isin': 'RU000A1038V6',
+            'name': 'ОФЗ 26240',
+            'maturity_date': '2040-05-16'
+        })
         
-        result = format_bond_label(bond, ytm=None, duration_years=15.5)
+        result = bond.format_label(ytm=None, duration_years=15.5)
         
         assert 'ОФЗ 26240' in result
+        assert 'YTM' not in result
     
     def test_format_without_duration(self):
         """Метка без дюрации"""
-        from app import format_bond_label
+        from utils.bond_utils import BondItem
         
-        bond = Mock(
-            isin='RU000A1038V6',
-            name='ОФЗ 26240'
-        )
+        bond = BondItem({
+            'isin': 'RU000A1038V6',
+            'name': 'ОФЗ 26240',
+            'maturity_date': '2040-05-16'
+        })
         
-        result = format_bond_label(bond, ytm=14.5, duration_years=None)
+        result = bond.format_label(ytm=14.5, duration_years=None)
         
         assert 'ОФЗ 26240' in result
+        assert 'Дюр' not in result
 
 
 # ============================================

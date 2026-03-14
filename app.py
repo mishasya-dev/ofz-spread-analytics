@@ -71,6 +71,13 @@ from utils.action_logger import (
     log_action,
     LogBlock
 )
+from utils.bond_utils import (
+    BondItem,
+    get_years_to_maturity,
+    format_bond_label,
+    get_bonds_list as get_bonds_list_from_dict,
+    bond_config_to_dict
+)
 
 
 def log_button_press(button_name: str, details: str = None):
@@ -162,30 +169,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-def get_years_to_maturity(maturity_str: str) -> float:
-    """Вычисляет годы до погашения"""
-    try:
-        maturity = datetime.strptime(maturity_str, '%Y-%m-%d')
-        return round((maturity - datetime.now()).days / 365.25, 1)
-    except (ValueError, TypeError):
-        return 0
-
-
-def format_bond_label(bond, ytm: float = None, duration_years: float = None) -> str:
-    """Форматирует метку облигации с YTM, дюрацией и годами до погашения"""
-    years = get_years_to_maturity(bond.maturity_date)
-    display_name = bond.name or getattr(bond, 'short_name', None) or bond.isin
-    parts = [f"{display_name}"]
-    
-    if ytm is not None:
-        parts.append(f"YTM: {ytm:.2f}%")
-    if duration_years is not None:
-        parts.append(f"Дюр: {duration_years:.1f}г.")
-    parts.append(f"{years}г. до погашения")
-    
-    return " | ".join(parts)
-
-
 def init_session_state():
     """Инициализация состояния сессии"""
     # Инициализация БД (создание таблиц при необходимости)
@@ -269,23 +252,10 @@ def init_session_state():
         st.session_state.ytm_validation = None
 
 
-def get_bonds_list() -> List:
+def get_bonds_list() -> List[BondItem]:
     """Получить список облигаций для отображения"""
     bonds_dict = st.session_state.get('bonds', {})
-    
-    class BondItem:
-        def __init__(self, data):
-            self.isin = data.get('isin')
-            self.name = data.get('name') or data.get('short_name') or data.get('isin', '')
-            self.short_name = data.get('short_name', '')
-            self.maturity_date = data.get('maturity_date', '')
-            self.coupon_rate = data.get('coupon_rate')
-            self.face_value = data.get('face_value', 1000)
-            self.coupon_frequency = data.get('coupon_frequency', 2)
-            self.issue_date = data.get('issue_date', '')
-            self.day_count_convention = data.get('day_count_convention', 'ACT/ACT')
-    
-    return [BondItem(bond_data) for bond_data in bonds_dict.values()]
+    return get_bonds_list_from_dict(bonds_dict)
 
 
 # MOEXClient кэшируется как resource
@@ -749,20 +719,6 @@ def calculate_bond_g_spread(
     # zcyc_history_raw уже содержит все данные от MOEX
     
     return result_df, p_value
-
-
-def bond_config_to_dict(bond) -> Dict:
-    """Конвертировать BondConfig в словарь для кэширования"""
-    return {
-        'isin': bond.isin,
-        'name': bond.name,
-        'maturity_date': bond.maturity_date,
-        'coupon_rate': bond.coupon_rate,
-        'face_value': bond.face_value,
-        'coupon_frequency': bond.coupon_frequency,
-        'issue_date': bond.issue_date,
-        'day_count_convention': getattr(bond, 'day_count_convention', 'ACT/ACT')
-    }
 
 
 def update_database_full(bonds_list: List = None, progress_callback=None) -> Dict:

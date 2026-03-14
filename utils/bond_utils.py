@@ -154,3 +154,27 @@ def format_bond_label(
         Форматированная строка
     """
     return bond.format_label(ytm, duration_years)
+
+
+def bond_config_to_dict(bond) -> Dict[str, Any]:
+    """
+    Конвертировать объект облигации в словарь для кэширования.
+
+    Работает как с BondItem, так и с другими объектами облигаций.
+
+    Args:
+        bond: Объект облигации (BondItem, BondConfig или совместимый объект)
+
+    Returns:
+        Словарь с полями облигации
+    """
+    return {
+        'isin': bond.isin,
+        'name': bond.name,
+        'maturity_date': bond.maturity_date,
+        'coupon_rate': bond.coupon_rate,
+        'face_value': bond.face_value,
+        'coupon_frequency': bond.coupon_frequency,
+        'issue_date': bond.issue_date,
+        'day_count_convention': getattr(bond, 'day_count_convention', 'ACT/ACT')
+    }

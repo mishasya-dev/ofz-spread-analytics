@@ -2455,3 +2455,58 @@ tests/test_db_migration.py: 14/14 ✅
 ---
 
 *Миграция завершена: 08.03.2026*
+
+---
+## v0.9.x — Рефакторинг бизнес-логики (10.03.2026)
+
+### Выполненная работа
+
+#### Этап 3: Вынос бизнес-логики в utils/bond_utils.py
+
+**Удалены дубликаты из app.py:**
+- `get_years_to_maturity()` — удалён, импортируется из utils
+- `format_bond_label()` — удалён, импортируется из utils
+- `bond_config_to_dict()` — удалён, импортируется из utils
+- Инлайн-класс `BondItem` — удалён, используется класс из utils
+
+**Обновлённый импорт в app.py:**
+```python
+from utils.bond_utils import (
+    BondItem,
+    get_years_to_maturity,
+    format_bond_label,
+    get_bonds_list as get_bonds_list_from_dict,
+    bond_config_to_dict
+)
+```
+
+**Добавлена функция в utils/bond_utils.py:**
+```python
+def bond_config_to_dict(bond) -> Dict[str, Any]:
+    """Конвертировать объект облигации в словарь для кэширования."""
+```
+
+**Упрощённая функция в app.py:**
+```python
+def get_bonds_list() -> List[BondItem]:
+    """Получить список облигаций для отображения"""
+    bonds_dict = st.session_state.get('bonds', {})
+    return get_bonds_list_from_dict(bonds_dict)
+```
+
+### Преимущества
+
+1. **DRY (Don't Repeat Yourself)** — нет дублирования кода
+2. **Единая модель BondItem** — используется во всём проекте
+3. **Легче тестировать** — функции в utils не зависят от Streamlit
+4. **Лучше читаемость** — app.py стал короче на ~30 строк
+
+### Тесты
+
+```
+✅ utils/bond_utils.py — импорт работает
+✅ app.py — синтаксис корректен
+✅ Все функции протестированы
+```
+
+---

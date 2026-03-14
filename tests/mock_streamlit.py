@@ -42,7 +42,7 @@ class StreamlitMock:
         self.markdown = Mock()
         self.write = Mock()
     
-    def _cache_decorator(self, ttl=None):
+    def _cache_decorator(self, ttl=None, show_spinner=True, **kwargs):
         def decorator(func):
             return func
         return decorator

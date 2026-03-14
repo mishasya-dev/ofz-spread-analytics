@@ -27,21 +27,20 @@ from models.bond import Bond
 # ============================================
 
 @pytest.fixture
-def mock_fetcher():
-    """Мок CandleFetcher"""
-    fetcher = Mock()
-    fetcher.fetch_candles = Mock(return_value=pd.DataFrame())
-    fetcher.close = Mock()
-    return fetcher
-
-
-@pytest.fixture
 def mock_ytm_repo():
     """Мок YTMRepository"""
     repo = Mock()
     repo.load_intraday_ytm = Mock(return_value=pd.DataFrame())
     repo.save_intraday_ytm = Mock()
     return repo
+
+
+@pytest.fixture
+def mock_ytm_processor():
+    """Мок BondYTMProcessor"""
+    processor = Mock()
+    processor.add_ytm_to_candles = Mock(return_value=pd.DataFrame())
+    return processor
 
 
 @pytest.fixture
@@ -73,9 +72,9 @@ def sample_candles_df():
 
 
 @pytest.fixture
-def service(mock_fetcher, mock_ytm_repo):
+def service(mock_ytm_repo, mock_ytm_processor):
     """CandleService с моками"""
-    return CandleService(fetcher=mock_fetcher, ytm_repo=mock_ytm_repo)
+    return CandleService(ytm_repo=mock_ytm_repo, ytm_processor=mock_ytm_processor)
 
 
 # ============================================
@@ -85,26 +84,26 @@ def service(mock_fetcher, mock_ytm_repo):
 class TestCandleServiceInit:
     """Тесты инициализации"""
     
-    def test_init_with_fetcher_and_repo(self, mock_fetcher, mock_ytm_repo):
-        """Инициализация с fetcher и repo"""
-        service = CandleService(fetcher=mock_fetcher, ytm_repo=mock_ytm_repo)
+    def test_init_with_repo_and_processor(self, mock_ytm_repo, mock_ytm_processor):
+        """Инициализация с repo и processor"""
+        service = CandleService(ytm_repo=mock_ytm_repo, ytm_processor=mock_ytm_processor)
         
-        assert service._fetcher is mock_fetcher
         assert service._ytm_repo is mock_ytm_repo
+        assert service._ytm_processor is mock_ytm_processor
     
-    def test_init_without_fetcher(self, mock_ytm_repo):
-        """Инициализация без fetcher (ленивая загрузка)"""
+    def test_init_without_processor(self, mock_ytm_repo):
+        """Инициализация без processor (ленивая загрузка)"""
         service = CandleService(ytm_repo=mock_ytm_repo)
         
-        assert service._fetcher is None
-        # fetcher создаётся при обращении
-        assert service.fetcher is not None
+        assert service._ytm_processor is None
+        # processor создаётся при обращении
+        assert service.ytm_processor is not None
     
-    def test_init_without_repo(self, mock_fetcher):
+    def test_init_without_repo(self):
         """Инициализация без repo (создаётся по умолчанию)"""
         with patch('services.candle_service.YTMRepository') as MockRepo:
             MockRepo.return_value = Mock()
-            service = CandleService(fetcher=mock_fetcher)
+            service = CandleService()
             
             assert service._ytm_repo is not None
 
@@ -315,63 +314,6 @@ class TestExtractDate:
 
 
 # ============================================
-# TestFetchTodayCandles
-# ============================================
-
-class TestFetchTodayCandles:
-    """Тесты загрузки сегодняшних свечей"""
-    
-    def test_fetch_today_success(self, service, mock_fetcher, sample_bond, sample_candles_df):
-        """Успешная загрузка сегодняшних свечей"""
-        mock_fetcher.fetch_candles.return_value = sample_candles_df
-        
-        result = service._fetch_today_candles(sample_bond, "60")
-        
-        assert len(result) == 10
-        mock_fetcher.fetch_candles.assert_called_once()
-    
-    def test_fetch_today_exception(self, service, mock_fetcher, sample_bond):
-        """Обработка исключения при загрузке"""
-        mock_fetcher.fetch_candles.side_effect = Exception("API Error")
-        
-        result = service._fetch_today_candles(sample_bond, "60")
-        
-        assert result.empty
-
-
-# ============================================
-# TestFetchHistoryCandles
-# ============================================
-
-class TestFetchHistoryCandles:
-    """Тесты загрузки исторических свечей"""
-    
-    def test_fetch_history_success(self, service, mock_fetcher, sample_bond, sample_candles_df):
-        """Успешная загрузка исторических свечей"""
-        mock_fetcher.fetch_candles.return_value = sample_candles_df
-        
-        result = service._fetch_history_candles(
-            sample_bond,
-            "60",
-            start_date=date.today() - timedelta(days=7)
-        )
-        
-        assert len(result) == 10
-    
-    def test_fetch_history_exception(self, service, mock_fetcher, sample_bond):
-        """Обработка исключения при загрузке истории"""
-        mock_fetcher.fetch_candles.side_effect = Exception("API Error")
-        
-        result = service._fetch_history_candles(
-            sample_bond,
-            "60",
-            start_date=date.today() - timedelta(days=7)
-        )
-        
-        assert result.empty
-
-
-# ============================================
 # TestFillGaps
 # ============================================
 
@@ -408,13 +350,13 @@ class TestFillGaps:
 class TestClose:
     """Тесты закрытия соединений"""
     
-    def test_close_with_fetcher(self, service, mock_fetcher):
-        """Закрытие с fetcher"""
+    def test_close_does_not_raise(self, service):
+        """Закрытие не вызывает ошибку"""
+        # Не должно вызывать ошибку
         service.close()
-        mock_fetcher.close.assert_called_once()
     
-    def test_close_without_fetcher(self, mock_ytm_repo):
-        """Закрытие без fetcher не вызывает ошибку"""
-        service = CandleService(fetcher=None, ytm_repo=mock_ytm_repo)
+    def test_close_without_any_deps(self):
+        """Закрытие без зависимостей не вызывает ошибку"""
+        service = CandleService(ytm_repo=None, ytm_processor=None)
         # Не должно вызывать ошибку
         service.close()
