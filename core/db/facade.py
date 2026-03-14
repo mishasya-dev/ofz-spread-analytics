@@ -170,39 +170,6 @@ class DatabaseFacade:
     # МИГРАЦИЯ И СТАТИСТИКА
     # ==========================================
 
-    def migrate_config_bonds(self, bonds_config: Dict[str, Any]) -> int:
-        """
-        Мигрировать облигации из config.py в БД (только новые!).
-
-        Args:
-            bonds_config: Словарь {isin: BondConfig}
-
-        Returns:
-            Количество мигрированных облигаций
-        """
-        migrated = 0
-        for isin, bond in bonds_config.items():
-            # Проверяем, есть ли уже в БД
-            existing = self._bonds_repo.load(isin)
-            if existing:
-                continue  # Уже есть - пропускаем
-            
-            bond_data = {
-                'isin': isin,
-                'name': bond.name,
-                'short_name': getattr(bond, 'short_name', bond.name),
-                'coupon_rate': bond.coupon_rate,
-                'maturity_date': bond.maturity_date,
-                'issue_date': getattr(bond, 'issue_date', None),
-                'face_value': getattr(bond, 'face_value', 1000),
-                'coupon_frequency': getattr(bond, 'coupon_frequency', 2),
-                'day_count': getattr(bond, 'day_count_convention', 'ACT/ACT'),
-                'is_favorite': 1,  # По умолчанию все избранные
-            }
-            if self._bonds_repo.save(bond_data):
-                migrated += 1
-        return migrated
-
     def get_favorite_bonds_as_config(self) -> Dict[str, Any]:
         """
         Получить избранные облигации в формате config.py.

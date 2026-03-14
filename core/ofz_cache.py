@@ -232,17 +232,27 @@ class OFZCache:
         with get_db_connection() as conn:
             cursor = conn.cursor()
 
-            # Очищаем старые данные (кроме избранных)
-            cursor.execute('DELETE FROM bonds WHERE is_favorite = 0')
+            # Проверяем, пустая ли БД (первый запуск)
+            cursor.execute('SELECT COUNT(*) as cnt FROM bonds')
+            is_first_run = cursor.fetchone()['cnt'] == 0
 
-            # Получаем список избранных ISIN
-            cursor.execute('SELECT isin FROM bonds WHERE is_favorite = 1')
-            favorite_isins = {row['isin'] for row in cursor.fetchall()}
+            if is_first_run:
+                # Первый запуск - все облигации будут избранными
+                logger.info("Первый запуск: все облигации будут помечены как избранные")
+                favorite_isins = set()  # Не нужно, но для ясности
+            else:
+                # Очищаем старые данные (кроме избранных)
+                cursor.execute('DELETE FROM bonds WHERE is_favorite = 0')
+
+                # Получаем список избранных ISIN
+                cursor.execute('SELECT isin FROM bonds WHERE is_favorite = 1')
+                favorite_isins = {row['isin'] for row in cursor.fetchall()}
 
             count = 0
             for bond in bonds:
                 isin = bond.get('isin')
-                is_favorite = isin in favorite_isins
+                # При первом запуске - все избранные, иначе - проверяем наличие в избранном
+                is_favorite = is_first_run or (isin in favorite_isins)
 
                 cursor.execute('''
                     INSERT OR REPLACE INTO bonds (
@@ -269,7 +279,7 @@ class OFZCache:
                 ))
                 count += 1
 
-        logger.info(f"Сохранено {count} облигаций в кэш")
+        logger.info(f"Сохранено {count} облигаций в кэш (первый запуск: {is_first_run})")
         return count
 
     def _update_cache_metadata(self):

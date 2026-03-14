@@ -187,45 +187,8 @@ class BondsRepository:
         with get_db_cursor() as cursor:
             cursor.execute('SELECT COUNT(*) as cnt FROM bonds')
             row = cursor.fetchone()
-        
+
         return row['cnt'] if row else 0
-
-    def migrate_from_config(self, bonds_config: Dict[str, Any]) -> int:
-        """
-        Миграция облигаций из config.py в БД при первом запуске
-
-        Args:
-            bonds_config: Словарь облигаций из config.py (AppConfig.bonds)
-
-        Returns:
-            Количество мигрированных облигаций
-        """
-        if self.count() > 0:
-            logger.info("Облигации уже есть в БД, миграция не нужна")
-            return 0
-
-        migrated = 0
-
-        for isin, bond in bonds_config.items():
-            try:
-                self.save({
-                    'isin': isin,
-                    'name': getattr(bond, 'name', ''),
-                    'short_name': getattr(bond, 'name', ''),
-                    'coupon_rate': getattr(bond, 'coupon_rate', None),
-                    'maturity_date': getattr(bond, 'maturity_date', None),
-                    'issue_date': getattr(bond, 'issue_date', None),
-                    'face_value': getattr(bond, 'face_value', 1000),
-                    'coupon_frequency': getattr(bond, 'coupon_frequency', 2),
-                    'day_count': getattr(bond, 'day_count_convention', 'ACT/ACT'),
-                    'is_favorite': 1,
-                })
-                migrated += 1
-            except Exception as e:
-                logger.error(f"Ошибка миграции облигации {isin}: {e}")
-
-        logger.info(f"Мигрировано {migrated} облигаций из config.py")
-        return migrated
 
     def get_favorites_as_config(self) -> Dict[str, Any]:
         """

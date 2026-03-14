@@ -107,38 +107,23 @@ def init_session_state():
     if st.session_state.config is None:
         st.session_state.config = AppConfig()
     
-    # Миграция при первом запуске
-    if not st.session_state.bonds_loaded:
-        db = get_db_facade()
-        config = st.session_state.config
-        migrated = db.migrate_config_bonds(config.bonds)
-        if migrated > 0:
-            logger.info(f"Мигрировано {migrated} облигаций из config.py в БД")
-        st.session_state.bonds_loaded = True
-    
-    # Загрузка/обновление облигаций из БД
+    # Загрузка облигаций из БД
+    # При первом запуске OFZCache загрузит список с MOEX и пометит все как избранные
     db = get_db_facade()
     favorites = db.get_favorite_bonds_as_config()
-    
+
+    if not favorites:
+        # Первый запуск - загружаем список ОФЗ с MOEX
+        # OFZCache пометит все как избранные при первой загрузке
+        from core.ofz_cache import OFZCache
+        cache = OFZCache()
+        cache.get_ofz_list()  # Загрузит и пометит все как избранные
+        favorites = db.get_favorite_bonds_as_config()
+        logger.info(f"Первый запуск: загружено {len(favorites)} облигаций как избранные")
+
     if favorites:
         current_keys = set(st.session_state.get('bonds', {}).keys())
         new_keys = set(favorites.keys())
         if current_keys != new_keys:
             st.session_state.bonds = favorites
             logger.info(f"Обновлён список облигаций: {len(favorites)} избранное")
-    else:
-        if 'bonds' not in st.session_state or not st.session_state.bonds:
-            config = st.session_state.config
-            st.session_state.bonds = {
-                isin: {
-                    'isin': isin,
-                    'name': bond.name,
-                    'maturity_date': bond.maturity_date,
-                    'coupon_rate': bond.coupon_rate,
-                    'face_value': bond.face_value,
-                    'coupon_frequency': bond.coupon_frequency,
-                    'issue_date': bond.issue_date,
-                    'day_count_convention': getattr(bond, 'day_count_convention', 'ACT/ACT'),
-                }
-                for isin, bond in config.bonds.items()
-            }

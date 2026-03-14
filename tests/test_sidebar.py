@@ -1,13 +1,12 @@
 """
-Тесты для sidebar функционала v0.2.0
+Тесты для sidebar функционала v0.3.0
 
 Запуск:
     python3 tests/test_sidebar.py
 
 Тестирует:
-- Миграцию облигаций из config.py
 - Загрузку избранных облигаций для sidebar
-- Fallback на config.py при пустой БД
+- Управление избранными облигациями
 """
 import sys
 import os
@@ -44,118 +43,6 @@ def reset_db():
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('DELETE FROM bonds')
-
-
-# ==========================================
-# ТЕСТЫ МИГРАЦИИ
-# ==========================================
-
-class TestSidebarMigration:
-    """Тесты миграции облигаций из config.py в БД"""
-
-    def setup_method(self):
-        reset_db()
-
-    def test_migrate_marks_all_as_favorites(self):
-        """При миграции все облигации должны получить is_favorite=1"""
-        db = get_db()
-
-        # Создаём мок config.bonds (как в config.py)
-        class MockBondConfig:
-            def __init__(self, isin, name, maturity_date, coupon_rate):
-                self.isin = isin
-                self.name = name
-                self.maturity_date = maturity_date
-                self.coupon_rate = coupon_rate
-                self.face_value = 1000
-                self.coupon_frequency = 2
-                self.issue_date = "2020-01-01"
-                self.day_count_convention = "ACT/ACT"
-
-        bonds_config = {
-            "SU26221RMFS0": MockBondConfig("SU26221RMFS0", "ОФЗ 26221", "2033-03-23", 7.7),
-            "SU26225RMFS1": MockBondConfig("SU26225RMFS1", "ОФЗ 26225", "2034-05-10", 7.25),
-        }
-
-        # Мигрируем
-        migrated = db.migrate_config_bonds(bonds_config)
-        assert migrated == 2
-
-        # Проверяем, что все - избранные
-        favorites = db.get_favorite_bonds()
-        assert len(favorites) == 2
-
-    def test_migrate_skips_if_bonds_exist(self):
-        """Миграция обновляет существующие и добавляет новые облигации"""
-        db = get_db()
-
-        # Сначала добавляем одну облигацию
-        db.save_bond({
-            'isin': 'SU26221RMFS0',
-            'name': 'ОФЗ 26221',
-            'is_favorite': 0
-        })
-
-        # Пробуем мигрировать
-        class MockBondConfig:
-            def __init__(self, isin, name):
-                self.isin = isin
-                self.name = name
-                self.maturity_date = "2030-01-01"
-                self.coupon_rate = 7.0
-                self.face_value = 1000
-                self.coupon_frequency = 2
-                self.issue_date = "2020-01-01"
-                self.day_count_convention = "ACT/ACT"
-
-        bonds_config = {
-            "SU26221RMFS0": MockBondConfig("SU26221RMFS0", "ОФЗ 26221"),
-            "SU26225RMFS1": MockBondConfig("SU26225RMFS1", "ОФЗ 26225"),
-        }
-
-        migrated = db.migrate_config_bonds(bonds_config)
-
-        # Миграция обновляет существующие и добавляет новые
-        assert migrated == 2
-
-        # Должно быть 2 облигации
-        all_bonds = db.get_all_bonds()
-        assert len(all_bonds) == 2
-
-    def test_get_favorite_bonds_as_config_format(self):
-        """Проверяем формат get_favorite_bonds_as_config для совместимости с sidebar"""
-        db = get_db()
-
-        # Добавляем облигации
-        db.save_bond({
-            'isin': 'SU26221RMFS0',
-            'name': 'ОФЗ 26221',
-            'maturity_date': '2033-03-23',
-            'coupon_rate': 7.7,
-            'is_favorite': 1
-        })
-        db.save_bond({
-            'isin': 'SU26225RMFS1',
-            'name': 'ОФЗ 26225',
-            'maturity_date': '2034-05-10',
-            'coupon_rate': 7.25,
-            'is_favorite': 0  # Не избранное
-        })
-
-        # Получаем в формате config
-        favorites_config = db.get_favorite_bonds_as_config()
-
-        # Должна быть только одна избранная
-        assert len(favorites_config) == 1
-        assert 'SU26221RMFS0' in favorites_config
-        assert 'SU26225RMFS1' not in favorites_config
-
-        # Проверяем структуру
-        bond = favorites_config['SU26221RMFS0']
-        assert bond['isin'] == 'SU26221RMFS0'
-        assert bond['name'] == 'ОФЗ 26221'
-        assert bond['maturity_date'] == '2033-03-23'
-        assert bond['coupon_rate'] == 7.7
 
 
 # ==========================================
@@ -252,6 +139,41 @@ class TestSidebarBondsLoading:
         # Проверяем
         favorites = db.get_favorite_bonds()
         assert len(favorites) == 0
+
+    def test_get_favorite_bonds_as_config_format(self):
+        """Проверяем формат get_favorite_bonds_as_config для совместимости с sidebar"""
+        db = get_db()
+
+        # Добавляем облигации
+        db.save_bond({
+            'isin': 'SU26221RMFS0',
+            'name': 'ОФЗ 26221',
+            'maturity_date': '2033-03-23',
+            'coupon_rate': 7.7,
+            'is_favorite': 1
+        })
+        db.save_bond({
+            'isin': 'SU26225RMFS1',
+            'name': 'ОФЗ 26225',
+            'maturity_date': '2034-05-10',
+            'coupon_rate': 7.25,
+            'is_favorite': 0  # Не избранное
+        })
+
+        # Получаем в формате config
+        favorites_config = db.get_favorite_bonds_as_config()
+
+        # Должна быть только одна избранная
+        assert len(favorites_config) == 1
+        assert 'SU26221RMFS0' in favorites_config
+        assert 'SU26225RMFS1' not in favorites_config
+
+        # Проверяем структуру
+        bond = favorites_config['SU26221RMFS0']
+        assert bond['isin'] == 'SU26221RMFS0'
+        assert bond['name'] == 'ОФЗ 26221'
+        assert bond['maturity_date'] == '2033-03-23'
+        assert bond['coupon_rate'] == 7.7
 
 
 # ==========================================
@@ -451,7 +373,6 @@ def run_tests():
     setup_module()
 
     test_classes = [
-        TestSidebarMigration,
         TestSidebarBondsLoading,
         TestSidebarBondItemClass,
         TestYearsToMaturity,

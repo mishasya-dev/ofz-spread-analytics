@@ -318,64 +318,6 @@ class TestMigration:
     def setup_method(self):
         reset_db()
 
-    def test_migrate_config_bonds_empty_db(self):
-        """Миграция при пустой БД"""
-        db = get_db()
-
-        # Создаём мок config.bonds
-        class MockBond:
-            def __init__(self, isin, name):
-                self.isin = isin
-                self.name = name
-                self.maturity_date = '2030-01-01'
-                self.coupon_rate = 7.0
-                self.face_value = 1000
-                self.coupon_frequency = 2
-                self.issue_date = '2020-01-01'
-                self.day_count_convention = 'ACT/ACT'
-
-        bonds_config = {
-            'SU26221RMFS0': MockBond('SU26221RMFS0', 'ОФЗ 26221'),
-            'SU26225RMFS1': MockBond('SU26225RMFS1', 'ОФЗ 26225'),
-        }
-
-        migrated = db.migrate_config_bonds(bonds_config)
-        assert migrated == 2
-
-        # Проверяем, что все is_favorite = 1
-        all_bonds = db.get_all_bonds()
-        assert len(all_bonds) == 2
-        assert all_bonds[0]['is_favorite'] == 1
-        assert all_bonds[1]['is_favorite'] == 1
-
-    def test_migrate_config_bonds_already_exists(self):
-        """Миграция когда БД не пуста"""
-        db = get_db()
-
-        # Добавляем одну облигацию
-        db.save_bond({'isin': 'SU26221RMFS0', 'is_favorite': 0})
-
-        # Пробуем мигрировать
-        class MockBond:
-            def __init__(self, isin, name):
-                self.isin = isin
-                self.name = name
-                self.maturity_date = '2030-01-01'
-                self.coupon_rate = 7.0
-                self.face_value = 1000
-                self.coupon_frequency = 2
-                self.issue_date = '2020-01-01'
-                self.day_count_convention = 'ACT/ACT'
-
-        bonds_config = {
-            'SU26221RMFS0': MockBond('SU26221RMFS0', 'ОФЗ 26221'),
-            'SU26225RMFS1': MockBond('SU26225RMFS1', 'ОФЗ 26225'),
-        }
-
-        migrated = db.migrate_config_bonds(bonds_config)
-        # Миграция обновляет существующие и добавляет новые
-        assert migrated == 2  # Обе облигации сохранены/обновлены
-
     def test_get_favorite_bonds_as_config(self):
         """Получение избранного в формате config"""
         db = get_db()
