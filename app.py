@@ -677,9 +677,14 @@ def calculate_bond_g_spread(
     - clcyield: теоретическая КБД от MOEX
     - G-spread = trdyield - clcyield (уже рассчитан MOEX!)
     
+    КЭШИРОВАНИЕ:
+    - zcyc_cache: исходные данные MOEX для ВСЕХ облигаций
+    - Проверяем zcyc_cache, дозагружаем недостающие даты
+    - g_spreads таблица НЕ используется (устарела)
+    
     Args:
         isin: ISIN облигации
-        daily_df: DataFrame с YTM облигации (НЕ ИСПОЛЬЗУЕТСЯ, берём из ZCYC API)
+        daily_df: DataFrame с YTM облигации (для определения периода)
         ns_params_df: DataFrame с параметрами NS (НЕ ИСПОЛЬЗУЕТСЯ)
         window: Окно для rolling Z-Score
         maturity_date: Дата погашения (НЕ ИСПОЛЬЗУЕТСЯ)
@@ -705,32 +710,8 @@ def calculate_bond_g_spread(
         start_date = date.today() - timedelta(days=365)
         end_date = date.today()
     
-    # Проверяем, есть ли актуальный G-spread в БД
-    g_spread_repo = get_g_spread_repo()
-    last_db_date = g_spread_repo.get_last_g_spread_date(isin)
-    
-    if last_db_date and last_db_date >= end_date - timedelta(days=1):
-        # Данные в БД актуальны - загружаем оттуда
-        db_df = g_spread_repo.load_g_spreads(isin, start_date, end_date)
-        if not db_df.empty:
-            logger.info(f"Загрузка G-spread для {isin} из БД (актуально до {last_db_date})")
-            # Рассчитываем Z-score (не хранится в БД, т.к. зависит от окна)
-            df = db_df.sort_values('date').reset_index(drop=True) if 'date' in db_df.columns else db_df.reset_index()
-            roll = df['g_spread_bp'].rolling(window=window)
-            df['rolling_mean'] = roll.mean()
-            df['rolling_std'] = roll.std()
-            df['z_score'] = (df['g_spread_bp'] - df['rolling_mean']) / df['rolling_std']
-            # Рассчитываем p_value для ADF теста
-            try:
-                adf_result = adfuller(df['g_spread_bp'].dropna())
-                p_value = adf_result[1]
-            except:
-                p_value = 1.0
-            return df, p_value
-    
-    logger.info(f"Загрузка ZCYC для {isin} за {start_date} - {end_date}")
-    
-    # Кэшированная загрузка ZCYC (TTL 5 минут)
+    # Кэшированная загрузка ZCYC из БД (zcyc_cache) или MOEX
+    # _fetch_zcyc_cached сам проверит кэш и дозагрузит недостающие даты
     zcyc_df = _fetch_zcyc_cached(
         isin,
         start_date.strftime('%Y-%m-%d'),
@@ -779,15 +760,8 @@ def calculate_bond_g_spread(
     # Добавляем duration_years
     result_df['duration_years'] = result_df['duration_days'] / 365.25
     
-    # Сохраняем в БД (опционально)
-    try:
-        g_spread_repo = get_g_spread_repo()
-        # Используем тот же формат что и раньше
-        save_df = result_df[['ytm_bond', 'ytm_kbd', 'g_spread_bp', 'duration_years', 'z_score']].copy()
-        saved = g_spread_repo.save_g_spreads(isin, save_df)
-        logger.info(f"Сохранено {saved} G-spread для {isin}")
-    except Exception as e:
-        logger.warning(f"Не удалось сохранить G-spread: {e}")
+    # НЕ сохраняем в g_spreads - это дублирование zcyc_cache
+    # zcyc_cache уже содержит все данные от MOEX
     
     return result_df, p_value
 
