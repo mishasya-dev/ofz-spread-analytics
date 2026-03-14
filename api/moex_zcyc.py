@@ -659,17 +659,18 @@ def get_zcyc_history_parallel(
     dates_to_fetch = trading_days.copy()
 
     # Проверяем кэш
-    # ВАЖНО: Проверяем кэш БЕЗ фильтрации по ISIN!
-    # ZCYC API возвращает данные для ВСЕХ облигаций сразу,
-    # поэтому кэшируем глобально, а фильтруем только при возврате
+    # ВАЖНО: Проверяем кэш ДЛЯ КОНКРЕТНОГО ISIN!
+    # MOEX ZCYC API возвращает данные для ВСЕХ облигаций сразу,
+    # но нам нужно знать: есть ли данные для ЭТОГО ISIN на эти даты?
+    # Если нет - загружаем (получим все облигации) и сохраняем все в БД
     if use_cache:
         try:
             from core.db import get_g_spread_repo
             repo = get_g_spread_repo()
 
-            # Загружаем ВСЕ даты, для которых есть данные в кэше (без фильтрации по ISIN)
-            all_cached_dates = repo.get_zcyc_cached_dates(
-                isin=None,  # Без фильтрации!
+            # Загружаем даты, для которых есть данные в кэше ДЛЯ ЭТОГО ISIN
+            cached_dates_for_isin = repo.get_zcyc_cached_dates(
+                isin=isin,  # Фильтруем по ISIN!
                 start_date=start_date,
                 end_date=end_date
             )
@@ -680,14 +681,14 @@ def get_zcyc_history_parallel(
             if not cached_df.empty:
                 all_data.append(cached_df)
 
-            # Загружаем только те даты, которых нет в кэше
-            dates_to_fetch = [d for d in trading_days if d not in all_cached_dates]
+            # Загружаем только те даты, которых нет в кэше ДЛЯ ЭТОГО ISIN
+            dates_to_fetch = [d for d in trading_days if d not in cached_dates_for_isin]
 
             empty_dates = repo.load_empty_dates(start_date=start_date, end_date=end_date)
             if empty_dates:
                 dates_to_fetch = [d for d in dates_to_fetch if d not in empty_dates]
 
-            logger.info(f"Из кэша: {len(cached_df)} записей для ISIN, дат в кэше: {len(all_cached_dates)}, нужно загрузить: {len(dates_to_fetch)} дней")
+            logger.info(f"Из кэша: {len(cached_df)} записей для {isin}, дат в кэше для ISIN: {len(cached_dates_for_isin)}, нужно загрузить: {len(dates_to_fetch)} дней")
         except Exception as e:
             logger.warning(f"Ошибка при чтении кэша: {e}")
 
