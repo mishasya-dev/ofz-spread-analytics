@@ -364,17 +364,20 @@ def show_bond_manager_dialog():
             
             # Обновляем bonds в session_state для текущей вкладки
             # Это позволяет каждой вкладке иметь независимый список избранного
-            from config import BondConfig
+            # Используем словари вместо BondConfig для совместимости
             updated_bonds = {}
             for isin in new_favorites:
                 bond_data = next((b for b in bonds if b.get('isin') == isin), None)
                 if bond_data:
-                    updated_bonds[isin] = BondConfig(
-                        isin=isin,
-                        name=bond_data.get('name') or bond_data.get('short_name') or isin,
-                        maturity_date=bond_data.get('maturity_date'),
-                        coupon_rate=bond_data.get('coupon_rate'),
-                    )
+                    updated_bonds[isin] = {
+                        'isin': isin,
+                        'name': bond_data.get('name') or bond_data.get('short_name') or isin,
+                        'maturity_date': bond_data.get('maturity_date'),
+                        'coupon_rate': bond_data.get('coupon_rate'),
+                        'face_value': bond_data.get('face_value', 1000),
+                        'coupon_frequency': bond_data.get('coupon_frequency', 2),
+                        'day_count_convention': bond_data.get('day_count', 'ACT/ACT'),
+                    }
             st.session_state.bonds = updated_bonds
             logger.info(f"Обновлено bonds в session_state: {len(updated_bonds)} избранное")
             
