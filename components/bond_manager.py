@@ -374,8 +374,6 @@ def show_bond_manager_dialog():
                         name=bond_data.get('name') or bond_data.get('short_name') or isin,
                         maturity_date=bond_data.get('maturity_date'),
                         coupon_rate=bond_data.get('coupon_rate'),
-                        duration_years=bond_data.get('duration_years'),
-                        duration_days=bond_data.get('duration_days'),
                     )
             st.session_state.bonds = updated_bonds
             logger.info(f"Обновлено bonds в session_state: {len(updated_bonds)} избранное")
