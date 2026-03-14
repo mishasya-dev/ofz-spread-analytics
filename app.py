@@ -277,81 +277,15 @@ def fetch_trading_data_cached(secid: str) -> Dict:
     return fetch_trading_data(secid)
 
 
-# Максимальный период для кэширования (2 года)
-MAX_CACHE_PERIOD_DAYS = 730
-
-
 @st.cache_data(ttl=300)
-def _fetch_all_historical_data(secid: str) -> pd.DataFrame:
-    """
-    Загрузить ВСЕ исторические данные для ISIN (максимум 730 дней).
-    
-    Кэшируется по secid (без подчёркивания - чтобы был отдельный кэш для каждого ISIN).
-    """
-    db = get_db_facade()
-    
-    # Всегда загружаем на максимум
-    start_date = date.today() - timedelta(days=MAX_CACHE_PERIOD_DAYS)
-    
-    logger.info(f"_fetch_all_historical_data: secid={secid}, start_date={start_date}")
-    
-    # Загружаем ВСЕ данные из БД (без фильтрации по start_date)
-    db_df = db.load_daily_ytm(secid)
-    last_db_date = db.get_last_daily_ytm_date(secid)
-    
-    logger.info(f"Загружено из БД: {len(db_df)} записей, last_db_date={last_db_date}")
-    
-    # Проверяем нужно ли обновление
-    if not db_df.empty and last_db_date:
-        days_since_update = (date.today() - last_db_date).days
-        
-        if days_since_update <= 1:
-            logger.info(f"Данные актуальны для {secid}: {len(db_df)} записей")
-            return db_df
-        else:
-            # Дозагружаем только новые данные
-            new_start = last_db_date + timedelta(days=1)
-            with MOEXClient() as client:
-                new_df = fetch_ytm_history(secid, start_date=new_start, client=client)
-            
-            if not new_df.empty:
-                db.save_daily_ytm(secid, new_df)
-                db_df = pd.concat([db_df, new_df])
-                db_df = db_df[~db_df.index.duplicated(keep='last')]
-                logger.info(f"Дозагружены новые данные: +{len(new_df)} записей")
-            return db_df
-    
-    # БД пуста или устарела - загружаем весь период
-    with MOEXClient() as client:
-        db_df = fetch_ytm_history(secid, start_date=start_date, client=client)
-    
-    if not db_df.empty:
-        db.save_daily_ytm(secid, db_df)
-        logger.info(f"Сохранены дневные YTM в БД для {secid}: {len(db_df)} записей")
-    
-    return db_df
-
-
-@log_call()
 def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
     """
     Получить исторические данные за указанный период.
     
-    Использует кэшированные данные и фильтрует по периоду.
+    Обёртка над data_loader.fetch_historical_data с Streamlit кэшированием.
     """
-    # Получаем все данные (из кэша или загружаем)
-    all_df = _fetch_all_historical_data(secid)
-    
-    if all_df.empty:
-        return all_df
-    
-    # Фильтруем по запрошенному периоду (без кэширования)
-    start_date = date.today() - timedelta(days=days)
-    result_df = all_df[all_df.index.date >= start_date]
-    
-    logger.info(f"fetch_historical_data_cached: secid={secid}, days={days}, возвращаем {len(result_df)} записей")
-    
-    return result_df
+    from services.data_loader import fetch_historical_data as _fetch
+    return _fetch(secid, days)
 
 
 # Максимальные периоды для свечей по интервалам
