@@ -387,7 +387,7 @@ class GSpreadRepository:
         }
     
     # ==========================================
-    # ZCYC CACHE (кэш G-spread от MOEX)
+    # ZCYC HISTORY RAW (сырые данные ZCYC от MOEX)
     # ==========================================
     
     def save_zcyc(self, df: pd.DataFrame) -> int:
@@ -413,7 +413,7 @@ class GSpreadRepository:
                 for _, row in df.iterrows():
                     try:
                         cursor.execute('''
-                            INSERT OR REPLACE INTO zcyc_cache 
+                            INSERT OR REPLACE INTO zcyc_history_raw 
                             (date, secid, shortname, trdyield, clcyield, duration_days, g_spread_bp)
                             VALUES (?, ?, ?, ?, ?, ?, ?)
                         ''', (
@@ -456,7 +456,7 @@ class GSpreadRepository:
         """
         query = '''
             SELECT date, secid, shortname, trdyield, clcyield, duration_days, g_spread_bp
-            FROM zcyc_cache
+            FROM zcyc_history_raw
             WHERE 1=1
         '''
         params = []
@@ -502,7 +502,7 @@ class GSpreadRepository:
         Returns:
             Множество дат
         """
-        query = 'SELECT DISTINCT date FROM zcyc_cache WHERE 1=1'
+        query = 'SELECT DISTINCT date FROM zcyc_history_raw WHERE 1=1'
         params = []
         
         if isin:
@@ -527,9 +527,9 @@ class GSpreadRepository:
         """Количество записей ZCYC в кэше"""
         with get_db_cursor() as cursor:
             if isin:
-                cursor.execute('SELECT COUNT(*) as cnt FROM zcyc_cache WHERE secid = ?', (isin,))
+                cursor.execute('SELECT COUNT(*) as cnt FROM zcyc_history_raw WHERE secid = ?', (isin,))
             else:
-                cursor.execute('SELECT COUNT(*) as cnt FROM zcyc_cache')
+                cursor.execute('SELECT COUNT(*) as cnt FROM zcyc_history_raw')
             row = cursor.fetchone()
         
         return row['cnt'] if row else 0
@@ -539,11 +539,11 @@ class GSpreadRepository:
         with get_db_cursor() as cursor:
             if isin:
                 cursor.execute(
-                    'SELECT MIN(date) as min_d, MAX(date) as max_d FROM zcyc_cache WHERE secid = ?',
+                    'SELECT MIN(date) as min_d, MAX(date) as max_d FROM zcyc_history_raw WHERE secid = ?',
                     (isin,)
                 )
             else:
-                cursor.execute('SELECT MIN(date) as min_d, MAX(date) as max_d FROM zcyc_cache')
+                cursor.execute('SELECT MIN(date) as min_d, MAX(date) as max_d FROM zcyc_history_raw')
             
             row = cursor.fetchone()
         

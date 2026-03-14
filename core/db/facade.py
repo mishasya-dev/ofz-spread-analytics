@@ -838,7 +838,7 @@ class DatabaseFacade:
             
             tables = ['candles', 'daily_ytm', 'intraday_ytm', 'spreads', 'snapshots', 
                       'cointegration_cache', 'ns_params', 'g_spreads', 'yearyields',
-                      'zcyc_cache', 'zcyc_empty_dates']
+                      'zcyc_history_raw', 'zcyc_empty_dates']
             
             for table in tables:
                 cursor.execute(f'DELETE FROM {table}')

@@ -479,10 +479,12 @@ def init_database():
     ''')
     
     # ==========================================
-    # ТАБЛИЦА ZCYC_CACHE (кэш G-spread от MOEX)
+    # ТАБЛИЦА ZCYC_HISTORY_RAW (сырые данные ZCYC от MOEX)
     # ==========================================
+    # Переименовано из zcyc_cache для ясности
+    cursor.execute('DROP TABLE IF EXISTS zcyc_cache')  # Удаляем старую таблицу
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS zcyc_cache (
+        CREATE TABLE IF NOT EXISTS zcyc_history_raw (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT NOT NULL,
             secid TEXT NOT NULL,
@@ -497,13 +499,13 @@ def init_database():
     ''')
     
     cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_zcyc_cache_date 
-        ON zcyc_cache(date)
+        CREATE INDEX IF NOT EXISTS idx_zcyc_history_raw_date 
+        ON zcyc_history_raw(date)
     ''')
     
     cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_zcyc_cache_secid 
-        ON zcyc_cache(secid)
+        CREATE INDEX IF NOT EXISTS idx_zcyc_history_raw_secid 
+        ON zcyc_history_raw(secid)
     ''')
     
     # ==========================================

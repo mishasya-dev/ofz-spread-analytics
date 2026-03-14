@@ -678,8 +678,8 @@ def calculate_bond_g_spread(
     - G-spread = trdyield - clcyield (уже рассчитан MOEX!)
     
     КЭШИРОВАНИЕ:
-    - zcyc_cache: исходные данные MOEX для ВСЕХ облигаций
-    - Проверяем zcyc_cache, дозагружаем недостающие даты
+    - zcyc_history_raw: исходные данные MOEX для ВСЕХ облигаций
+    - Проверяем zcyc_history_raw, дозагружаем недостающие даты
     - g_spreads таблица НЕ используется (устарела)
     
     Args:
@@ -710,8 +710,8 @@ def calculate_bond_g_spread(
         start_date = date.today() - timedelta(days=365)
         end_date = date.today()
     
-    # Кэшированная загрузка ZCYC из БД (zcyc_cache) или MOEX
-    # _fetch_zcyc_cached сам проверит кэш и дозагрузит недостающие даты
+    # Кэшированная загрузка ZCYC из БД (zcyc_history_raw) или MOEX
+    # _fetch_zcyc_cached сам проверит данные и дозагрузит недостающие даты
     zcyc_df = _fetch_zcyc_cached(
         isin,
         start_date.strftime('%Y-%m-%d'),
@@ -760,8 +760,8 @@ def calculate_bond_g_spread(
     # Добавляем duration_years
     result_df['duration_years'] = result_df['duration_days'] / 365.25
     
-    # НЕ сохраняем в g_spreads - это дублирование zcyc_cache
-    # zcyc_cache уже содержит все данные от MOEX
+    # НЕ сохраняем в g_spreads - это дублирование zcyc_history_raw
+    # zcyc_history_raw уже содержит все данные от MOEX
     
     return result_df, p_value
 
