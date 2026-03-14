@@ -1,4 +1,4 @@
-# Session Context - 14.03.2026
+# Session Context - 14.03.2026 (Updated)
 
 ## Project State
 
@@ -6,56 +6,76 @@
 - **Repository**: https://github.com/mishasya-dev/ofz-spread-analytics
 - **Branch**: `feature/g-spread-yearyields-method`
 - **Last Commits**: 
-  - `977d78b` - refactor: use data_loader.fetch_candle_data in cached wrapper
-  - `e464c09` - refactor: use data_loader.fetch_historical_data in cached wrapper
-  - `6253954` - refactor: use data_loader.fetch_trading_data in cached wrapper
-  - `6bf3160` - refactor: remove duplicate update_database_full from app.py
+  - `d94fa7a` - fix: use session_state.bonds instead of undefined favorites
+  - `104266a` - fix: use dicts instead of BondConfig for session_state.bonds
+  - `7bab190` - fix: remove unsupported duration args from BondConfig
+  - `5580b41` - fix: prevent favorites conflicts between tabs
+  - `6e75ce9` - fix: prevent sync_from_url from overwriting widget values
 
 ### Database Status
 - **Location**: `data/ofz_data.db`
-- **Tables**: bonds, daily_ytm, intraday_ytm, spreads, ns_params, g_spreads, zcyc_cache, zcyc_empty_dates
+- **Tables**: bonds, daily_ytm, intraday_ytm, spreads, ns_params, g_spreads, zcyc_cache, zcyc_empty_dates, cointegration_cache
 - **Bonds Tracked**: 32+ (все ОФЗ с ZCYC данными)
 
-## Recent Changes: Рефакторинг app.py (14.03.2026)
+## Recent Changes: State Persistence Fixes (14.03.2026)
 
-### Проблема
-`app.py` содержал ~1595 строк с дублирующимся кодом, уже реализованным в `services/data_loader.py`.
+### Проблемы решённые в этой сессии
 
-### Решение
-Удалены дубликаты, функции заменены на импорты из сервисов:
+#### 1. Слайдеры/radio не меняли значения
+**Причина**: `sync_from_url()` загружал значения из URL и перезаписывал session_state при каждом rerun, затирая только что установленное значение.
 
+**Решение**: Добавлена проверка `key not in st.session_state`:
 ```python
-# app.py - до рефакторинга
-def update_database_full(bonds_list=None, progress_callback=None):
-    # 78 строк кода...
-
-# app.py - после рефакторинга  
-from services.data_loader import update_database_full
+def sync_from_url():
+    for key, type_conv in QUERY_KEYS.items():
+        # Загружаем из URL ТОЛЬКО если нет в session_state
+        if key in params and key not in st.session_state:
+            st.session_state[key] = type_conv(value)
 ```
 
-### Результат
+#### 2. Конфликты избранного между вкладками
+**Причина**: Список избранного загружался из БД при каждом rerun, поэтому изменения в одной вкладке сразу влияли на другие.
 
-| Метрика | До | После |
-|---------|-----|-------|
-| Строк в app.py | 1595 | 1314 |
-| Удалено дубликатов | - | ~280 строк (18%) |
+**Решение**: Загрузка только один раз при старте сессии:
+```python
+if 'bonds' not in st.session_state or 'favorites_loaded' not in st.session_state:
+    favorites = db.get_favorite_bonds_as_config()
+    st.session_state.bonds = favorites
+    st.session_state.favorites_loaded = True
+```
 
-### Архитектура
+Добавлена кнопка 🔄 для ручной синхронизации с БД.
+
+### URL Query Parameters
+
+Настройки сохраняются в URL через `st.query_params`:
+- `period`, `spread_window`, `z_threshold`
+- `g_spread_period`, `g_spread_window`, `g_spread_z_threshold`
+- `candle_interval`, `candle_days`
+- `b1`, `b2` (ISIN облигаций)
+
+**Преимущества**:
+- Синхронный API (нет async/callback проблем)
+- Ссылки можно шарить
+- Переживает F5
+
+## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    app.py (UI Layer)                         │
 │  - Streamlit компоненты                                      │
 │  - @st.cache_data декораторы                                 │
-│  - Обёртки над сервисами                                     │
+│  - session_state для настроек                                │
+│  - query_params для URL                                      │
 └─────────────────────────────────────────────────────────────┘
                           ↓
 ┌─────────────────────────────────────────────────────────────┐
 │                 services/ (Business Logic)                   │
 │  - data_loader.py → загрузка данных с MOEX                   │
+│  - state_manager.py → sync URL ↔ session_state               │
 │  - g_spread_calculator.py → статистика G-spread              │
 │  - spread_calculator.py → статистика spread                  │
-│  - candle_service.py → работа со свечами                     │
 └─────────────────────────────────────────────────────────────┘
                           ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -67,42 +87,31 @@ from services.data_loader import update_database_full
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Key Change: G-Spread Methodology (v0.4.0)
+## Key Files Reference
 
-### G-spread из MOEX ZCYC API
-**G-spread теперь берётся НАПРЯМУЮ из MOEX:**
-- `trdyield` — рыночная YTM облигации
-- `clcyield` — теоретическая КБД от MOEX
-- `G-spread = trdyield - clcyield` (уже рассчитан MOEX!)
-- **Ошибка: 0 bp** ✅
-
-### Оптимизация загрузки ZCYC
+### Core Files
 ```
-Было:  N облигаций × D дней запросов
-Стало: D дней запросов (все облигации вместе)
-Сокращение: 5x
+app.py                                   - UI + session_state + query_params
+services/state_manager.py                - URL sync (sync_from_url, sync_to_url)
+services/data_loader.py                  - Загрузка данных
+api/moex_zcyc.py                         - ZCYC API (G-spread напрямую из MOEX)
+components/bond_manager.py               - Управление избранным + refresh_favorites_from_db()
 ```
 
-## Caching Architecture
-
+### State Management Flow
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Streamlit Cache (@st.cache_data)                           │
-│  - TTL: 60 сек (свечи), 300 сек (история), 3600 сек (NS)    │
-│  - Инвалидация: вручную или при обновлении БД               │
-└─────────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────────┐
-│  SQLite Cache (zcyc_cache)                                  │
-│  - Все облигации за все даты                                │
-│  - Инкрементальное обновление                               │
-└─────────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────────┐
-│  MOEX API                                                    │
-│  - Только недостающие данные                                │
-│  - Параллельная загрузка (5 workers)                        │
-└─────────────────────────────────────────────────────────────┘
+1. При старте (init_session_state):
+   ├─ sync_from_url() → загружает URL params в session_state (только если ключа нет)
+   ├─ load favorites from DB → session_state.bonds (только если favorites_loaded=False)
+   └─ load_last_pair() → восстановление пары облигаций
+
+2. При изменении виджета:
+   ├─ Streamlit обновляет session_state[key]
+   ├─ on_change callback логирует изменение
+   └─ st.rerun()
+
+3. После рендера (конец main()):
+   └─ sync_to_url() → сохраняет session_state в URL
 ```
 
 ## Database Tables
@@ -113,41 +122,20 @@ from services.data_loader import update_database_full
 | `daily_ytm` | Дневные YTM | ~16000 |
 | `intraday_ytm` | Внутридневные YTM | ~50000 |
 | `zcyc_cache` | Кэш ZCYC (G-spread) | ~16000 |
-| `zcyc_empty_dates` | Праздники | ~50 |
-| `ns_params` | Nelson-Siegel (deprecated) | ~500 |
-| `g_spreads` | G-spread (deprecated) | — |
+| `zcyc_history_raw` | Raw ZCYC данные | ~16000 |
+| `cointegration_cache` | Кэш коинтеграции | ~100 |
 
-## Key Files Reference
+## Tests Status
 
-### Core Files (после рефакторинга)
-```
-app.py                                   - 1314 строк (UI + кэширование)
-services/data_loader.py                  - Загрузка данных (330 строк)
-services/g_spread_calculator.py          - G-spread статистика
-services/spread_calculator.py            - Spread статистика
-api/moex_zcyc.py                         - ZCYC API (850 строк)
-api/moex_client.py                       - MOEX клиент
-core/db/g_spread_repo.py                 - ZCYC cache repo
-components/charts.py                     - Chart builders
-```
+**Passing**: 57 tests
+- test_bonds.py ✅
+- test_cointegration.py ✅
+- test_database.py ✅
+- и др.
 
-### Tests
-```
-tests/                                   - 446+ tests total
-test_zcyc_optimization.py                - Тесты оптимизации ZCYC
-test_app_integration.py                  - Интеграционные тесты
-```
-
-## Deprecated Code (DO NOT USE)
-
-```python
-# DEPRECATED - даёт ~90-100 bp ошибку:
-from services.g_spread_calculator import nelson_siegel
-
-# DEPRECATED - используйте services/data_loader.py:
-# - _fetch_all_historical_data()
-# - _fetch_all_candle_data()
-```
+**Removed** (устарели):
+- test_state_manager.py (для browser-storage API)
+- test_state_integration.py (для browser-storage API)
 
 ## Notes for Next Session
 
@@ -157,20 +145,16 @@ from services.g_spread_calculator import nelson_siegel
 - Database: `data/ofz_data.db`
 
 ### Completed Tasks
-- [x] Implement G-spread from MOEX ZCYC API (0 bp error)
-- [x] Optimize ZCYC loading - load ALL bonds at once (5x speedup)
-- [x] Add zcyc_cache table for caching ZCYC data
-- [x] Add zcyc_empty_dates table for holidays
-- [x] Fix duplicate element ID for G-spread charts
-- [x] Add warning when same bond selected in both dropdowns
-- [x] **Refactor app.py - remove ~280 lines of duplicate code**
-- [x] **Use services/data_loader.py for data loading**
+- [x] Fix sliders/radio not changing values
+- [x] Fix favorites conflicts between tabs
+- [x] Add refresh button for favorites sync
+- [x] Remove browser-storage dependency
+- [x] Implement URL-based state persistence
 
 ### Potential Future Tasks
+- [ ] Add new tests for state_manager (URL-based)
 - [ ] Add daily snapshot job for ZCYC data
-- [ ] Implement G-spread alerts/notifications
 - [ ] Merge feature branch to master
-- [ ] Further split sidebar into components/sidebar.py
 
 ---
 *Session saved: 2026-03-14 UTC*
