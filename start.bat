@@ -41,20 +41,15 @@ if errorlevel 1 (
 )
 echo [OK] Virtual environment activated
 
-:: Install dependencies
-pip show streamlit >nul 2>&1
+:: Install/update dependencies (pip skip already installed)
+echo [*] Checking dependencies...
+pip install -r requirements.txt -q
 if errorlevel 1 (
-    echo [*] Installing dependencies...
-    pip install -r requirements.txt -q
-    if errorlevel 1 (
-        echo [ERROR] Failed to install dependencies!
-        pause
-        exit /b 1
-    )
-    echo [OK] Dependencies installed
-) else (
-    echo [OK] Dependencies already installed
+    echo [ERROR] Failed to install dependencies!
+    pause
+    exit /b 1
 )
+echo [OK] Dependencies ready
 
 echo.
 echo  Starting application...
