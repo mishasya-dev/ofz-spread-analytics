@@ -31,11 +31,16 @@ def sync_from_url() -> None:
     """
     Загрузить настройки из URL query_params в session_state.
     Вызывать при инициализации приложения (ДО установки defaults).
+    
+    ВАЖНО: Загружает только если ключа ещё нет в session_state.
+    Это prevents перезапись значений, установленных виджетами при rerun.
     """
     params = st.query_params
     
     for key, type_conv in QUERY_KEYS.items():
-        if key in params:
+        # Загружаем из URL ТОЛЬКО если нет в session_state
+        # (иначе перезапишем значение, только что установленное виджетом)
+        if key in params and key not in st.session_state:
             try:
                 value = params[key]
                 # query_params может вернуть list или str
