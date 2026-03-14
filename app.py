@@ -288,150 +288,16 @@ def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
     return _fetch(secid, days)
 
 
-# Максимальные периоды для свечей по интервалам
-MAX_CANDLE_DAYS = {
-    "1": 3,    # 1 минута - 3 дня
-    "10": 30,  # 10 минут - 30 дней
-    "60": 365  # 1 час - 365 дней
-}
-
-
 @st.cache_data(ttl=60)
-@log_call()
-def _fetch_all_candle_data(isin: str, interval: str) -> pd.DataFrame:
-    """
-    Загрузить ВСЕ свечи с YTM для ISIN и интервала.
-    
-    Кэшируется по (isin, interval) - отдельный кэш для каждой пары.
-    Без подчёркиваний - чтобы Streamlit правильно хэшировал аргументы.
-    """
-    from services.candle_processor_ytm_for_bonds import BondYTMProcessor
-    
-    db = get_db_facade()
-    ytm_processor = BondYTMProcessor()
-    
-    # Максимальный период для данного интервала
-    max_days = MAX_CANDLE_DAYS.get(interval, 30)
-    
-    interval_map = {
-        "1": CandleInterval.MIN_1,
-        "10": CandleInterval.MIN_10,
-        "60": CandleInterval.MIN_60,
-    }
-    candle_interval = interval_map.get(interval, CandleInterval.MIN_60)
-    
-    logger.info(f"_fetch_all_candle_data: isin={isin}, interval={interval}, max_days={max_days}")
-    
-    # Загружаем ВСЕ данные из БД (история)
-    db_ytm_df = db.load_intraday_ytm(isin, interval)
-    
-    # Получаем параметры облигации из БД для расчёта YTM
-    bond_data = db.load_bond(isin)
-    if not bond_data:
-        logger.warning(f"Облигация {isin} не найдена в БД")
-        return pd.DataFrame()
-    
-    # Создаём объект для YTM процессора
-    class BondConfigAdapter:
-        def __init__(self, data):
-            self.isin = data.get('isin')
-            self.name = data.get('name')
-            self.maturity_date = data.get('maturity_date')
-            self.coupon_rate = data.get('coupon_rate')
-            self.face_value = data.get('face_value', 1000)
-            self.coupon_frequency = data.get('coupon_frequency', 2)
-            self.issue_date = data.get('issue_date')
-            self.day_count_convention = data.get('day_count', 'ACT/ACT')
-    
-    bond_config = BondConfigAdapter(bond_data)
-    
-    # Запрашиваем текущий день (сырые свечи) через новый API
-    with MOEXClient() as client:
-        raw_today_df = fetch_candles(
-            isin,
-            interval=candle_interval,
-            start_date=date.today(),
-            end_date=date.today(),
-            client=client
-        )
-    
-    # Рассчитываем YTM для текущего дня
-    today_df = pd.DataFrame()
-    if not raw_today_df.empty:
-        today_df = ytm_processor.add_ytm_to_candles(raw_today_df, bond_config)
-    
-    # Проверяем нужны ли исторические данные
-    last_db_datetime = db.get_last_intraday_ytm_datetime(isin, interval)
-    
-    if db_ytm_df.empty and date.today() > date.today() - timedelta(days=1):
-        # БД пуста - загружаем историю через новый API
-        with MOEXClient() as client:
-            raw_history_df = fetch_candles(
-                isin,
-                interval=candle_interval,
-                start_date=date.today() - timedelta(days=max_days),
-                end_date=date.today() - timedelta(days=1),
-                client=client
-            )
-        
-        if not raw_history_df.empty:
-            history_df = ytm_processor.add_ytm_to_candles(raw_history_df, bond_config)
-            if not history_df.empty and 'ytm_close' in history_df.columns:
-                db.save_intraday_ytm(isin, interval, history_df)
-                db_ytm_df = history_df
-                logger.info(f"Сохранены intraday YTM для {isin}: {len(history_df)} записей")
-    
-    elif db_ytm_df.empty:
-        # БД пуста, но сегодня выходной - возвращаем пустой
-        pass
-    
-    # Сохраняем текущие данные (только если за сегодня ещё нет)
-    if not today_df.empty and 'ytm_close' in today_df.columns:
-        last_db_datetime = db.get_last_intraday_ytm_datetime(isin, interval)
-        if last_db_datetime is None or last_db_datetime.date() < date.today():
-            db.save_intraday_ytm(isin, interval, today_df)
-            logger.info(f"Сохранено {len(today_df)} intraday YTM для {isin} (interval={interval})")
-        else:
-            logger.debug(f"Intraday YTM за сегодня уже есть в БД для {isin}")
-    
-    # Объединяем историю + сегодня
-    if not db_ytm_df.empty and not today_df.empty:
-        result_df = pd.concat([db_ytm_df, today_df])
-        result_df = result_df[~result_df.index.duplicated(keep='last')]
-    elif not today_df.empty:
-        result_df = today_df
-    elif not db_ytm_df.empty:
-        result_df = db_ytm_df
-    else:
-        result_df = pd.DataFrame()
-    
-    if not result_df.empty:
-        result_df = result_df.sort_index()
-    
-    return result_df
-
-
-@log_call()
 def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, days: int) -> pd.DataFrame:
     """
     Получить данные свечей за указанный период.
     
-    Использует кэшированные данные и фильтрует по периоду.
-    bond_config_dict - оставлен для совместимости, данные берутся из БД.
+    Обёртка над data_loader.fetch_candle_data с Streamlit кэшированием.
+    bond_config_dict - словарь с параметрами облигации.
     """
-    # Получаем все данные (из кэша или загружаем)
-    all_df = _fetch_all_candle_data(isin, interval)
-    
-    if all_df.empty:
-        return all_df
-    
-    # Фильтруем по запрошенному периоду (без кэширования)
-    start_date = date.today() - timedelta(days=days)
-    result_df = all_df[all_df.index.date >= start_date]
-    
-    logger.info(f"fetch_candle_data_cached: isin={isin}, interval={interval}, days={days}, возвращаем {len(result_df)} записей")
-    
-    return result_df
+    from services.data_loader import fetch_candle_data as _fetch
+    return _fetch(isin, bond_config_dict, interval, days)
 
 
 # ==========================================
