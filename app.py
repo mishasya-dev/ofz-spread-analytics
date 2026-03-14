@@ -220,8 +220,9 @@ def init_session_state():
             else:
                 st.session_state.selected_bond2 = 1 if len(isins) > 1 else 0
         else:
+            bonds_dict = st.session_state.get('bonds', {})
             st.session_state.selected_bond1 = 0
-            st.session_state.selected_bond2 = 1 if favorites and len(favorites) > 1 else 0
+            st.session_state.selected_bond2 = 1 if len(bonds_dict) > 1 else 0
     
     # Единый период (30 дней - 2 года, по умолчанию 1 год)
     if 'period' not in st.session_state:
