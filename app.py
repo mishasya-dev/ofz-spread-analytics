@@ -42,6 +42,7 @@ from services.spread_calculator import (
     prepare_spread_dataframe
 )
 from services.data_loader import update_database_full
+from services.state_manager import sync_from_url, sync_to_url, load_last_pair, save_last_pair
 from core.db import get_g_spread_repo, init_database
 from version import format_version_badge
 from core.cointegration import CointegrationAnalyzer, format_cointegration_report
@@ -175,6 +176,9 @@ def init_session_state():
     # Инициализация БД (создание таблиц при необходимости)
     init_database()
     
+    # Загрузка настроек из URL (делаем ДО установки defaults)
+    sync_from_url()
+    
     if 'config' not in st.session_state:
         st.session_state.config = AppConfig()
     
@@ -199,11 +203,27 @@ def init_session_state():
             st.session_state.bonds = favorites
             logger.info(f"Обновлён список облигаций: {len(favorites)} избранное")
     
-    if 'selected_bond1' not in st.session_state:
-        st.session_state.selected_bond1 = 0
-    
-    if 'selected_bond2' not in st.session_state:
-        st.session_state.selected_bond2 = 1
+    # Восстановление последней пары облигаций из localStorage
+    if 'selected_bond1' not in st.session_state or 'selected_bond2' not in st.session_state:
+        last_pair = load_last_pair()
+        isins = list(st.session_state.get('bonds', {}).keys())
+        
+        if last_pair and isins:
+            b1_isin = last_pair.get('b1')
+            b2_isin = last_pair.get('b2')
+            
+            if b1_isin and b1_isin in isins:
+                st.session_state.selected_bond1 = isins.index(b1_isin)
+            else:
+                st.session_state.selected_bond1 = 0
+            
+            if b2_isin and b2_isin in isins:
+                st.session_state.selected_bond2 = isins.index(b2_isin)
+            else:
+                st.session_state.selected_bond2 = 1 if len(isins) > 1 else 0
+        else:
+            st.session_state.selected_bond1 = 0
+            st.session_state.selected_bond2 = 1 if favorites and len(favorites) > 1 else 0
     
     # Единый период (30 дней - 2 года, по умолчанию 1 год)
     if 'period' not in st.session_state:
@@ -1299,6 +1319,11 @@ def main():
     )
     chart_key3 = f"intraday_spread_{candle_days}_{bond1.isin}_{bond2.isin}_{len(intraday_spread_df)}"
     st.plotly_chart(fig3, width="stretch", key=chart_key3)
+    
+    # ==========================================
+    # СОХРАНЕНИЕ НАСТРОЕК В URL
+    # ==========================================
+    sync_to_url()
     
     # ==========================================
     # АВТООБНОВЛЕНИЕ

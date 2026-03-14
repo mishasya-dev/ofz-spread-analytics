@@ -1,130 +1,154 @@
 """
 Тесты для services/state_manager.py
 
-Внимание: streamlit-browser-storage требует Streamlit runtime.
-Тестируем логику функций без реального браузера.
+Тестируем работу с URL query_params.
 """
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 import sys
 
 # Мокаем streamlit до импорта
-sys.modules['streamlit'] = MagicMock()
+mock_st = MagicMock()
+mock_st.query_params = {}
+mock_st.session_state = {}
+sys.modules['streamlit'] = mock_st
 
 
 class TestStateManagerFunctions:
     """Тесты функций state_manager"""
 
-    def test_session_keys_defined(self):
-        """Проверка списка ключей сессии"""
-        from services.state_manager import SESSION_KEYS
+    def test_query_keys_defined(self):
+        """Проверка списка ключей URL"""
+        from services.state_manager import QUERY_KEYS
 
-        assert 'period' in SESSION_KEYS
-        assert 'spread_window' in SESSION_KEYS
-        assert 'z_threshold' in SESSION_KEYS
-        assert 'g_spread_period' in SESSION_KEYS
-        assert 'candle_interval' in SESSION_KEYS
+        assert 'period' in QUERY_KEYS
+        assert 'spread_window' in QUERY_KEYS
+        assert 'z_threshold' in QUERY_KEYS
+        assert 'g_spread_period' in QUERY_KEYS
+        assert 'candle_interval' in QUERY_KEYS
 
-    def test_save_last_pair_calls_localstorage(self):
-        """save_last_pair вызывает LocalStorage.set"""
-        with patch('services.state_manager.LOCAL') as mock_local:
-            from services.state_manager import save_last_pair
+    def test_sync_from_url_reads_params(self):
+        """sync_from_url читает параметры из URL"""
+        mock_st.query_params = {'period': '180', 'spread_window': '45'}
+        mock_st.session_state = {}
+        
+        from services.state_manager import sync_from_url
+        sync_from_url()
+        
+        assert mock_st.session_state.get('period') == 180
+        assert mock_st.session_state.get('spread_window') == 45
 
-            save_last_pair('RU000A1038V6', 'RU000A1038V7')
+    def test_sync_from_url_handles_list_params(self):
+        """sync_from_url обрабатывает list параметры"""
+        mock_st.query_params = {'period': ['360']}  # Иногда возвращает list
+        mock_st.session_state = {}
+        
+        from services.state_manager import sync_from_url
+        sync_from_url()
+        
+        assert mock_st.session_state.get('period') == 360
 
-            mock_local.set.assert_called_once_with(
-                "last_pair",
-                {"b1": "RU000A1038V6", "b2": "RU000A1038V7"}
-            )
+    def test_sync_from_url_ignores_invalid(self):
+        """sync_from_url игнорирует невалидные значения"""
+        mock_st.query_params = {'period': 'invalid', 'spread_window': '30'}
+        mock_st.session_state = {}
+        
+        from services.state_manager import sync_from_url
+        sync_from_url()
+        
+        # period должен быть проигнорирован
+        assert 'period' not in mock_st.session_state
+        assert mock_st.session_state.get('spread_window') == 30
 
-    def test_load_last_pair_returns_dict(self):
-        """load_last_pair возвращает словарь"""
-        with patch('services.state_manager.LOCAL') as mock_local:
-            mock_local.get.return_value = {"b1": "RU000A1038V6", "b2": "RU000A1038V7"}
+    def test_sync_to_url_writes_params(self):
+        """sync_to_url записывает параметры в URL"""
+        mock_st.session_state = {
+            'period': 365,
+            'spread_window': 30,
+            'z_threshold': 2.0,
+        }
+        mock_st.query_params = {}
+        
+        from services.state_manager import sync_to_url
+        sync_to_url()
+        
+        assert mock_st.query_params.get('period') == '365'
+        assert mock_st.query_params.get('spread_window') == '30'
+        assert mock_st.query_params.get('z_threshold') == '2.0'
 
-            from services.state_manager import load_last_pair
-            result = load_last_pair()
+    def test_sync_to_url_includes_bonds(self):
+        """sync_to_url сохраняет ISIN облигаций"""
+        mock_st.session_state = {
+            'period': 365,
+            'bonds': {'RU000A1038V6': {}, 'RU000A1038V7': {}},
+            'selected_bond1': 0,
+            'selected_bond2': 1,
+        }
+        mock_st.query_params = {}
+        
+        from services.state_manager import sync_to_url
+        sync_to_url()
+        
+        assert mock_st.query_params.get('b1') == 'RU000A1038V6'
+        assert mock_st.query_params.get('b2') == 'RU000A1038V7'
 
-            assert result == {"b1": "RU000A1038V6", "b2": "RU000A1038V7"}
-            mock_local.get.assert_called_once_with("last_pair")
+    def test_save_last_pair_updates_url(self):
+        """save_last_pair обновляет URL"""
+        mock_st.query_params = {}
+        
+        from services.state_manager import save_last_pair
+        save_last_pair('ISIN1', 'ISIN2')
+        
+        assert mock_st.query_params.get('b1') == 'ISIN1'
+        assert mock_st.query_params.get('b2') == 'ISIN2'
+
+    def test_load_last_pair_from_url(self):
+        """load_last_pair читает пару из URL"""
+        mock_st.query_params = {'b1': 'ISIN1', 'b2': 'ISIN2'}
+        
+        from services.state_manager import load_last_pair
+        result = load_last_pair()
+        
+        assert result['b1'] == 'ISIN1'
+        assert result['b2'] == 'ISIN2'
 
     def test_load_last_pair_empty(self):
-        """load_last_pair возвращает пустой словарь если нет данных"""
-        with patch('services.state_manager.LOCAL') as mock_local:
-            mock_local.get.return_value = None
+        """load_last_pair возвращает пустой dict если нет параметров"""
+        mock_st.query_params = {}
+        
+        from services.state_manager import load_last_pair
+        result = load_last_pair()
+        
+        assert result == {}
 
-            from services.state_manager import load_last_pair
-            result = load_last_pair()
+    def test_get_bond_indices_from_url(self):
+        """get_bond_indices_from_url возвращает индексы по ISIN"""
+        from services.state_manager import get_bond_indices_from_url
+        
+        # Создаём mock bonds
+        bond1 = Mock(isin='ISIN_A')
+        bond2 = Mock(isin='ISIN_B')
+        bond3 = Mock(isin='ISIN_C')
+        bonds = [bond1, bond2, bond3]
+        
+        mock_st.query_params = {'b1': 'ISIN_C', 'b2': 'ISIN_A'}
+        
+        idx1, idx2 = get_bond_indices_from_url(bonds)
+        
+        assert idx1 == 2  # ISIN_C на позиции 2
+        assert idx2 == 0  # ISIN_A на позиции 0
 
-            assert result == {}
-
-    def test_save_session_collects_all_keys(self):
-        """save_session собирает все ключи из session_state"""
-        with patch('services.state_manager.SESSION') as mock_session:
-            with patch('services.state_manager.st') as mock_st:
-                mock_st.session_state = {
-                    'period': 365,
-                    'spread_window': 30,
-                    'z_threshold': 2.0,
-                    'g_spread_period': 365,
-                    'g_spread_window': 30,
-                    'g_spread_z_threshold': 2.0,
-                    'candle_interval': '60',
-                    'candle_days': 30,
-                    'auto_refresh': False,
-                    'refresh_interval': 60,
-                }
-
-                from services.state_manager import save_session
-                save_session()
-
-                # Проверяем что set был вызван
-                assert mock_session.set.called
-                call_args = mock_session.set.call_args
-                assert call_args[0][0] == "settings"
-
-                # Проверяем что все ключи собраны
-                settings = call_args[0][1]
-                assert settings['period'] == 365
-                assert settings['spread_window'] == 30
-                assert settings['candle_interval'] == '60'
-
-    def test_load_session_updates_session_state(self):
-        """load_session обновляет session_state из sessionStorage"""
-        with patch('services.state_manager.SESSION') as mock_session:
-            with patch('services.state_manager.st') as mock_st:
-                mock_session.get.return_value = {
-                    'period': 180,
-                    'spread_window': 45,
-                    'z_threshold': 2.5,
-                    'g_spread_period': 730,
-                    'g_spread_window': 60,
-                    'g_spread_z_threshold': 1.5,
-                    'candle_interval': '10',
-                    'candle_days': 7,
-                    'auto_refresh': True,
-                    'refresh_interval': 120,
-                }
-                mock_st.session_state = {}
-
-                from services.state_manager import load_session
-                load_session()
-
-                assert mock_st.session_state['period'] == 180
-                assert mock_st.session_state['spread_window'] == 45
-                assert mock_st.session_state['candle_interval'] == '10'
-                assert mock_st.session_state['auto_refresh'] == True
-
-    def test_load_session_empty_storage(self):
-        """load_session не падает при пустом хранилище"""
-        with patch('services.state_manager.SESSION') as mock_session:
-            with patch('services.state_manager.st') as mock_st:
-                mock_session.get.return_value = None
-                mock_st.session_state = {}
-
-                from services.state_manager import load_session
-                # Не должно выбросить исключение
-                load_session()
-
-                # session_state остаётся пустым
-                assert mock_st.session_state == {}
+    def test_get_bond_indices_defaults(self):
+        """get_bond_indices_from_url возвращает defaults если нет параметров"""
+        from services.state_manager import get_bond_indices_from_url
+        
+        bond1 = Mock(isin='ISIN_A')
+        bond2 = Mock(isin='ISIN_B')
+        bonds = [bond1, bond2]
+        
+        mock_st.query_params = {}
+        
+        idx1, idx2 = get_bond_indices_from_url(bonds)
+        
+        assert idx1 == 0
+        assert idx2 == 1
