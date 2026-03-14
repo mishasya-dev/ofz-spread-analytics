@@ -273,8 +273,8 @@ def get_moex_client():
 @st.cache_data(ttl=300)
 def fetch_trading_data_cached(secid: str) -> Dict:
     """Получить торговые данные с кэшированием"""
-    with MOEXClient() as client:
-        return get_trading_data(secid, client=client)
+    from services.data_loader import fetch_trading_data
+    return fetch_trading_data(secid)
 
 
 # Максимальный период для кэширования (2 года)
