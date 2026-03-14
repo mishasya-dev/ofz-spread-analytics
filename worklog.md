@@ -1180,6 +1180,71 @@ def test_spread_color():
 
 ---
 
+## v0.4.1 — Рефакторинг app.py (14.03.2026)
+
+### Проблема
+
+`app.py` содержал ~1595 строк с дублирующимся кодом, уже реализованным в сервисах.
+
+### Решение: Удаление дубликатов
+
+Вынесены функции в существующие сервисы:
+
+| Функция | Было (строк) | Стало | Сервис |
+|---------|--------------|-------|--------|
+| `update_database_full()` | 78 | Импорт | `services/data_loader.py` |
+| `fetch_trading_data_cached()` | 5 | Обёртка | `services/data_loader.py` |
+| `_fetch_all_historical_data()` | 48 | Удалён | — |
+| `fetch_historical_data_cached()` | 18 | Обёртка | `services/data_loader.py` |
+| `_fetch_all_candle_data()` | 110 | Удалён | — |
+| `fetch_candle_data_cached()` | 17 | Обёртка | `services/data_loader.py` |
+
+### Результат
+
+| Метрика | Значение |
+|---------|----------|
+| **Было** | 1595 строк |
+| **Стало** | 1314 строк |
+| **Удалено** | ~280 строк (18%) |
+
+### Архитектура после рефакторинга
+
+```
+app.py (Streamlit UI + @st.cache_data декораторы)
+    ↓ вызывает
+services/data_loader.py (бизнес-логика загрузки)
+    ↓ использует
+api/moex_*.py (API клиенты MOEX)
+```
+
+### Принцип
+
+- `app.py` — только Streamlit-специфичный код (кэширование, UI)
+- `services/*.py` — бизнес-логика (можно тестировать без Streamlit)
+- `api/*.py` — клиенты внешних API
+
+### Коммиты
+
+```
+977d78b refactor: use data_loader.fetch_candle_data in cached wrapper
+e464c09 refactor: use data_loader.fetch_historical_data in cached wrapper
+6253954 refactor: use data_loader.fetch_trading_data in cached wrapper
+6bf3160 refactor: remove duplicate update_database_full from app.py
+```
+
+### Тесты
+
+```
+446 passed, 2 failed (UI tests), 12 errors (Playwright)
+```
+
+### Git
+
+- Ветка: `feature/g-spread-yearyields-method`
+- Push: https://github.com/mishasya-dev/ofz-spread-analytics
+
+---
+
 ## ✅ Реализованные тесты v0.3.0 (28.02.2026)
 
 ### Созданные файлы
@@ -2529,5 +2594,27 @@ Stage Summary:
 - **app.py**: Изменена функция calculate_bond_g_spread(), добавлен параметр zcyc_period
 - **Тесты**: 446 passed, ZCYC тесты проходят успешно
 - **Кэш**: zcyc_history_raw наполняется инкрементально при каждой загрузке
+
+---
+
+---
+Task ID: 2
+Agent: Super Z (main)
+Task: Исправление отображения G-spread при одинаковых облигациях
+
+Work Log:
+- Найдена проблема: при bond1 == bond2 данные дублировались в df_res
+- df_res = pd.concat([df1_data, df2_data]) создавал 2N строк вместо N
+- create_g_spread_dashboard рисовал дублирующиеся линии
+- Добавлена проверка same_bonds = (bond1.isin == bond2.isin)
+- При одинаковых облигациях g_spread_df2 не загружается (пустой DataFrame)
+- Метрики показываются в одном столбце, а не в двух
+- df_res не содержит дубликатов
+- График create_g_spread_chart_single только один
+
+Stage Summary:
+- **app.py**: Добавлена переменная same_bonds, условная логика отображения
+- **Результат**: При одинаковых облигациях показывается одна метрика и один график
+- **Коммит**: e284359
 
 ---

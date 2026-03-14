@@ -1,181 +1,141 @@
-# Session Context - 13.03.2026
+# Session Context - 14.03.2026
 
 ## Project State
 
 ### Git Information
 - **Repository**: https://github.com/mishasya-dev/ofz-spread-analytics
 - **Branch**: `feature/g-spread-yearyields-method`
-- **Last Commit**: `5921830` - perf: optimize ZCYC loading - load all bonds at once
+- **Last Commits**: 
+  - `977d78b` - refactor: use data_loader.fetch_candle_data in cached wrapper
+  - `e464c09` - refactor: use data_loader.fetch_historical_data in cached wrapper
+  - `6253954` - refactor: use data_loader.fetch_trading_data in cached wrapper
+  - `6bf3160` - refactor: remove duplicate update_database_full from app.py
 
 ### Database Status
 - **Location**: `data/ofz_data.db`
 - **Tables**: bonds, daily_ytm, intraday_ytm, spreads, ns_params, g_spreads, zcyc_cache, zcyc_empty_dates
 - **Bonds Tracked**: 32+ (все ОФЗ с ZCYC данными)
 
-## Key Change: G-Spread Methodology (v0.8.0)
+## Recent Changes: Рефакторинг app.py (14.03.2026)
 
-### Problem
-- Nelson-Siegel formula: ~90-100 bp ошибка
-- Yearyields интерполяция: ~10-15 bp ошибка
+### Проблема
+`app.py` содержал ~1595 строк с дублирующимся кодом, уже реализованным в `services/data_loader.py`.
 
-### Solution: Direct MOEX ZCYC API
-**G-spread теперь берётся НАПРЯМУЮ из MOEX ZCYC API:**
+### Решение
+Удалены дубликаты, функции заменены на импорты из сервисов:
+
+```python
+# app.py - до рефакторинга
+def update_database_full(bonds_list=None, progress_callback=None):
+    # 78 строк кода...
+
+# app.py - после рефакторинга  
+from services.data_loader import update_database_full
+```
+
+### Результат
+
+| Метрика | До | После |
+|---------|-----|-------|
+| Строк в app.py | 1595 | 1314 |
+| Удалено дубликатов | - | ~280 строк (18%) |
+
+### Архитектура
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    app.py (UI Layer)                         │
+│  - Streamlit компоненты                                      │
+│  - @st.cache_data декораторы                                 │
+│  - Обёртки над сервисами                                     │
+└─────────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────────┐
+│                 services/ (Business Logic)                   │
+│  - data_loader.py → загрузка данных с MOEX                   │
+│  - g_spread_calculator.py → статистика G-spread              │
+│  - spread_calculator.py → статистика spread                  │
+│  - candle_service.py → работа со свечами                     │
+└─────────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────────┐
+│                    api/ (External APIs)                      │
+│  - moex_client.py → единый клиент с rate limiting            │
+│  - moex_zcyc.py → ZCYC данные (G-spread)                     │
+│  - moex_history.py → исторические YTM                        │
+│  - moex_candles.py → свечи                                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Key Change: G-Spread Methodology (v0.4.0)
+
+### G-spread из MOEX ZCYC API
+**G-spread теперь берётся НАПРЯМУЮ из MOEX:**
 - `trdyield` — рыночная YTM облигации
 - `clcyield` — теоретическая КБД от MOEX
 - `G-spread = trdyield - clcyield` (уже рассчитан MOEX!)
 - **Ошибка: 0 bp** ✅
 
-### API Endpoints
-```
-GET /engines/stock/zcyc.json?date=YYYY-MM-DD
-Returns: securities data with trdyield, clcyield, crtduration (32 облигации!)
-```
-
-### Key Functions
-```python
-from api.moex_zcyc import get_zcyc_history_parallel
-from core.db import get_g_spread_repo
-
-repo = get_g_spread_repo()
-
-# Загрузка ВСЕХ облигаций за период (оптимизировано!)
-df = get_zcyc_history_parallel(
-    start_date=start_date,
-    end_date=end_date,
-    isin=None,  # None = все облигации!
-    use_cache=True,
-    save_callback=repo.save_zcyc,
-    max_workers=5
-)
-
-# Фильтрация по конкретному ISIN (из кэша, мгновенно)
-df_filtered = get_zcyc_history_parallel(
-    start_date=start_date,
-    end_date=end_date,
-    isin="SU26224RMFS4",  # Конкретная облигация
-    use_cache=True
-)
-```
-
-## 🚀 Optimizations (13.03.2026)
-
-### ZCYC Loading Optimization
-**Проблема:** ZCYC загружался отдельно для каждой облигации = N × D запросов
-
-**Решение:** MOEX API возвращает ВСЕ 32 облигации за один запрос!
+### Оптимизация загрузки ZCYC
 ```
 Было:  N облигаций × D дней запросов
 Стало: D дней запросов (все облигации вместе)
-```
-
-**Изменения в `api/moex_zcyc.py`:**
-1. Проверяем кэш БЕЗ фильтрации по ISIN (получаем все даты)
-2. Загружаем ВСЕ облигации с MOEX (не фильтруем при загрузке)
-3. Сохраняем ВСЕ облигации в БД (`zcyc_cache`)
-4. Фильтруем по ISIN только при возврате результата
-
-**Результат:**
-| Метрика | До | После |
-|---------|-----|-------|
-| Запросов для 5 облигаций, 250 дней | 1250 | 250 |
-| Сокращение | - | **5x** |
-
-## Weekend/Holiday Handling
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Генерация trading_days                                      │
-├─────────────────────────────────────────────────────────────┤
-│  - Только пн-пт (сб/вс исключаются)                         │
-│  - Праздничные будние дни включаются                        │
-└─────────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────────┐
-│  Загрузка с MOEX                                             │
-├─────────────────────────────────────────────────────────────┤
-│  - Рабочий день → данные в zcyc_cache                        │
-│  - Праздник → пустой ответ → дата в zcyc_empty_dates        │
-└─────────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────────┐
-│  Повторная загрузка                                          │
-├─────────────────────────────────────────────────────────────┤
-│  - Проверяем zcyc_empty_dates → исключаем праздники         │
-│  - Берём данные из zcyc_cache                               │
-└─────────────────────────────────────────────────────────────┘
+Сокращение: 5x
 ```
 
 ## Caching Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Первый запрос периода                                      │
-├─────────────────────────────────────────────────────────────┤
-│  1. Проверка zcyc_empty_dates → исключаем праздники         │
-│  2. Проверка zcyc_cache (все даты, без ISIN фильтра)        │
-│  3. Дозагрузка только недостающих дней с MOEX               │
-│  4. Сохранение ВСЕХ облигаций в zcyc_cache                  │
-│  5. Сохранение праздников в zcyc_empty_dates                │
-│  6. Кэширование результата в Streamlit                      │
+│  Streamlit Cache (@st.cache_data)                           │
+│  - TTL: 60 сек (свечи), 300 сек (история), 3600 сек (NS)    │
+│  - Инвалидация: вручную или при обновлении БД               │
 └─────────────────────────────────────────────────────────────┘
-
+                          ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  Повторный запрос (другой ISIN, те же даты)                 │
-├─────────────────────────────────────────────────────────────┤
-│  1. Проверка zcyc_cache → ВСЕ даты уже есть!                │
-│  2. Фильтрация по ISIN локально                              │
-│  3. Мгновенный возврат (0.00 сек)                           │
+│  SQLite Cache (zcyc_cache)                                  │
+│  - Все облигации за все даты                                │
+│  - Инкрементальное обновление                               │
+└─────────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────────┐
+│  MOEX API                                                    │
+│  - Только недостающие данные                                │
+│  - Параллельная загрузка (5 workers)                        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## Database Tables
 
-| Table | Purpose |
-|-------|---------|
-| `zcyc_cache` | Кэш ZCYC данных (G-spread для ВСЕХ облигаций) |
-| `zcyc_empty_dates` | Праздники (нет торгов) |
-| `g_spreads` | Рассчитанные G-spread (deprecated, используем zcyc_cache) |
-| `ns_params` | Параметры Nelson-Siegel (deprecated) |
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    API Layer                                 │
-│  api/moex_zcyc.py → ZCYC данные (ВСЕ облигации сразу)       │
-│  api/moex_client.py → Единый клиент с rate limiting         │
-└─────────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────────┐
-│                 Business Logic                               │
-│  services/g_spread_calculator.py → статистика и сигналы     │
-│  services/candle_processor_ytm_for_bonds.py → YTM расчёт    │
-└─────────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────────┐
-│                  Database Layer                              │
-│  core/db/g_spread_repo.py → ZCYC кэш + пустые даты          │
-│  core/db/ytm_repo.py → YTM история                          │
-└─────────────────────────────────────────────────────────────┘
-```
+| Table | Purpose | Records |
+|-------|---------|---------|
+| `bonds` | Облигации (is_favorite) | 32+ |
+| `daily_ytm` | Дневные YTM | ~16000 |
+| `intraday_ytm` | Внутридневные YTM | ~50000 |
+| `zcyc_cache` | Кэш ZCYC (G-spread) | ~16000 |
+| `zcyc_empty_dates` | Праздники | ~50 |
+| `ns_params` | Nelson-Siegel (deprecated) | ~500 |
+| `g_spreads` | G-spread (deprecated) | — |
 
 ## Key Files Reference
 
-### Core Files
+### Core Files (после рефакторинга)
 ```
-api/moex_zcyc.py                         - ZCYC API (оптимизировано: все облигации)
-api/moex_client.py                       - Единый MOEX клиент с rate limiting
-core/db/g_spread_repo.py                 - ZCYC cache + empty dates
-services/g_spread_calculator.py          - G-spread stats & signals
+app.py                                   - 1314 строк (UI + кэширование)
+services/data_loader.py                  - Загрузка данных (330 строк)
+services/g_spread_calculator.py          - G-spread статистика
+services/spread_calculator.py            - Spread статистика
+api/moex_zcyc.py                         - ZCYC API (850 строк)
+api/moex_client.py                       - MOEX клиент
+core/db/g_spread_repo.py                 - ZCYC cache repo
 components/charts.py                     - Chart builders
-app.py                                   - Main Streamlit application
 ```
 
 ### Tests
 ```
-tests/test_zcyc_optimization.py          - Тесты оптимизации ZCYC
-test_zcyc.py                             - 7 tests for ZCYC functionality
-tests/                                   - 400+ tests total
+tests/                                   - 446+ tests total
+test_zcyc_optimization.py                - Тесты оптимизации ZCYC
+test_app_integration.py                  - Интеграционные тесты
 ```
 
 ## Deprecated Code (DO NOT USE)
@@ -184,38 +144,33 @@ tests/                                   - 400+ tests total
 # DEPRECATED - даёт ~90-100 bp ошибку:
 from services.g_spread_calculator import nelson_siegel
 
-# DEPRECATED - заменено на get_zcyc_data_for_date():
-from api.moex_zcyc import get_yearyields_for_date
-
-# DEPRECATED - заменено на get_zcyc_history_parallel():
-from services.g_spread_calculator import calculate_g_spread_history
+# DEPRECATED - используйте services/data_loader.py:
+# - _fetch_all_historical_data()
+# - _fetch_all_candle_data()
 ```
 
 ## Notes for Next Session
 
-- Working directory: `/home/z/my-project/`
-- Run tests: `python tests/test_zcyc_optimization.py`
+- Working directory: `/home/z/my-project/ofz-spread-analytics/`
+- Run tests: `pytest tests/ -q`
 - Start app: `streamlit run app.py`
 - Database: `data/ofz_data.db`
 
 ### Completed Tasks
-- [x] Implement get_zcyc_data_for_date() - exact G-spread from MOEX
-- [x] Implement get_zcyc_history_parallel() - parallel loading with 5 workers
+- [x] Implement G-spread from MOEX ZCYC API (0 bp error)
+- [x] Optimize ZCYC loading - load ALL bonds at once (5x speedup)
 - [x] Add zcyc_cache table for caching ZCYC data
 - [x] Add zcyc_empty_dates table for holidays
-- [x] Add Streamlit cache for ZCYC (no TTL - historical data immutable)
-- [x] Update README with new architecture
-- [x] Create comprehensive test_zcyc.py
-- [x] **Optimize ZCYC loading - load ALL bonds at once (5x speedup)**
-- [x] **Fix duplicate element ID for G-spread charts**
-- [x] **Add warning when same bond selected in both dropdowns**
+- [x] Fix duplicate element ID for G-spread charts
+- [x] Add warning when same bond selected in both dropdowns
+- [x] **Refactor app.py - remove ~280 lines of duplicate code**
+- [x] **Use services/data_loader.py for data loading**
 
 ### Potential Future Tasks
 - [ ] Add daily snapshot job for ZCYC data
 - [ ] Implement G-spread alerts/notifications
-- [ ] Add more bond pairs for analysis
-- [ ] Create API documentation with OpenAPI
 - [ ] Merge feature branch to master
+- [ ] Further split sidebar into components/sidebar.py
 
 ---
-*Session saved: 2026-03-13 UTC*
+*Session saved: 2026-03-14 UTC*
