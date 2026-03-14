@@ -615,6 +615,10 @@ def get_zcyc_history(
             client.__exit__(None, None, None)
 
 
+# Максимальное количество дней в одном батче для MOEX API
+MAX_DAYS_PER_BATCH = 180
+
+
 def get_zcyc_history_parallel(
     start_date: date,
     end_date: date = None,
@@ -630,6 +634,9 @@ def get_zcyc_history_parallel(
 
     Использует MOEXClient.request_batch для параллельных запросов.
     Ускорение в 3-5 раз по сравнению с последовательной загрузкой.
+    
+    БАТЧИНГ: Загрузка разбивается на батчи по 180 дней для надёжности MOEX API.
+    Пример: 730 дней = 4 батча по ~180 дней каждый.
 
     Args:
         start_date: Начальная дата
@@ -717,84 +724,112 @@ def get_zcyc_history_parallel(
         client.__enter__()
 
     try:
-        # Параллельная загрузка через request_batch
+        # ==========================================
+        # БАТЧИНГ: Разбиваем на батчи по 180 дней
+        # ==========================================
+        # Это нужно для надёжности MOEX API:
+        # - Слишком много параллельных запросов могут вызвать 429
+        # - 180 дней ≈ 130 торговых дней — безопасный размер батча
+        # - 730 дней = 4 батча по ~180 дней каждый
+        
         total = len(dates_to_fetch)
-        new_data = []
-        empty_dates = []
+        num_batches = (total + MAX_DAYS_PER_BATCH - 1) // MAX_DAYS_PER_BATCH
+        
+        logger.info(f"Загрузка ZCYC: {total} дней в {num_batches} батчах (по {MAX_DAYS_PER_BATCH} дней)")
+        
+        all_new_data = []
+        all_empty_dates = []
+        completed_total = 0
+        
+        for batch_num in range(num_batches):
+            batch_start = batch_num * MAX_DAYS_PER_BATCH
+            batch_end = min((batch_num + 1) * MAX_DAYS_PER_BATCH, total)
+            batch_dates = dates_to_fetch[batch_start:batch_end]
+            
+            logger.info(f"Батч {batch_num + 1}/{num_batches}: дни {batch_start + 1}-{batch_end} ({len(batch_dates)} дней)")
+            
+            # Подготавливаем запросы для текущего батча
+            requests_list = [
+                (
+                    "/engines/stock/zcyc.json",
+                    {"iss.meta": "off", "date": day.strftime("%Y-%m-%d")}
+                )
+                for day in batch_dates
+            ]
 
-        # Подготавливаем запросы
-        requests_list = [
-            (
-                "/engines/stock/zcyc.json",
-                {"iss.meta": "off", "date": day.strftime("%Y-%m-%d")}
-            )
-            for day in dates_to_fetch
-        ]
+            # Запускаем параллельные запросы для батча
+            futures = client.request_batch(requests_list)
 
-        # Запускаем параллельные запросы
-        futures = client.request_batch(requests_list)
-
-        # Собираем результаты
-        completed = 0
-        for i, (future, day) in enumerate(zip(futures, dates_to_fetch)):
-            try:
-                response = future.result(timeout=60)
-                data = response.json()
-
-                securities = data.get("securities", {})
-                if securities.get("data"):
-                    df = pd.DataFrame(
-                        securities["data"],
-                        columns=securities.get("columns", [])
-                    )
-                    df = df[df['clcyield'].notna() & df['trdyield'].notna()]
-
-                    if not df.empty:
-                        result_df = pd.DataFrame({
-                            'date': pd.to_datetime(day),
-                            'secid': df['secid'],
-                            'shortname': df['shortname'],
-                            'trdyield': df['trdyield'].astype(float),
-                            'clcyield': df['clcyield'].astype(float),
-                            'duration_days': df['crtduration'].astype(float),
-                        })
-                        result_df['g_spread_bp'] = (result_df['trdyield'] - result_df['clcyield']) * 100
-
-                        # ОПТИМИЗАЦИЯ: НЕ фильтруем по ISIN при загрузке!
-                        # Сохраняем ВСЕ облигации в БД, фильтруем только при возврате
-                        if not result_df.empty:
-                            new_data.append(result_df)
-                else:
-                    empty_dates.append(day)
-
-            except Exception as e:
-                logger.warning(f"Ошибка загрузки {day}: {e}")
-                empty_dates.append(day)
-
-            completed += 1
-            if progress_callback and (completed % 10 == 0 or completed == total):
-                progress_callback(completed, total, day)
-
-        # Сохраняем пустые даты
-        if empty_dates and use_cache:
-            try:
-                from core.db import get_g_spread_repo
-                repo = get_g_spread_repo()
-                saved_empty = repo.save_empty_dates(empty_dates)
-                logger.info(f"Сохранено {saved_empty} пустых дат")
-            except Exception as e:
-                logger.warning(f"Ошибка при сохранении пустых дат: {e}")
-
-        if new_data:
-            new_df = pd.concat(new_data, ignore_index=True)
-            all_data.append(new_df)
-
-            if use_cache and save_callback:
+            # Собираем результаты батча
+            batch_new_data = []
+            batch_empty_dates = []
+            
+            for i, (future, day) in enumerate(zip(futures, batch_dates)):
                 try:
-                    saved = save_callback(new_df)
-                    logger.info(f"Сохранено в кэш: {saved} записей")
+                    response = future.result(timeout=60)
+                    data = response.json()
+
+                    securities = data.get("securities", {})
+                    if securities.get("data"):
+                        df = pd.DataFrame(
+                            securities["data"],
+                            columns=securities.get("columns", [])
+                        )
+                        df = df[df['clcyield'].notna() & df['trdyield'].notna()]
+
+                        if not df.empty:
+                            result_df = pd.DataFrame({
+                                'date': pd.to_datetime(day),
+                                'secid': df['secid'],
+                                'shortname': df['shortname'],
+                                'trdyield': df['trdyield'].astype(float),
+                                'clcyield': df['clcyield'].astype(float),
+                                'duration_days': df['crtduration'].astype(float),
+                            })
+                            result_df['g_spread_bp'] = (result_df['trdyield'] - result_df['clcyield']) * 100
+
+                            # ОПТИМИЗАЦИЯ: НЕ фильтруем по ISIN при загрузке!
+                            # Сохраняем ВСЕ облигации в БД, фильтруем только при возврате
+                            if not result_df.empty:
+                                batch_new_data.append(result_df)
+                    else:
+                        batch_empty_dates.append(day)
+
                 except Exception as e:
-                    logger.warning(f"Ошибка при сохранении в кэш: {e}")
+                    logger.warning(f"Ошибка загрузки {day}: {e}")
+                    batch_empty_dates.append(day)
+
+                completed_total += 1
+                if progress_callback and (completed_total % 10 == 0 or completed_total == total):
+                    progress_callback(completed_total, total, day)
+            
+            # Сохраняем данные после каждого батча (инкрементально)
+            if batch_new_data:
+                batch_df = pd.concat(batch_new_data, ignore_index=True)
+                all_new_data.extend(batch_new_data)
+                all_data.append(batch_df)
+                
+                if use_cache and save_callback:
+                    try:
+                        saved = save_callback(batch_df)
+                        logger.info(f"Батч {batch_num + 1}: сохранено в кэш {saved} записей")
+                    except Exception as e:
+                        logger.warning(f"Ошибка при сохранении батча в кэш: {e}")
+            
+            # Сохраняем пустые даты после каждого батча
+            if batch_empty_dates and use_cache:
+                all_empty_dates.extend(batch_empty_dates)
+                try:
+                    from core.db import get_g_spread_repo
+                    repo = get_g_spread_repo()
+                    saved_empty = repo.save_empty_dates(batch_empty_dates)
+                    logger.info(f"Батч {batch_num + 1}: сохранено {saved_empty} пустых дат")
+                except Exception as e:
+                    logger.warning(f"Ошибка при сохранении пустых дат: {e}")
+
+        # Итоговая статистика
+        if all_new_data:
+            logger.info(f"Загрузка завершена: {len(all_new_data)} записей, {len(all_empty_dates)} пустых дат")
 
         if not all_data:
             return pd.DataFrame()

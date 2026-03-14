@@ -622,7 +622,8 @@ def calculate_bond_g_spread(
     ns_params_df: pd.DataFrame,
     window: int = 30,
     maturity_date: date = None,
-    use_duration: bool = False
+    use_duration: bool = False,
+    zcyc_period: int = None
 ) -> Tuple[pd.DataFrame, float]:
     """
     Рассчитать G-spread для облигации с Z-Score и ADF тестом
@@ -637,33 +638,32 @@ def calculate_bond_g_spread(
     - Проверяем zcyc_history_raw, дозагружаем недостающие даты
     - g_spreads таблица НЕ используется (устарела)
     
+    ПЕРИОД ZCYC:
+    - Определяется параметром zcyc_period (по умолчанию 365 дней)
+    - НЕ зависит от daily_df! ZCYC загружается за полный период
+    - daily_df используется только для ограничения графика (опционально)
+    
     Args:
         isin: ISIN облигации
-        daily_df: DataFrame с YTM облигации (для определения периода)
+        daily_df: DataFrame с YTM облигации (для ограничения графика, НЕ периода ZCYC)
         ns_params_df: DataFrame с параметрами NS (НЕ ИСПОЛЬЗУЕТСЯ)
         window: Окно для rolling Z-Score
         maturity_date: Дата погашения (НЕ ИСПОЛЬЗУЕТСЯ)
         use_duration: НЕ ИСПОЛЬЗУЕТСЯ (MOEX использует дюрацию)
+        zcyc_period: Период ZCYC в днях (по умолчанию 365)
         
     Returns:
         (DataFrame с G-spread, p_value ADF теста)
     """
     from statsmodels.tsa.stattools import adfuller
     
-    # Определяем период по данным daily_df
-    if not daily_df.empty:
-        daily_df_copy = daily_df.reset_index() if daily_df.index.name else daily_df
-        if 'date' in daily_df_copy.columns or 'index' in daily_df_copy.columns:
-            date_col = 'date' if 'date' in daily_df_copy.columns else 'index'
-            dates = pd.to_datetime(daily_df_copy[date_col])
-            start_date = dates.min().date()
-            end_date = dates.max().date()
-        else:
-            start_date = date.today() - timedelta(days=365)
-            end_date = date.today()
-    else:
-        start_date = date.today() - timedelta(days=365)
-        end_date = date.today()
+    # Период ZCYC — НЕ зависит от daily_df!
+    # ZCYC всегда загружаем за указанный период
+    zcyc_days = zcyc_period or st.session_state.get('g_spread_period', 365)
+    end_date = date.today()
+    start_date = end_date - timedelta(days=zcyc_days)
+    
+    logger.info(f"ZCYC период для {isin}: {start_date} - {end_date} ({zcyc_days} дней)")
     
     # Кэшированная загрузка ZCYC из БД (zcyc_history_raw) или MOEX
     # _fetch_zcyc_cached сам проверит данные и дозагрузит недостающие даты
@@ -1402,13 +1402,16 @@ def main():
         try:
             # Рассчитываем G-spread для обеих облигаций
             # Используем точные данные MOEX (trdyield - clcyield)
+            # Период ZCYC берётся из слайдера g_spread_period (НЕ зависит от daily_df)
             g_spread_df1, p_value1 = calculate_bond_g_spread(
                 bond1.isin, g_spread_df1_raw, pd.DataFrame(),  # ns_params больше не нужен
-                window=st.session_state.g_spread_window
+                window=st.session_state.g_spread_window,
+                zcyc_period=st.session_state.g_spread_period
             )
             g_spread_df2, p_value2 = calculate_bond_g_spread(
                 bond2.isin, g_spread_df2_raw, pd.DataFrame(),
-                window=st.session_state.g_spread_window
+                window=st.session_state.g_spread_window,
+                zcyc_period=st.session_state.g_spread_period
             )
             
             # Метрики G-spread

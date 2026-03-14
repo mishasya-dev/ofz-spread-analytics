@@ -2510,3 +2510,24 @@ def get_bonds_list() -> List[BondItem]:
 ```
 
 ---
+
+---
+Task ID: 1
+Agent: Super Z (main)
+Task: Исправление логики загрузки ZCYC — убрать ограничение периода
+
+Work Log:
+- Проанализирована цепочка зависимостей: g_spread_period → daily_df → ZCYC период
+- Найдена проблема: ZCYC загружался только за период daily_df (365 дней по умолчанию)
+- Добавлен батчинг по 180 дней в get_zcyc_history_parallel() для надёжности MOEX API
+- Изменена функция calculate_bond_g_spread() — период ZCYC теперь независим от daily_df
+- Добавлен параметр zcyc_period для явного указания периода загрузки
+- Протестировано: загрузка 365 дней работает корректно (2 батча по 180 дней)
+
+Stage Summary:
+- **api/moex_zcyc.py**: Добавлен MAX_DAYS_PER_BATCH = 180, реализован батчинг
+- **app.py**: Изменена функция calculate_bond_g_spread(), добавлен параметр zcyc_period
+- **Тесты**: 446 passed, ZCYC тесты проходят успешно
+- **Кэш**: zcyc_history_raw наполняется инкрементально при каждой загрузке
+
+---
