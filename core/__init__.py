@@ -1,16 +1,14 @@
 """
 Core модули для аналитики
+
+NOTE: Removed DEAD CODE:
+- SpreadCalculator → use services/spread_calculator.py
+- SignalGenerator → use services/spread_calculator.py::generate_signal()
+- TradingSignal → not needed
+- Backtester → not used in app.py
 """
 from .ytm_calculator import YTMCalculator
-from .spread import SpreadCalculator
-from .signals import SignalGenerator, TradingSignal
-from .backtest import Backtester, BacktestResult
 
 __all__ = [
     "YTMCalculator",
-    "SpreadCalculator",
-    "SignalGenerator",
-    "TradingSignal",
-    "Backtester",
-    "BacktestResult",
 ]
