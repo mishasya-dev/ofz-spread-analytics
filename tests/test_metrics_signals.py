@@ -9,8 +9,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from components.metrics import calculate_spread_stats as metrics_calculate_spread_stats
-from components.signals import calculate_spread_stats as signals_calculate_spread_stats
+from components.metrics import calculate_spread_stats
 from components.signals import generate_signal
 
 
@@ -20,7 +19,7 @@ class TestMetricsCalculateSpreadStats:
     def test_basic_calculation(self):
         """Базовый расчёт статистики"""
         series = pd.Series([10, 20, 30, 40, 50])
-        stats = metrics_calculate_spread_stats(series)
+        stats = calculate_spread_stats(series)
 
         assert stats['mean'] == 30.0
         assert stats['median'] == 30.0
@@ -30,7 +29,7 @@ class TestMetricsCalculateSpreadStats:
     def test_percentiles(self):
         """Расчёт перцентилей"""
         series = pd.Series(range(1, 101))
-        stats = metrics_calculate_spread_stats(series)
+        stats = calculate_spread_stats(series)
 
         assert 10 < stats['p10'] < 11
         assert 25 < stats['p25'] < 26
@@ -40,41 +39,15 @@ class TestMetricsCalculateSpreadStats:
     def test_current_is_last_value(self):
         """Current = последнее значение"""
         series = pd.Series([100, 200, 300])
-        stats = metrics_calculate_spread_stats(series)
+        stats = calculate_spread_stats(series)
         assert stats['current'] == 300
 
     def test_std_calculation(self):
         """Расчёт стандартного отклонения"""
         series = pd.Series([10, 20, 30, 40, 50])
-        stats = metrics_calculate_spread_stats(series)
+        stats = calculate_spread_stats(series)
         # std of [10,20,30,40,50] = sqrt(250) ≈ 15.81
         assert 15 < stats['std'] < 16
-
-
-class TestSignalsCalculateSpreadStats:
-    """Тесты для components/signals.py::calculate_spread_stats"""
-
-    def test_basic_calculation(self):
-        """Базовый расчёт статистики"""
-        series = pd.Series([10, 20, 30, 40, 50])
-        stats = signals_calculate_spread_stats(series)
-
-        assert stats['mean'] == 30.0
-        assert stats['median'] == 30.0
-        assert stats['min'] == 10.0
-        assert stats['max'] == 50.0
-
-    def test_matches_metrics_version(self):
-        """Обе версии должны давать одинаковый результат"""
-        series = pd.Series([10, 20, 30, 40, 50, 60, 70])
-        stats_metrics = metrics_calculate_spread_stats(series)
-        stats_signals = signals_calculate_spread_stats(series)
-
-        assert stats_metrics['mean'] == stats_signals['mean']
-        assert stats_metrics['median'] == stats_signals['median']
-        assert stats_metrics['std'] == stats_signals['std']
-        assert stats_metrics['p25'] == stats_signals['p25']
-        assert stats_metrics['p75'] == stats_signals['p75']
 
 
 class TestGenerateSignal:

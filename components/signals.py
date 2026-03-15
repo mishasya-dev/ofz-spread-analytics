@@ -2,25 +2,11 @@
 Компонент для отображения торговых сигналов
 
 Содержит логику генерации и рендеринга сигналов.
+
+NOTE: calculate_spread_stats() moved to components/metrics.py
 """
 import streamlit as st
 from typing import Dict
-
-
-def calculate_spread_stats(spread_series) -> Dict:
-    """Вычисляет статистику спреда"""
-    return {
-        'mean': spread_series.mean(),
-        'median': spread_series.median(),
-        'std': spread_series.std(),
-        'min': spread_series.min(),
-        'max': spread_series.max(),
-        'p10': spread_series.quantile(0.10),
-        'p25': spread_series.quantile(0.25),
-        'p75': spread_series.quantile(0.75),
-        'p90': spread_series.quantile(0.90),
-        'current': spread_series.iloc[-1]
-    }
 
 
 def generate_signal(current_spread: float, p10: float, p25: float, p75: float, p90: float) -> Dict:
@@ -74,5 +60,3 @@ def render_signal_card(signal: Dict, bond1_name: str, bond2_name: str):
         <p><em>Сила: {signal['strength']}</em></p>
     </div>
     """, unsafe_allow_html=True)
-
-
