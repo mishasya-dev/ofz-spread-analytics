@@ -16,9 +16,9 @@ try:
         fetch_candles,
         check_comprehensive,
     )
-    from .core import YTMCalculator, SpreadCalculator, SignalGenerator, TradingSignal, Backtester
-    from .export import SignalSender, JSONFormatter, TelegramFormatter, WebhookFormatter
-    from .modes import DailyMode, IntradayMode
+    from .core import YTMCalculator
+    # NOTE: Removed DEAD CODE - SpreadCalculator, SignalGenerator, TradingSignal, Backtester
+    # Use services/spread_calculator.py instead
 except ImportError:
     # Fallback для запуска без пакета
     from config import AppConfig, BondConfig, TradingHours, BacktestConfig, SignalConfig, ExportConfig
@@ -29,11 +29,9 @@ except ImportError:
         fetch_candles,
         check_comprehensive,
     )
-    from core import YTMCalculator, SpreadCalculator, SignalGenerator, TradingSignal, Backtester
-    from export import SignalSender, JSONFormatter, TelegramFormatter, WebhookFormatter
-    from modes import DailyMode, IntradayMode
+    from core import YTMCalculator
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 __author__ = "OFZ Analytics Team"
 
 __all__ = [
@@ -44,7 +42,7 @@ __all__ = [
     "BacktestConfig",
     "SignalConfig",
     "ExportConfig",
-    # API (новая архитектура)
+    # API
     "MOEXClient",
     "TradingStatus",
     "fetch_ytm_history",
@@ -52,16 +50,4 @@ __all__ = [
     "check_comprehensive",
     # Core
     "YTMCalculator",
-    "SpreadCalculator",
-    "SignalGenerator",
-    "TradingSignal",
-    "Backtester",
-    # Export
-    "SignalSender",
-    "JSONFormatter",
-    "TelegramFormatter",
-    "WebhookFormatter",
-    # Modes
-    "DailyMode",
-    "IntradayMode",
 ]
