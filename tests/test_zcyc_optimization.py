@@ -24,25 +24,39 @@ from core.db import get_g_spread_repo, init_database
 init_database()
 
 
+def get_last_trading_day(max_days_back=7):
+    """
+    Находит последний торговый день с данными ZCYC.
+    Итерирует назад от сегодня, пропуская выходные.
+    """
+    with MOEXClient() as client:
+        for i in range(1, max_days_back + 1):
+            check_date = date.today() - timedelta(days=i)
+            data = client.get_json(
+                "/engines/stock/zcyc.json",
+                {"iss.meta": "off", "date": check_date.strftime("%Y-%m-%d")}
+            )
+            rows = data.get("securities", {}).get("data", [])
+            if len(rows) > 0:
+                return check_date, rows, data
+    return None, [], {}
+
+
 class TestZCYCOptimization:
     """Тесты для оптимизации загрузки ZCYC"""
 
     def test_zcyc_api_returns_all_bonds(self):
         """
         Тест 1: ZCYC API возвращает данные для ВСЕХ облигаций за один запрос
-        
+
         Это ключевое условие для оптимизации.
         """
-        test_date = date.today() - timedelta(days=1)
+        test_date, rows, data = get_last_trading_day()
 
-        with MOEXClient() as client:
-            data = client.get_json(
-                "/engines/stock/zcyc.json",
-                {"iss.meta": "off", "date": test_date.strftime("%Y-%m-%d")}
-            )
+        if test_date is None:
+            pytest.skip("Нет торговых дней с данными ZCYC за последнюю неделю")
 
         securities = data.get("securities", {})
-        rows = securities.get("data", [])
         columns = securities.get("columns", [])
 
         print(f"\n=== ZCYC API Response for {test_date} ===")
@@ -61,7 +75,7 @@ class TestZCYCOptimization:
     def test_load_all_vs_filtered(self):
         """
         Тест 2: Загрузка всех облигаций vs фильтрация
-        
+
         Проверяет что:
         1. Загрузка без фильтрации возвращает все облигации
         2. Фильтрация по ISIN работает корректно
@@ -70,9 +84,6 @@ class TestZCYCOptimization:
         end_date = date.today() - timedelta(days=1)
 
         repo = get_g_spread_repo()
-
-        # Очищаем кэш для чистого теста
-        # (в реальности кэш полезен, но для теста нужен чистый старт)
 
         # Загружаем без фильтрации (все облигации)
         print("\n=== Загрузка всех облигаций ===")
@@ -91,7 +102,7 @@ class TestZCYCOptimization:
         print(f"Уникальных ISIN: {all_df['secid'].nunique() if not all_df.empty else 0}")
 
         if all_df.empty:
-            print("Нет данных (возможно выходные) - пропускаем тест")
+            pytest.skip("Нет данных за последние 5 дней (возможно праздники)")
             return True
 
         # Выбираем случайный ISIN для теста фильтрации
@@ -131,7 +142,7 @@ class TestZCYCOptimization:
     def test_cached_dates_global(self):
         """
         Тест 3: Проверка глобального кэша дат
-        
+
         После загрузки без фильтрации, кэш должен содержать
         даты для всех облигаций.
         """
@@ -171,7 +182,7 @@ class TestZCYCOptimization:
 def test_full_optimization():
     """
     Полный тест оптимизации
-    
+
     Демонстрирует выигрыш от оптимизации:
     - До: N облигаций × D дней запросов
     - После: D дней запросов (все облигации загружаются сразу)
