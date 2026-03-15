@@ -8,12 +8,29 @@ import pandas as pd
 from datetime import datetime, date, timedelta
 from typing import Dict, Optional
 import logging
+import inspect
 
 from api.moex_client import MOEXClient
 from api.moex_history import fetch_ytm_history, get_trading_data
 from api.moex_candles import fetch_candles, CandleInterval
 
 logger = logging.getLogger(__name__)
+
+
+def _get_caller_info(skip_frames: int = 2) -> str:
+    """Получить информацию о вызывающей функции"""
+    try:
+        frame = inspect.currentframe()
+        for _ in range(skip_frames):
+            if frame is None:
+                return "unknown"
+            frame = frame.f_back
+        if frame is None:
+            return "unknown"
+        caller_name = frame.f_code.co_name
+        return caller_name
+    except Exception:
+        return "unknown"
 
 
 def fetch_trading_data(secid: str) -> Dict:
@@ -51,6 +68,7 @@ def fetch_historical_data(
     Returns:
         DataFrame с колонками: ytm, price, duration_days
     """
+    caller = _get_caller_info()
     start_date = date.today() - timedelta(days=days)
 
     if db is None:
@@ -61,43 +79,64 @@ def fetch_historical_data(
     db_df = db.load_daily_ytm(secid, start_date=start_date)
     last_db_date = db.get_last_daily_ytm_date(secid)
 
+    # Логируем состояние БД
+    if db_df.empty:
+        logger.info(f"[DATA] fetch_historical_data: secid={secid} days={days} caller={caller} → БД пуста, нужна полная загрузка")
+    else:
+        db_min_date = db_df.index.min().date() if hasattr(db_df.index.min(), 'date') else db_df.index.min()
+        db_max_date = db_df.index.max().date() if hasattr(db_df.index.max(), 'date') else db_df.index.max()
+        logger.info(f"[DATA] fetch_historical_data: secid={secid} days={days} caller={caller} → БД: {len(db_df)} записей, даты: {db_min_date}..{db_max_date}")
+
     # Проверяем покрытие периода
     need_reload = False
+    reload_reason = None
     if not db_df.empty:
         db_min_date = db_df.index.min().date() if hasattr(db_df.index.min(), 'date') else db_df.index.min()
+        days_diff = (db_min_date - start_date).days
+
         # Допуск 5 дней на выходные/праздники - не перезагружаем если разница небольшая
         if db_min_date > start_date + timedelta(days=5):
             need_reload = True
-            logger.info(f"Данные в БД начинаются с {db_min_date}, нужно с {start_date} - перезагружаем")
+            reload_reason = f"разница {days_diff} дней > 5"
+            logger.info(f"[DATA] fetch_historical_data: secid={secid} → ПЕРЕЗАГРУЗКА: БД с {db_min_date}, нужно с {start_date}, {reload_reason}")
         elif db_min_date > start_date:
             # Небольшая разница (до 5 дней) - это нормально, выходные/праздники
-            logger.debug(f"Данные в БД с {db_min_date}, запрошено с {start_date} - разница {(db_min_date - start_date).days} дн., ок")
+            # Проверяем, не является ли start_date выходным
+            if start_date.weekday() >= 5:  # сб=5, вс=6
+                logger.info(f"[DATA] fetch_historical_data: secid={secid} → OK: start_date={start_date} ({['пн','вт','ср','чт','пт','сб','вс'][start_date.weekday()]}) — выходной, данные с {db_min_date} корректны")
+            else:
+                logger.info(f"[DATA] fetch_historical_data: secid={secid} → OK: разница {days_diff} дней (праздники?), данные с {db_min_date}")
 
     if not db_df.empty and last_db_date and not need_reload:
         days_since_update = (date.today() - last_db_date).days
 
         if days_since_update <= 1:
-            logger.info(f"Загружены дневные YTM из БД для {secid}: {len(db_df)} записей")
+            logger.info(f"[DATA] fetch_historical_data: secid={secid} → возврат из БД (актуально, обновлено {days_since_update} дн. назад)")
             return db_df
         else:
             # Инкрементальное обновление
             new_start = last_db_date + timedelta(days=1)
-            
+            logger.info(f"[DATA] fetch_historical_data: secid={secid} → ИНКРЕМЕНТ: обновление с {new_start} (последняя дата в БД: {last_db_date})")
+
             with MOEXClient() as client:
-                new_df = fetch_ytm_history(secid, start_date=new_start, client=client)
+                new_df = fetch_ytm_history(secid, start_date=new_start, client=client, reason="инкремент")
 
             if not new_df.empty:
                 db.save_daily_ytm(secid, new_df)
                 db_df = pd.concat([db_df, new_df])
                 db_df = db_df[~db_df.index.duplicated(keep='last')]
+                logger.info(f"[DATA] fetch_historical_data: secid={secid} → инкремент: добавлено {len(new_df)} записей")
     else:
         # Полная загрузка
+        reason_str = reload_reason or "БД пуста"
+        logger.info(f"[DATA] fetch_historical_data: secid={secid} → ПОЛНАЯ ЗАГРУЗКА: {reason_str}")
+
         with MOEXClient() as client:
-            db_df = fetch_ytm_history(secid, start_date=start_date, client=client)
+            db_df = fetch_ytm_history(secid, start_date=start_date, client=client, reason="полная загрузка")
 
         if not db_df.empty:
             db.save_daily_ytm(secid, db_df)
-            logger.info(f"Сохранены дневные YTM в БД для {secid}: {len(db_df)} записей")
+            logger.info(f"[DATA] fetch_historical_data: secid={secid} → сохранено {len(db_df)} записей в БД")
 
     return db_df
 

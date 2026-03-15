@@ -8,10 +8,34 @@ from datetime import datetime, date, timedelta
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 import logging
+import inspect
 
 from api.moex_client import MOEXClient
 
 logger = logging.getLogger(__name__)
+
+
+def _get_caller_info(skip_frames: int = 2) -> str:
+    """Получить информацию о вызывающей функции"""
+    try:
+        frame = inspect.currentframe()
+        for _ in range(skip_frames):
+            if frame is None:
+                return "unknown"
+            frame = frame.f_back
+        if frame is None:
+            return "unknown"
+        caller_name = frame.f_code.co_name
+        caller_module = inspect.getmodule(frame)
+        module_name = caller_module.__name__ if caller_module else "unknown"
+        # Сокращаем имя модуля
+        if module_name.startswith("services."):
+            module_name = module_name.split(".", 1)[1]
+        elif module_name.startswith("api."):
+            module_name = module_name.split(".", 1)[1]
+        return f"{module_name}.{caller_name}"
+    except Exception:
+        return "unknown"
 
 
 @dataclass
@@ -69,7 +93,8 @@ def fetch_ytm_history(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     board: str = "TQOB",
-    client: MOEXClient = None
+    client: MOEXClient = None,
+    reason: str = None
 ) -> pd.DataFrame:
     """
     Получить историю YTM облигации
@@ -80,14 +105,22 @@ def fetch_ytm_history(
         end_date: Конечная дата
         board: Торговая площадка
         client: MOEXClient
+        reason: Причина запроса (для логирования)
 
     Returns:
         DataFrame с историей YTM
     """
+    caller = _get_caller_info()
+    
     if start_date is None:
         start_date = date.today() - timedelta(days=365)
     if end_date is None:
         end_date = date.today()
+
+    # Логируем запрос ДО его выполнения
+    period_days = (end_date - start_date).days
+    reason_str = f" reason={reason}" if reason else ""
+    logger.info(f"[MOEX] fetch_ytm_history: isin={isin} period={start_date}..{end_date} ({period_days} дн.) caller={caller}{reason_str}")
 
     use_context = client is None
     if use_context:
@@ -98,8 +131,10 @@ def fetch_ytm_history(
         all_data = []
         start = 0
         batch_size = 100
+        request_count = 0
 
         while True:
+            request_count += 1
             data = client.get_json(
                 f"/history/engines/stock/markets/bonds/securities/{isin}.json",
                 {
@@ -149,6 +184,7 @@ def fetch_ytm_history(
             start += batch_size
 
         if not all_data:
+            logger.info(f"[MOEX] fetch_ytm_history: isin={isin} → пусто (запросов: {request_count})")
             return pd.DataFrame()
 
         df = pd.DataFrame(all_data)
@@ -165,6 +201,14 @@ def fetch_ytm_history(
         # Конвертируем дюрацию из дней в годы
         if "duration_days" in df.columns:
             df["duration_years"] = df["duration_days"] / 365.25
+
+        # Логируем результат
+        date_range = ""
+        if not df.empty:
+            min_date = df.index.min().strftime('%Y-%m-%d')
+            max_date = df.index.max().strftime('%Y-%m-%d')
+            date_range = f" даты: {min_date}..{max_date}"
+        logger.info(f"[MOEX] fetch_ytm_history: isin={isin} → {len(df)} записей (запросов: {request_count}){date_range}")
 
         return df
 
