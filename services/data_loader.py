@@ -65,9 +65,13 @@ def fetch_historical_data(
     need_reload = False
     if not db_df.empty:
         db_min_date = db_df.index.min().date() if hasattr(db_df.index.min(), 'date') else db_df.index.min()
-        if db_min_date > start_date:
+        # Допуск 5 дней на выходные/праздники - не перезагружаем если разница небольшая
+        if db_min_date > start_date + timedelta(days=5):
             need_reload = True
             logger.info(f"Данные в БД начинаются с {db_min_date}, нужно с {start_date} - перезагружаем")
+        elif db_min_date > start_date:
+            # Небольшая разница (до 5 дней) - это нормально, выходные/праздники
+            logger.debug(f"Данные в БД с {db_min_date}, запрошено с {start_date} - разница {(db_min_date - start_date).days} дн., ок")
 
     if not db_df.empty and last_db_date and not need_reload:
         days_since_update = (date.today() - last_db_date).days
