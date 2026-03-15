@@ -1,12 +1,8 @@
 """
 Режимы работы приложения
-"""
-from .base import DailyMode, DailyModeResult
-from .intraday import IntradayMode, IntradayModeResult
 
-__all__ = [
-    "DailyMode",
-    "DailyModeResult",
-    "IntradayMode",
-    "IntradayModeResult",
-]
+NOTE: Mode classes removed (DEAD CODE - not used in app.py)
+Functionality integrated directly into app.py
+"""
+
+__all__ = []

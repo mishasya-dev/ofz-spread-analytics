@@ -14,11 +14,21 @@ git checkout HEAD~1 -- core/exceptions.py
 
 ---
 
-## Step 2: export/ (PENDING)
+## Step 2: export/ (DELETED)
 
 **Files:**
-- `export/formatters.py`
-- `export/signal_sender.py`
+- `export/formatters.py` (DELETED)
+- `export/signal_sender.py` (DELETED)
+- `export/__init__.py` (emptied)
+
+**Reason:** DEAD CODE - не используется в app.py
+**Dependencies:** None external
+**Status:** ✅ DELETED
+
+**To rollback:**
+```bash
+git checkout HEAD~2 -- export/formatters.py export/signal_sender.py export/__init__.py __init__.py
+```
 
 ---
 
