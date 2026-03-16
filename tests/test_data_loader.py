@@ -60,31 +60,50 @@ class TestFetchTradingData:
 class TestFetchHistoricalData:
     """Тесты fetch_historical_data"""
 
+    @patch('services.trading_calendar.TradingCalendar')
     @patch('core.db.get_db_facade')
-    @patch('services.data_loader.fetch_ytm_history')
     @patch('services.data_loader.MOEXClient')
-    def test_returns_from_db_when_fresh(self, mock_client_class, mock_fetch_history, mock_get_facade):
+    def test_returns_from_db_when_fresh(self, mock_client_class, mock_get_facade, mock_calendar_class):
         """Возвращает из БД когда данные свежие"""
-        # Мокаем БД
+        # Мокаем календарь
+        mock_calendar = MagicMock()
+        mock_calendar.get_last_trading_day_before.return_value = date.today()
+        mock_calendar.get_first_trading_day_from.return_value = date.today() - timedelta(days=10)
+        mock_calendar_class.return_value = mock_calendar
+        
+        # Мокаем БД - важно: return_value для функции
         mock_db = MagicMock()
         mock_df = pd.DataFrame({
             'ytm': [16.0, 16.1, 16.2]
         }, index=pd.date_range(date.today() - timedelta(days=3), periods=3))
         mock_db.load_daily_ytm.return_value = mock_df
         mock_db.get_last_daily_ytm_date.return_value = date.today()
-        mock_get_facade.return_value = mock_db
+        mock_get_facade.return_value = mock_db  # get_db_facade() возвращает mock_db
+
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client_class.return_value = mock_client
 
         from services.data_loader import fetch_historical_data
 
         result = fetch_historical_data('SU26224RMFS4', days=10, use_cache=False)
 
+        # Если данные свежие - возвращаем из БД
         assert isinstance(result, pd.DataFrame)
 
+    @patch('services.trading_calendar.TradingCalendar')
     @patch('core.db.get_db_facade')
     @patch('services.data_loader.fetch_ytm_history')
     @patch('services.data_loader.MOEXClient')
-    def test_fetches_from_api_when_db_empty(self, mock_client_class, mock_fetch_history, mock_get_facade):
+    def test_fetches_from_api_when_db_empty(self, mock_client_class, mock_fetch_history, mock_get_facade, mock_calendar_class):
         """Загружает с API когда БД пуста"""
+        # Мокаем календарь
+        mock_calendar = MagicMock()
+        mock_calendar.get_last_trading_day_before.return_value = date.today()
+        mock_calendar.get_first_trading_day_from.return_value = date.today() - timedelta(days=10)
+        mock_calendar_class.return_value = mock_calendar
+        
         # Мокаем пустую БД
         mock_db = MagicMock()
         mock_db.load_daily_ytm.return_value = pd.DataFrame()
@@ -92,10 +111,11 @@ class TestFetchHistoricalData:
         mock_db.save_daily_ytm.return_value = 10
         mock_get_facade.return_value = mock_db
 
-        # Мокаем API
+        # Мокаем API - правильное количество значений для индекса
+        dates = pd.date_range(date.today() - timedelta(days=10), periods=10)
         mock_df = pd.DataFrame({
-            'ytm': [16.0, 16.1, 16.2]
-        }, index=pd.date_range(date.today() - timedelta(days=10), periods=10))
+            'ytm': [16.0 + i * 0.1 for i in range(10)]
+        }, index=dates)
         mock_fetch_history.return_value = mock_df
 
         mock_client = MagicMock()
@@ -110,11 +130,17 @@ class TestFetchHistoricalData:
         assert len(result) == 10
         mock_fetch_history.assert_called_once()
 
+    @patch('services.trading_calendar.TradingCalendar')
     @patch('core.db.get_db_facade')
     @patch('services.data_loader.fetch_ytm_history')
     @patch('services.data_loader.MOEXClient')
-    def test_returns_empty_on_api_error(self, mock_client_class, mock_fetch_history, mock_get_facade):
+    def test_returns_empty_on_api_error(self, mock_client_class, mock_fetch_history, mock_get_facade, mock_calendar_class):
         """Возвращает пустой DataFrame при ошибке API"""
+        # Мокаем календарь
+        mock_calendar = MagicMock()
+        mock_calendar.get_first_trading_day_from.return_value = date.today() - timedelta(days=10)
+        mock_calendar_class.return_value = mock_calendar
+        
         mock_db = MagicMock()
         mock_db.load_daily_ytm.return_value = pd.DataFrame()
         mock_db.get_last_daily_ytm_date.return_value = None
@@ -137,11 +163,12 @@ class TestFetchHistoricalData:
 class TestFetchCandleData:
     """Тесты fetch_candle_data"""
 
-    @patch('services.data_loader.BondYTMProcessor')
+    @patch('config.BondConfig')
+    @patch('services.candle_processor_ytm_for_bonds.BondYTMProcessor')
     @patch('core.db.get_db_facade')
     @patch('services.data_loader.fetch_candles')
     @patch('services.data_loader.MOEXClient')
-    def test_returns_empty_when_no_candles(self, mock_client_class, mock_fetch_candles, mock_get_facade, mock_processor_class):
+    def test_returns_empty_when_no_candles(self, mock_client_class, mock_fetch_candles, mock_get_facade, mock_processor_class, mock_bond_config_class):
         """Возвращает пустой DataFrame когда нет свечей"""
         mock_fetch_candles.return_value = pd.DataFrame()
         mock_db = MagicMock()
@@ -152,6 +179,14 @@ class TestFetchCandleData:
         mock_client.__enter__ = MagicMock(return_value=mock_client)
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client_class.return_value = mock_client
+
+        # Мокаем BondConfig
+        mock_bond_config_class.return_value = MagicMock()
+
+        # Мокаем processor
+        mock_processor = MagicMock()
+        mock_processor.add_ytm_to_candles.return_value = pd.DataFrame()
+        mock_processor_class.return_value = mock_processor
 
         from services.data_loader import fetch_candle_data
 
@@ -168,12 +203,7 @@ class TestFetchCandleData:
 class TestUpdateDatabaseFull:
     """Тесты update_database_full"""
 
-    @patch('services.data_loader.BondYTMProcessor')
-    @patch('core.db.get_db_facade')
-    @patch('services.data_loader.fetch_ytm_history')
-    @patch('services.data_loader.fetch_candles')
-    @patch('services.data_loader.MOEXClient')
-    def test_returns_empty_when_no_bonds(self, mock_client_class, mock_fetch_candles, mock_fetch_history, mock_get_facade, mock_processor_class):
+    def test_returns_error_when_no_bonds(self):
         """Возвращает ошибку когда нет облигаций"""
         from services.data_loader import update_database_full
 
@@ -182,7 +212,7 @@ class TestUpdateDatabaseFull:
         assert result['daily_ytm_saved'] == 0
         assert 'Нет облигаций' in result['errors']
 
-    @patch('services.data_loader.BondYTMProcessor')
+    @patch('services.candle_processor_ytm_for_bonds.BondYTMProcessor')
     @patch('core.db.get_db_facade')
     @patch('services.data_loader.fetch_ytm_history')
     @patch('services.data_loader.fetch_candles')

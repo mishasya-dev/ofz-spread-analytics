@@ -373,12 +373,26 @@ class TestRenderBondSelection(unittest.TestCase):
         """Возвращает кортеж индексов (bond1_idx, bond2_idx)"""
         from components.sidebar import render_bond_selection
 
-        # Создаём мок-облигации
+        # Создаём мок-облигацию с format_label
         class MockBond:
             def __init__(self, isin, name):
                 self.isin = isin
                 self.name = name
+                self.short_name = name
                 self.maturity_date = '2030-01-01'
+            
+            @property
+            def years_to_maturity(self):
+                return 5.0
+            
+            def format_label(self, ytm=None, duration_years=None):
+                parts = [self.name]
+                if ytm is not None:
+                    parts.append(f"YTM: {ytm:.2f}%")
+                if duration_years is not None:
+                    parts.append(f"Дюр: {duration_years:.1f}г.")
+                parts.append(f"{self.years_to_maturity}г. до погашения")
+                return " | ".join(parts)
 
         bonds = [MockBond('SU26221', 'ОФЗ 26221'), MockBond('SU26225', 'ОФЗ 26225')]
         trading_data = {}
@@ -400,7 +414,21 @@ class TestRenderBondSelection(unittest.TestCase):
             def __init__(self, isin, name):
                 self.isin = isin
                 self.name = name
+                self.short_name = name
                 self.maturity_date = '2030-01-01'
+            
+            @property
+            def years_to_maturity(self):
+                return 5.0
+            
+            def format_label(self, ytm=None, duration_years=None):
+                parts = [self.name]
+                if ytm is not None:
+                    parts.append(f"YTM: {ytm:.2f}%")
+                if duration_years is not None:
+                    parts.append(f"Дюр: {duration_years:.1f}г.")
+                parts.append(f"{self.years_to_maturity}г. до погашения")
+                return " | ".join(parts)
 
         bonds = [MockBond('SU26221', 'ОФЗ 26221')]
         trading_data = {
@@ -426,7 +454,15 @@ class TestRenderBondSelection(unittest.TestCase):
             def __init__(self, isin, name):
                 self.isin = isin
                 self.name = name
+                self.short_name = name
                 self.maturity_date = '2030-01-01'
+            
+            @property
+            def years_to_maturity(self):
+                return 5.0
+            
+            def format_label(self, ytm=None, duration_years=None):
+                return self.name
 
         bonds = [MockBond('SU1', 'B1'), MockBond('SU2', 'B2')]
         trading_data = {}
@@ -444,33 +480,29 @@ class TestFormatBondLabel(unittest.TestCase):
 
     def test_format_with_all_data(self):
         """Форматирование с YTM и дюрацией"""
-        from components.sidebar import format_bond_label, get_years_to_maturity
+        from utils.bond_utils import format_bond_label, BondItem
 
-        class MockBond:
-            def __init__(self):
-                self.isin = 'SU26221'
-                self.name = 'ОФЗ 26221'
-                self.maturity_date = (datetime.now() + timedelta(days=365*8)).strftime('%Y-%m-%d')
-
-        bond = MockBond()
+        bond = BondItem({
+            'isin': 'SU26221',
+            'name': 'ОФЗ 26221',
+            'maturity_date': (datetime.now() + timedelta(days=365*8)).strftime('%Y-%m-%d')
+        })
         label = format_bond_label(bond, ytm=14.5, duration_years=5.0)
 
         self.assertIn('ОФЗ 26221', label)
         self.assertIn('YTM: 14.50%', label)
         self.assertIn('Дюр: 5.0г.', label)
-        self.assertIn('г. до погашения', label)
+        self.assertIn('до погашения', label)
 
     def test_format_without_ytm(self):
         """Форматирование без YTM"""
-        from components.sidebar import format_bond_label
+        from utils.bond_utils import format_bond_label, BondItem
 
-        class MockBond:
-            def __init__(self):
-                self.isin = 'SU26221'
-                self.name = 'ОФЗ 26221'
-                self.maturity_date = (datetime.now() + timedelta(days=365*8)).strftime('%Y-%m-%d')
-
-        bond = MockBond()
+        bond = BondItem({
+            'isin': 'SU26221',
+            'name': 'ОФЗ 26221',
+            'maturity_date': (datetime.now() + timedelta(days=365*8)).strftime('%Y-%m-%d')
+        })
         label = format_bond_label(bond, ytm=None, duration_years=5.0)
 
         self.assertIn('ОФЗ 26221', label)
@@ -479,15 +511,13 @@ class TestFormatBondLabel(unittest.TestCase):
 
     def test_format_without_duration(self):
         """Форматирование без дюрации"""
-        from components.sidebar import format_bond_label
+        from utils.bond_utils import format_bond_label, BondItem
 
-        class MockBond:
-            def __init__(self):
-                self.isin = 'SU26221'
-                self.name = 'ОФЗ 26221'
-                self.maturity_date = (datetime.now() + timedelta(days=365*8)).strftime('%Y-%m-%d')
-
-        bond = MockBond()
+        bond = BondItem({
+            'isin': 'SU26221',
+            'name': 'ОФЗ 26221',
+            'maturity_date': (datetime.now() + timedelta(days=365*8)).strftime('%Y-%m-%d')
+        })
         label = format_bond_label(bond, ytm=14.5, duration_years=None)
 
         self.assertIn('YTM: 14.50%', label)
@@ -495,50 +525,44 @@ class TestFormatBondLabel(unittest.TestCase):
 
     def test_format_minimal(self):
         """Минимальное форматирование (только имя и годы)"""
-        from components.sidebar import format_bond_label
+        from utils.bond_utils import format_bond_label, BondItem
 
-        class MockBond:
-            def __init__(self):
-                self.isin = 'SU26221'
-                self.name = 'ОФЗ 26221'
-                self.maturity_date = (datetime.now() + timedelta(days=365*8)).strftime('%Y-%m-%d')
-
-        bond = MockBond()
+        bond = BondItem({
+            'isin': 'SU26221',
+            'name': 'ОФЗ 26221',
+            'maturity_date': (datetime.now() + timedelta(days=365*8)).strftime('%Y-%m-%d')
+        })
         label = format_bond_label(bond)
 
         self.assertIn('ОФЗ 26221', label)
         self.assertNotIn('YTM:', label)
         self.assertNotIn('Дюр:', label)
-        self.assertIn('г. до погашения', label)
+        self.assertIn('до погашения', label)
 
     def test_uses_short_name_if_no_name(self):
         """Использует short_name если name отсутствует"""
-        from components.sidebar import format_bond_label
+        from utils.bond_utils import format_bond_label, BondItem
 
-        class MockBond:
-            def __init__(self):
-                self.isin = 'SU26221'
-                self.name = None
-                self.short_name = 'ОФЗ 26221'
-                self.maturity_date = (datetime.now() + timedelta(days=365*8)).strftime('%Y-%m-%d')
-
-        bond = MockBond()
+        bond = BondItem({
+            'isin': 'SU26221',
+            'name': None,
+            'short_name': 'ОФЗ 26221',
+            'maturity_date': (datetime.now() + timedelta(days=365*8)).strftime('%Y-%m-%d')
+        })
         label = format_bond_label(bond)
 
         self.assertIn('ОФЗ 26221', label)
 
     def test_uses_isin_if_no_names(self):
         """Использует ISIN если нет ни name ни short_name"""
-        from components.sidebar import format_bond_label
+        from utils.bond_utils import format_bond_label, BondItem
 
-        class MockBond:
-            def __init__(self):
-                self.isin = 'SU26221RMFS0'
-                self.name = None
-                self.short_name = None
-                self.maturity_date = (datetime.now() + timedelta(days=365*8)).strftime('%Y-%m-%d')
-
-        bond = MockBond()
+        bond = BondItem({
+            'isin': 'SU26221RMFS0',
+            'name': None,
+            'short_name': None,
+            'maturity_date': (datetime.now() + timedelta(days=365*8)).strftime('%Y-%m-%d')
+        })
         label = format_bond_label(bond)
 
         self.assertIn('SU26221RMFS0', label)

@@ -17,11 +17,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from api.moex_client import MOEXClient
 from api.moex_zcyc import get_zcyc_history_parallel
-from core.db import get_g_spread_repo, init_database
-
-
-# Инициализируем БД при импорте
-init_database()
 
 
 def get_last_trading_day(max_days_back=7):
@@ -70,9 +65,7 @@ class TestZCYCOptimization:
         assert "trdyield" in columns
         assert "clcyield" in columns
 
-        return True
-
-    def test_load_all_vs_filtered(self):
+    def test_load_all_vs_filtered(self, isolated_db):
         """
         Тест 2: Загрузка всех облигаций vs фильтрация
 
@@ -80,6 +73,11 @@ class TestZCYCOptimization:
         1. Загрузка без фильтрации возвращает все облигации
         2. Фильтрация по ISIN работает корректно
         """
+        from core.db import get_g_spread_repo, init_database
+        
+        # Инициализируем БД для этого теста
+        init_database()
+        
         start_date = date.today() - timedelta(days=5)
         end_date = date.today() - timedelta(days=1)
 
@@ -103,7 +101,6 @@ class TestZCYCOptimization:
 
         if all_df.empty:
             pytest.skip("Нет данных за последние 5 дней (возможно праздники)")
-            return True
 
         # Выбираем случайный ISIN для теста фильтрации
         test_isin = all_df['secid'].iloc[0]
@@ -137,15 +134,18 @@ class TestZCYCOptimization:
             f"Количество записей не совпадает: {len(filtered_df)} vs {expected_count}"
 
         print("\n✅ Все проверки пройдены!")
-        return True
 
-    def test_cached_dates_global(self):
+    def test_cached_dates_global(self, isolated_db):
         """
         Тест 3: Проверка глобального кэша дат
 
         После загрузки без фильтрации, кэш должен содержать
         даты для всех облигаций.
         """
+        from core.db import get_g_spread_repo, init_database
+        
+        init_database()
+        
         start_date = date.today() - timedelta(days=3)
         end_date = date.today() - timedelta(days=1)
 
@@ -176,10 +176,8 @@ class TestZCYCOptimization:
             assert len(cached_dates) >= len(cached_dates_for_isin), \
                 "Глобальный кэш должен содержать >= дат чем для конкретного ISIN"
 
-        return True
 
-
-def test_full_optimization():
+def test_full_optimization(isolated_db):
     """
     Полный тест оптимизации
 
@@ -197,12 +195,12 @@ def test_full_optimization():
     print("\n" + "=" * 60)
     print("ТЕСТ 2: Загрузка всех облигаций vs фильтрация")
     print("=" * 60)
-    test.test_load_all_vs_filtered()
+    test.test_load_all_vs_filtered(isolated_db)
 
     print("\n" + "=" * 60)
     print("ТЕСТ 3: Глобальный кэш дат")
     print("=" * 60)
-    test.test_cached_dates_global()
+    test.test_cached_dates_global(isolated_db)
 
     print("\n" + "=" * 60)
     print("✅ ВСЕ ТЕСТЫ ПРОЙДЕНЫ!")
@@ -210,4 +208,4 @@ def test_full_optimization():
 
 
 if __name__ == "__main__":
-    test_full_optimization()
+    pytest.main([__file__, "-v"])
