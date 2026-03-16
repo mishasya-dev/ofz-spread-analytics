@@ -500,25 +500,7 @@ def main():
         st.divider()
         
         # Автообновление
-        st.subheader("🔄 Автообновление")
-        auto_refresh = st.toggle(
-            "Включить",
-            key="auto_refresh",
-            on_change=lambda: log_widget_change("auto_refresh")
-        )
-        
-        if auto_refresh:
-            refresh_interval = st.slider(
-                "Интервал (сек)",
-                min_value=30,
-                max_value=300,
-                key="refresh_interval",
-                step=30,
-                on_change=lambda: log_widget_change("refresh_interval")
-            )
-            
-            if st.session_state.last_update:
-                st.caption(f"Последнее: {st.session_state.last_update.strftime('%H:%M:%S')}")
+        auto_refresh, skip_candles = render_auto_refresh()
         
         st.divider()
         
@@ -602,7 +584,10 @@ def main():
     bond1 = bonds[bond1_idx]
     bond2 = bonds[bond2_idx]
     
-    with st.spinner("Загрузка данных с MOEX..."):
+    # Проверяем флаг быстрого обновления
+    skip_candles = st.session_state.get('skip_candles', False)
+    
+    with st.spinner("Загрузка котировок..." if skip_candles else "Загрузка данных с MOEX..."):
         # Дневные данные (для Spread Analytics и статистики)
         daily_df1 = fetch_historical_data_cached(bond1.isin, period)
         daily_df2 = fetch_historical_data_cached(bond2.isin, period)
@@ -616,10 +601,18 @@ def main():
             g_spread_df1_raw = fetch_historical_data_cached(bond1.isin, st.session_state.g_spread_period)
             g_spread_df2_raw = fetch_historical_data_cached(bond2.isin, st.session_state.g_spread_period)
         
-        # Intraday данные
-        # candle_days уже установлен в sidebar
-        intraday_df1 = fetch_candle_data_cached(bond1.isin, bond_config_to_dict(bond1), candle_interval, candle_days)
-        intraday_df2 = fetch_candle_data_cached(bond2.isin, bond_config_to_dict(bond2), candle_interval, candle_days)
+        # Intraday данные - пропускаем при быстром обновлении
+        if skip_candles:
+            # Используем закэшированные данные или пустой DataFrame
+            intraday_df1 = st.session_state.get('cached_intraday_df1', pd.DataFrame())
+            intraday_df2 = st.session_state.get('cached_intraday_df2', pd.DataFrame())
+        else:
+            # candle_days уже установлен в sidebar
+            intraday_df1 = fetch_candle_data_cached(bond1.isin, bond_config_to_dict(bond1), candle_interval, candle_days)
+            intraday_df2 = fetch_candle_data_cached(bond2.isin, bond_config_to_dict(bond2), candle_interval, candle_days)
+            # Кэшируем для быстрого обновления
+            st.session_state.cached_intraday_df1 = intraday_df1
+            st.session_state.cached_intraday_df2 = intraday_df2
     
     # ==========================================
     # РАСЧЁТ СПРЕДОВ И СТАТИСТИКИ

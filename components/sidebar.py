@@ -173,12 +173,13 @@ def render_candle_period_selector(
     return candle_days
 
 
-def render_auto_refresh() -> bool:
+def render_auto_refresh() -> Tuple[bool, bool]:
     """
     Рендерит настройки автообновления
 
     Returns:
-        Включено ли автообновление
+        auto_refresh: Включено ли автообновление
+        skip_candles: Пропускать загрузку свечей при auto-refresh
     """
     st.subheader("🔄 Автообновление")
 
@@ -187,6 +188,7 @@ def render_auto_refresh() -> bool:
         key="auto_refresh"
     )
 
+    skip_candles = False
     if auto_refresh:
         refresh_interval = st.slider(
             "Интервал (сек)",
@@ -196,10 +198,17 @@ def render_auto_refresh() -> bool:
             step=30
         )
 
+        skip_candles = st.checkbox(
+            "Быстрое обновление (без свечей)",
+            value=False,
+            key="skip_candles",
+            help="При включении загружаются только текущие котировки без свечей"
+        )
+
         if st.session_state.last_update:
             st.caption(f"Последнее: {st.session_state.last_update.strftime('%H:%M:%S')}")
 
-    return auto_refresh
+    return auto_refresh, skip_candles
 
 
 def render_db_panel(
