@@ -830,6 +830,9 @@ def main():
             if st.session_state.auto_refresh:
                 from api.moex_zcyc import fetch_current_bond_quotes
                 
+                # Получаем репозиторий для работы с БД
+                intraday_repo = get_g_spread_repo()
+                
                 # Получаем текущие котировки
                 isins = [bond1.isin]
                 if not same_bonds:
@@ -839,11 +842,11 @@ def main():
                 
                 if not current_quotes.empty:
                     # Сохраняем в БД
-                    repo.save_intraday_quotes(current_quotes)
+                    intraday_repo.save_intraday_quotes(current_quotes)
                     logger.info(f"Сохранены intraday котировки для {isins}")
                     
                     # Загружаем все intraday данные за сегодня
-                    intraday_df = repo.load_intraday_quotes(tradedate=date.today())
+                    intraday_df = intraday_repo.load_intraday_quotes(tradedate=date.today())
             
             # Метрики G-spread
             if not g_spread_df1.empty or not g_spread_df2.empty:
