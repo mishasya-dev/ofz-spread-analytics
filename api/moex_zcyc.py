@@ -151,7 +151,10 @@ def fetch_current_clcyield(isin: str, client: MOEXClient = None) -> Optional[flo
     """
     Получить текущий YTM по КБД для конкретной облигации
 
-    Endpoint: /engines/stock/zcyc/securities.json?securities=ISIN
+    Endpoint: /engines/stock/zcyc/securities.json
+
+    ВАЖНО: MOEX API игнорирует параметр securities, всегда возвращает все облигации.
+    Фильтрация выполняется на стороне клиента по secid.
 
     DEPRECATED: ИЗБЫТОЧНО.
         Используйте fetch_all_clcyields() для запроса по списку ISIN.
@@ -170,27 +173,26 @@ def fetch_current_clcyield(isin: str, client: MOEXClient = None) -> Optional[flo
         client.__enter__()
 
     try:
+        # MOEX API игнорирует параметр securities, но передаём для совместимости
         data = client.get_json(
             "/engines/stock/zcyc/securities.json",
-            {
-                "iss.meta": "off",
-                "securities": isin
-            }
+            {"iss.meta": "off"}
         )
 
         securities = data.get("securities", {})
         columns = securities.get("columns", [])
         rows = securities.get("data", [])
 
-        if not rows:
+        if not rows or "secid" not in columns or "clcyield" not in columns:
             return None
 
-        # Ищем колонку clcyield (calculated yield by curve)
-        if "clcyield" in columns:
-            clcyield_idx = columns.index("clcyield")
-            for row in rows:
-                if row[clcyield_idx] is not None:
-                    return row[clcyield_idx]
+        # Фильтруем по secid (ISIN)
+        secid_idx = columns.index("secid")
+        clcyield_idx = columns.index("clcyield")
+
+        for row in rows:
+            if row[secid_idx] == isin and row[clcyield_idx] is not None:
+                return row[clcyield_idx]
 
         return None
 
@@ -257,6 +259,98 @@ def fetch_all_clcyields(isins: List[str], client: MOEXClient = None) -> Dict[str
     except Exception as e:
         logger.error(f"Ошибка при получении clcyields: {e}")
         return {isin: None for isin in isins}
+
+    finally:
+        if use_context:
+            client.__exit__(None, None, None)
+
+
+def fetch_current_bond_quotes(
+    isins: List[str] = None,
+    client: MOEXClient = None
+) -> pd.DataFrame:
+    """
+    Получить ТЕКУЩИЕ котировки ОФЗ (实时)
+
+    Endpoint: /engines/stock/zcyc/securities.json
+
+    ВАЖНО: MOEX API игнорирует параметр securities, всегда возвращает все 32 ОФЗ.
+    Фильтрация выполняется на стороне клиента.
+
+    Возвращает все текущие данные по котировкам:
+    - bid/ask цены и доходности
+    - trd последняя сделка
+    - clcyield (YTM по КБД)
+    - crtyield (текущая доходность)
+    - crtduration (дюрация в днях)
+    - g_spread_bp (уже рассчитан MOEX!)
+
+    Args:
+        isins: Список ISIN для фильтрации (None = все ОФЗ)
+        client: MOEXClient
+
+    Returns:
+        DataFrame с текущими котировками
+    """
+    use_context = client is None
+    if use_context:
+        client = MOEXClient()
+        client.__enter__()
+
+    try:
+        # MOEX API игнорирует securities, но передаём для документации
+        data = client.get_json(
+            "/engines/stock/zcyc/securities.json",
+            {"iss.meta": "off"}
+        )
+
+        securities = data.get("securities", {})
+        columns = securities.get("columns", [])
+        rows = securities.get("data", [])
+
+        if not rows:
+            return pd.DataFrame()
+
+        # Создаём DataFrame
+        df = pd.DataFrame(rows, columns=columns)
+
+        # Фильтруем по ISIN если указан
+        if isins:
+            df = df[df['secid'].isin(isins)]
+
+        # Преобразуем типы
+        numeric_cols = ['bidprice', 'bidyield', 'askprice', 'askyield',
+                        'trdprice', 'trdyield', 'clcyield', 'crtyield',
+                        'crtduration', 'correction', 'benchmark']
+
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        # Рассчитываем G-spread если есть данные
+        if 'trdyield' in df.columns and 'clcyield' in df.columns:
+            df['g_spread_bp'] = (df['trdyield'] - df['clcyield']) * 100
+
+        # Выбираем нужные колонки в удобном порядке
+        result_cols = [
+            'tradedate', 'tradetime', 'updatetime',
+            'secid', 'shortname',
+            'bidprice', 'bidyield', 'askprice', 'askyield',
+            'trdprice', 'trdyield',
+            'clcyield', 'crtyield', 'crtduration',
+            'g_spread_bp', 'expdate'
+        ]
+        result_cols = [c for c in result_cols if c in df.columns]
+        df = df[result_cols]
+
+        # Сортируем по shortname
+        df = df.sort_values('shortname').reset_index(drop=True)
+
+        return df
+
+    except Exception as e:
+        logger.error(f"Ошибка при получении котировок: {e}")
+        return pd.DataFrame()
 
     finally:
         if use_context:

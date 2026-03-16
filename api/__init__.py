@@ -43,6 +43,7 @@ from .moex_zcyc import (
     fetch_current_zcyc,
     fetch_current_clcyield,  # DEPRECATED: избыточно, используйте fetch_all_clcyields
     fetch_all_clcyields,
+    fetch_current_bond_quotes,  # ОСНОВНАЯ функция для текущих котировок
     # DEPRECATED: get_ns_params_history,
     # DEPRECATED: get_zcyc_data_for_date,
     # DEPRECATED: get_zcyc_history,
@@ -103,6 +104,7 @@ __all__ = [
     "fetch_current_zcyc",
     "fetch_current_clcyield",  # DEPRECATED: избыточно
     "fetch_all_clcyields",
+    "fetch_current_bond_quotes",  # ОСНОВНАЯ функция для текущих котировок
     # DEPRECATED: "get_ns_params_history",
     # DEPRECATED: "get_zcyc_data_for_date",
     # DEPRECATED: "get_zcyc_history",
