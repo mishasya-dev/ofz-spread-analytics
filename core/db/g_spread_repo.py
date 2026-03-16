@@ -660,7 +660,7 @@ class GSpreadRepository:
         
         Args:
             df: DataFrame с колонками от fetch_current_bond_quotes()
-                tradedate, tradetime, secid, shortname, bidprice, bidyield,
+                tradedate, tradetime, updatetime, secid, shortname, bidprice, bidyield,
                 askprice, askyield, trdprice, trdyield, clcyield, crtyield,
                 crtduration, g_spread_bp
                 
@@ -681,20 +681,22 @@ class GSpreadRepository:
                         # Преобразуем дату и время
                         tradedate = str(row['tradedate'])[:10] if pd.notna(row['tradedate']) else None
                         tradetime = str(row['tradetime'])[:8] if pd.notna(row['tradetime']) else None
+                        updatetime = str(row['updatetime'])[:8] if pd.notna(row['updatetime']) else None
                         
-                        if not tradedate or not tradetime:
+                        if not tradedate or not updatetime:
                             continue
                         
                         cursor.execute('''
                             INSERT OR REPLACE INTO intraday_quotes 
-                            (tradedate, tradetime, secid, shortname, 
+                            (tradedate, tradetime, updatetime, secid, shortname, 
                              bidprice, bidyield, askprice, askyield,
                              trdprice, trdyield, clcyield, crtyield,
                              crtduration, g_spread_bp)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             tradedate,
                             tradetime,
+                            updatetime,
                             row.get('secid'),
                             row.get('shortname'),
                             float(row['bidprice']) if pd.notna(row.get('bidprice')) else None,
@@ -739,7 +741,7 @@ class GSpreadRepository:
             tradedate = date.today()
         
         query = '''
-            SELECT tradedate, tradetime, secid, shortname,
+            SELECT tradedate, tradetime, updatetime, secid, shortname,
                    bidprice, bidyield, askprice, askyield,
                    trdprice, trdyield, clcyield, crtyield,
                    crtduration, g_spread_bp, created_at
@@ -753,7 +755,7 @@ class GSpreadRepository:
             query += f' AND secid IN ({placeholders})'
             params.extend(isins)
         
-        query += ' ORDER BY tradetime'
+        query += ' ORDER BY updatetime'
         
         with get_db_connection() as conn:
             df = pd.read_sql_query(query, conn, params=params)
@@ -761,8 +763,8 @@ class GSpreadRepository:
         if df.empty:
             return pd.DataFrame()
         
-        # Добавляем datetime колонку для графиков
-        df['datetime'] = pd.to_datetime(df['tradedate'] + ' ' + df['tradetime'])
+        # Добавляем datetime колонку для графиков (используем updatetime)
+        df['datetime'] = pd.to_datetime(df['tradedate'] + ' ' + df['updatetime'])
         
         return df
     

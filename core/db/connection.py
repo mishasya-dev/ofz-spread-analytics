@@ -560,6 +560,7 @@ def init_database():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             tradedate TEXT NOT NULL,
             tradetime TEXT NOT NULL,
+            updatetime TEXT NOT NULL,
             secid TEXT NOT NULL,
             shortname TEXT,
             bidprice REAL,
@@ -573,7 +574,7 @@ def init_database():
             crtduration INTEGER,
             g_spread_bp REAL,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(tradedate, tradetime, secid)
+            UNIQUE(tradedate, updatetime, secid)
         )
     ''')
     
