@@ -844,9 +844,12 @@ def main():
                     # Сохраняем в БД
                     intraday_repo.save_intraday_quotes(current_quotes)
                     logger.info(f"Сохранены intraday котировки для {isins}")
-                    
-                    # Загружаем все intraday данные за сегодня
-                    intraday_df = intraday_repo.load_intraday_quotes(tradedate=date.today())
+                
+                # Загружаем intraday данные за сегодня только для выбранных облигаций
+                intraday_df = intraday_repo.load_intraday_quotes(
+                    tradedate=date.today(), 
+                    isins=isins
+                )
             
             # Метрики G-spread
             if not g_spread_df1.empty or not g_spread_df2.empty:

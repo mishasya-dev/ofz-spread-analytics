@@ -723,14 +723,14 @@ class GSpreadRepository:
     def load_intraday_quotes(
         self,
         tradedate: date = None,
-        isin: str = None
+        isins: List[str] = None
     ) -> pd.DataFrame:
         """
         Загрузить intraday котировки из БД
         
         Args:
             tradedate: Дата торгов (по умолчанию сегодня)
-            isin: ISIN для фильтрации
+            isins: Список ISIN для фильтрации (None = все)
             
         Returns:
             DataFrame с котировками
@@ -748,9 +748,10 @@ class GSpreadRepository:
         '''
         params = [tradedate.strftime('%Y-%m-%d')]
         
-        if isin:
-            query += ' AND secid = ?'
-            params.append(isin)
+        if isins:
+            placeholders = ','.join(['?' for _ in isins])
+            query += f' AND secid IN ({placeholders})'
+            params.extend(isins)
         
         query += ' ORDER BY tradetime'
         
