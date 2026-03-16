@@ -111,15 +111,23 @@ def fetch_historical_data(
 
     if not db_df.empty and last_db_date and not need_reload:
         # Проверяем актуальность данных
-        last_trading_day = calendar.get_last_trading_day_before(today)
+        # Используем последний ЗАВЕРШЁННЫЙ торговый день (с доступными историческими данными)
+        last_completed_trading_day = calendar.get_last_completed_trading_day()
         
-        if last_db_date >= last_trading_day:
-            logger.info(f"[DATA] fetch_historical_data: secid={secid} → возврат из БД (последний торговый день {last_trading_day} уже в БД)")
+        if last_db_date >= last_completed_trading_day:
+            logger.info(f"[DATA] fetch_historical_data: secid={secid} → возврат из БД (последний завершённый торговый день {last_completed_trading_day} уже в БД)")
             return db_df
         
-        # Инкрементальное обновление
-        new_start = last_db_date + timedelta(days=1)
-        logger.info(f"[DATA] fetch_historical_data: secid={secid} → ИНКРЕМЕНТ: обновление с {new_start} (последняя дата в БД: {last_db_date}, последний торговый: {last_trading_day})")
+        # Инкрементальное обновление — начинаем с первого торгового дня после последней записи
+        next_trading_day = calendar.get_first_trading_day_from(last_db_date + timedelta(days=1))
+        
+        # Ограничиваем инкремент до последнего завершённого торгового дня
+        if next_trading_day > last_completed_trading_day:
+            logger.info(f"[DATA] fetch_historical_data: secid={secid} → БД актуальна (следующий торговый день {next_trading_day} > последнего завершённого {last_completed_trading_day})")
+            return db_df
+        
+        new_start = next_trading_day
+        logger.info(f"[DATA] fetch_historical_data: secid={secid} → ИНКРЕМЕНТ: обновление с {new_start} по {last_completed_trading_day} (последняя дата в БД: {last_db_date})")
 
         with MOEXClient() as client:
             new_df = fetch_ytm_history(secid, start_date=new_start, client=client, reason="инкремент")

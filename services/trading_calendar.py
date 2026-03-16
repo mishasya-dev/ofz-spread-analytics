@@ -242,3 +242,35 @@ class TradingCalendar:
         """Получить торговые дни в диапазоне"""
         self._ensure_loaded()
         return self._repo.load_trading_days_in_range(start_date, end_date)
+    
+    def get_last_completed_trading_day(self, hour_threshold: int = 19) -> date:
+        """
+        Получить последний торговый день, для которого исторические данные уже доступны.
+        
+        MOEX обновляет исторические данные после закрытия рынка (~19:00 МСК).
+        До этого времени данные за текущий торговый день могут отсутствовать.
+        
+        Args:
+            hour_threshold: Час (МСК), после которого считаем данные за сегодня доступными
+            
+        Returns:
+            Последний торговый день с доступными историческими данными
+        """
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
+        
+        self._ensure_loaded()
+        
+        # Текущее время МСК
+        msk_tz = ZoneInfo('Europe/Moscow')
+        now_msk = datetime.now(msk_tz)
+        today = now_msk.date()
+        current_hour = now_msk.hour
+        
+        # Если сегодня торговый день и ещё не поздно — данные за сегодня недоступны
+        if self.is_trading_day(today) and current_hour < hour_threshold:
+            # Возвращаем предыдущий торговый день
+            return self.get_last_trading_day_before(today - timedelta(days=1))
+        
+        # Иначе возвращаем последний торговый день (включая сегодня)
+        return self.get_last_trading_day_before(today)
