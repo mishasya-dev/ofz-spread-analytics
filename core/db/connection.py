@@ -578,6 +578,13 @@ def init_database():
         )
     ''')
     
+    # Миграция: добавляем колонку updatetime если её нет
+    cursor.execute("PRAGMA table_info(intraday_quotes)")
+    intraday_columns = {row[1] for row in cursor.fetchall()}
+    if 'updatetime' not in intraday_columns:
+        cursor.execute('ALTER TABLE intraday_quotes ADD COLUMN updatetime TEXT')
+        logger.info("Добавлена колонка updatetime в таблицу intraday_quotes")
+    
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_intraday_quotes_date 
         ON intraday_quotes(tradedate)

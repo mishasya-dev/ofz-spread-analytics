@@ -843,6 +843,10 @@ def main():
                     tradedate=date.today(), 
                     isins=isins
                 )
+                logger.info(f"Загружено {len(intraday_df)} intraday записей из БД для {isins}")
+                if not intraday_df.empty:
+                    logger.debug(f"intraday_df columns: {list(intraday_df.columns)}")
+                    logger.debug(f"intraday_df sample:\n{intraday_df.head()}")
             
             # Метрики G-spread
             if not g_spread_df1.empty or not g_spread_df2.empty:
@@ -941,6 +945,7 @@ def main():
                     # Добавляем intraday данные (если есть)
                     intraday_rows = []
                     intraday_res = pd.DataFrame()
+                    logger.info(f"Проверка intraday данных: empty={intraday_df.empty}, len={len(intraday_df)}")
                     if not intraday_df.empty:
                         # Получаем последние rolling_mean/std для расчёта Z-score
                         last_rolling_mean_1 = None
@@ -968,6 +973,7 @@ def main():
                             
                             # Рассчитываем Z-score
                             g_spread = row['g_spread_bp']
+                            logger.debug(f"Обработка intraday: secid={row['secid']}, g_spread={g_spread}, rm={rm}, rs={rs}")
                             if rm is not None and rs is not None and rs > 0 and pd.notna(g_spread):
                                 zscore = (g_spread - rm) / rs
                             else:
@@ -1006,6 +1012,7 @@ def main():
                         intraday_bond1 = intraday_df[intraday_df['secid'] == bond1.isin].copy()
                         if not same_bonds:
                             intraday_bond2 = intraday_df[intraday_df['secid'] == bond2.isin].copy()
+                        logger.info(f"intraday_bond1: {len(intraday_bond1)} записей, intraday_bond2: {len(intraday_bond2)} записей")
                     
                     # График отдельных G-spread
                     if same_bonds:
