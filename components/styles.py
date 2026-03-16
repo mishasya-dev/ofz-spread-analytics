@@ -145,8 +145,12 @@ def apply_validation_button_style(color: str):
     # normal — не применяем дополнительные стили
 
 
+# Alias для обратной совместимости
+apply_styles = apply_main_styles
+
 __all__ = [
     'apply_main_styles',
+    'apply_styles',
     'apply_validation_button_style',
     'MAIN_STYLES',
     'VALIDATION_BUTTON_GREEN',

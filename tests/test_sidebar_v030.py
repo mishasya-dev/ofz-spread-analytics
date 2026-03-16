@@ -31,7 +31,8 @@ class TestRenderPeriodSelector(unittest.TestCase):
 
     def setUp(self):
         """Настройка перед каждым тестом"""
-        # Сбрасываем session_state используя SessionStateDict
+        # Сбрасываем mock в исходное состояние
+        st_mock.reset()
         st_mock.session_state = SessionStateDict({'period': 365})
 
     def test_returns_period_in_valid_range(self):
@@ -45,32 +46,31 @@ class TestRenderPeriodSelector(unittest.TestCase):
 
         self.assertIn(result, range(30, 731))
 
-    def test_uses_session_state_default(self):
-        """Использует значение из session_state как default"""
+    def test_uses_session_state_key(self):
+        """Slider использует key для синхронизации с session_state"""
         st_mock.session_state = SessionStateDict({'period': 500})
 
         from components.sidebar import render_period_selector
 
-        # Проверяем, что slider вызван с правильным value
-        st_mock.slider = Mock(return_value=500)
-
         result = render_period_selector()
 
-        # Проверяем вызов slider
-        call_args = st_mock.slider.call_args
-        self.assertEqual(call_args[1]['value'], 500)
+        # Проверяем, что slider возвращает значение из session_state
+        self.assertEqual(result, 500)
 
-    def test_updates_session_state(self):
-        """Обновляет session_state при изменении"""
+    def test_slider_has_key_parameter(self):
+        """Slider вызывается с key='period' для синхронизации"""
         st_mock.session_state = SessionStateDict({'period': 365})
 
         from components.sidebar import render_period_selector
 
-        st_mock.slider = Mock(return_value=730)
+        # Сохраняем оригинальный метод
+        original_slider = st_mock.slider
+        st_mock.slider = Mock(side_effect=original_slider)
 
         render_period_selector()
 
-        self.assertEqual(st_mock.session_state['period'], 730)
+        call_args = st_mock.slider.call_args
+        self.assertEqual(call_args[1]['key'], 'period')
 
     def test_step_is_30_days(self):
         """Шаг слайдера = 30 дней"""
@@ -111,6 +111,7 @@ class TestRenderCandleIntervalSelector(unittest.TestCase):
 
     def setUp(self):
         """Настройка перед каждым тестом"""
+        st_mock.reset()
         st_mock.session_state = SessionStateDict({'candle_interval': '10'})
         st_mock.caption = Mock()
 
@@ -136,17 +137,20 @@ class TestRenderCandleIntervalSelector(unittest.TestCase):
 
         self.assertEqual(result, '60')
 
-    def test_updates_session_state(self):
-        """Обновляет session_state при изменении"""
+    def test_radio_has_key_parameter(self):
+        """Radio использует key='candle_interval' для синхронизации"""
         st_mock.session_state = SessionStateDict({'candle_interval': '1'})
 
         from components.sidebar import render_candle_interval_selector
 
-        st_mock.radio = Mock(return_value='60')
+        # Сохраняем оригинальный метод
+        original_radio = st_mock.radio
+        st_mock.radio = Mock(side_effect=original_radio)
 
         render_candle_interval_selector()
 
-        self.assertEqual(st_mock.session_state['candle_interval'], '60')
+        call_args = st_mock.radio.call_args
+        self.assertEqual(call_args[1]['key'], 'candle_interval')
 
     def test_options_are_correct(self):
         """Опции radio: 1, 10, 60"""
@@ -181,6 +185,7 @@ class TestRenderAutoRefresh(unittest.TestCase):
 
     def setUp(self):
         """Настройка перед каждым тестом"""
+        st_mock.reset()
         st_mock.session_state = SessionStateDict({
             'auto_refresh': False,
             'refresh_interval': 60,
@@ -197,29 +202,30 @@ class TestRenderAutoRefresh(unittest.TestCase):
 
         self.assertIsInstance(result, bool)
 
-    def test_toggle_uses_session_state_default(self):
-        """Toggle использует значение из session_state"""
+    def test_toggle_has_key_parameter(self):
+        """Toggle использует key='auto_refresh' для синхронизации"""
         st_mock.session_state['auto_refresh'] = True
 
         from components.sidebar import render_auto_refresh
 
-        st_mock.toggle = Mock(return_value=True)
+        # Сохраняем оригинальный метод
+        original_toggle = st_mock.toggle
+        st_mock.toggle = Mock(side_effect=original_toggle)
 
         render_auto_refresh()
 
         call_args = st_mock.toggle.call_args
-        self.assertEqual(call_args[1]['value'], True)
+        self.assertEqual(call_args[1]['key'], 'auto_refresh')
 
-    def test_updates_session_state(self):
-        """Обновляет session_state.auto_refresh"""
+    def test_returns_session_state_value(self):
+        """Возвращает значение из session_state"""
+        st_mock.session_state['auto_refresh'] = True
+
         from components.sidebar import render_auto_refresh
 
-        st_mock.toggle = Mock(return_value=True)
-        st_mock.slider = Mock(return_value=120)
+        result = render_auto_refresh()
 
-        render_auto_refresh()
-
-        self.assertEqual(st_mock.session_state['auto_refresh'], True)
+        self.assertEqual(result, True)
 
     def test_interval_slider_only_when_enabled(self):
         """Слайдер интервала показывается только когда включено"""
@@ -249,6 +255,7 @@ class TestRenderDbPanel(unittest.TestCase):
 
     def setUp(self):
         """Настройка перед каждым тестом"""
+        st_mock.reset()
         st_mock.session_state = SessionStateDict({'updating_db': False})
         st_mock.expander = Mock()
         st_mock.expander.return_value.__enter__ = Mock(return_value=Mock())
@@ -363,6 +370,7 @@ class TestRenderBondSelection(unittest.TestCase):
 
     def setUp(self):
         """Настройка перед каждым тестом"""
+        st_mock.reset()
         st_mock.session_state = SessionStateDict({
             'selected_bond1': 0,
             'selected_bond2': 1
@@ -446,8 +454,8 @@ class TestRenderBondSelection(unittest.TestCase):
         label = format_func(0)
         self.assertIn('YTM:', label)
 
-    def test_updates_session_state(self):
-        """Обновляет selected_bond1 и selected_bond2 в session_state"""
+    def test_selectbox_uses_key_parameter(self):
+        """Selectbox использует key для синхронизации с session_state"""
         from components.sidebar import render_bond_selection
 
         class MockBond:
@@ -467,12 +475,16 @@ class TestRenderBondSelection(unittest.TestCase):
         bonds = [MockBond('SU1', 'B1'), MockBond('SU2', 'B2')]
         trading_data = {}
 
-        st_mock.selectbox = Mock(side_effect=[1, 0])
+        # Сохраняем оригинальный метод
+        original_selectbox = st_mock.selectbox
+        st_mock.selectbox = Mock(side_effect=original_selectbox)
 
         render_bond_selection(bonds, trading_data)
 
-        self.assertEqual(st_mock.session_state['selected_bond1'], 1)
-        self.assertEqual(st_mock.session_state['selected_bond2'], 0)
+        # Проверяем, что selectbox вызван с правильными key
+        calls = st_mock.selectbox.call_args_list
+        self.assertEqual(calls[0][1]['key'], 'selected_bond1')
+        self.assertEqual(calls[1][1]['key'], 'selected_bond2')
 
 
 class TestFormatBondLabel(unittest.TestCase):
@@ -612,6 +624,7 @@ class TestGetBondsList(unittest.TestCase):
 
     def setUp(self):
         """Настройка"""
+        st_mock.reset()
         st_mock.session_state = SessionStateDict({
             'bonds': {
                 'SU26221': {

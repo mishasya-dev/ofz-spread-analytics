@@ -1,8 +1,15 @@
 """
 Тестирование UI приложения через Streamlit AppTest
+
+Требует настоящий streamlit. Запускать вручную:
+    python tests/manual/test_app_ui.py
 """
-from streamlit.testing.v1 import AppTest
 import pytest
+
+# Пропускаем весь модуль при обычном запуске pytest
+pytestmark = pytest.mark.skip(reason="Manual test requiring real streamlit")
+
+from streamlit.testing.v1 import AppTest
 
 def test_app_loads():
     """Тест: приложение загружается без ошибок"""

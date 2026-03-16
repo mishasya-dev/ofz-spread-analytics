@@ -104,16 +104,53 @@ class StreamlitMock:
         return False
     
     def toggle(self, label, **kwargs):
-        return kwargs.get('value', False)
+        key = kwargs.get('key')
+        value = kwargs.get('value', False)
+        # Если есть key, синхронизируем с session_state
+        if key is not None:
+            if key not in self.session_state:
+                self.session_state[key] = value
+            return self.session_state[key]
+        return value
     
     def selectbox(self, label, options, **kwargs):
-        return options[0] if options else None
+        key = kwargs.get('key')
+        index = kwargs.get('index', 0)
+        value = options[index] if options and index < len(options) else None
+        # Если есть key, синхронизируем с session_state
+        if key is not None:
+            if key not in self.session_state:
+                self.session_state[key] = index
+            # Возвращаем индекс для совместимости с тестами
+            return self.session_state[key]
+        return value
     
     def radio(self, label, options, **kwargs):
-        return options[0] if options else None
+        key = kwargs.get('key')
+        index = kwargs.get('index', 0)
+        # Если есть key, синхронизируем с session_state
+        if key is not None:
+            if key not in self.session_state:
+                self.session_state[key] = options[index] if options else None
+            return self.session_state[key]
+        return options[index] if options else None
     
     def slider(self, label, **kwargs):
-        return kwargs.get('value', 0)
+        key = kwargs.get('key')
+        value = kwargs.get('value')
+        min_val = kwargs.get('min_value', 0)
+        max_val = kwargs.get('max_value', 100)
+        
+        # Если есть key, синхронизируем с session_state
+        if key is not None:
+            if key not in self.session_state:
+                # Если value не указан, используем середину диапазона
+                default = value if value is not None else (min_val + max_val) // 2
+                self.session_state[key] = default
+            return self.session_state[key]
+        
+        # Без key возвращаем value или середину
+        return value if value is not None else (min_val + max_val) // 2
     
     def select_slider(self, label, options, **kwargs):
         return kwargs.get('value', options[0] if options else None)
@@ -142,6 +179,15 @@ class StreamlitMock:
     
     def stop(self):
         pass
+    
+    def reset(self):
+        """Сбросить mock в исходное состояние (восстановить методы)"""
+        # Восстанавливаем оригинальные методы через __dict__ для корректной привязки
+        # Удаляем переопределённые методы из экземпляра, чтобы использовались методы класса
+        for method_name in ['slider', 'toggle', 'radio', 'selectbox', 'button']:
+            if method_name in self.__dict__:
+                del self.__dict__[method_name]
+        self.session_state = SessionStateDict()
 
 
 # Регистрируем mock

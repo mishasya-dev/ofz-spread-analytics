@@ -1,6 +1,14 @@
 """
 Полное тестирование UI приложения
+
+Требует настоящий streamlit. Запускать вручную:
+    python tests/manual/test_app_full.py
 """
+import pytest
+
+# Пропускаем весь модуль при обычном запуске pytest
+pytestmark = pytest.mark.skip(reason="Manual test requiring real streamlit")
+
 from streamlit.testing.v1 import AppTest
 import time
 
