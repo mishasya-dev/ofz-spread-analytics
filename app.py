@@ -943,6 +943,8 @@ def main():
                         df_res = df1_data
                     
                     # Добавляем intraday данные (если есть)
+                    intraday_rows = []
+                    intraday_res = pd.DataFrame()
                     if not intraday_df.empty:
                         # Получаем последние rolling_mean/std для расчёта Z-score
                         last_rolling_mean_1 = None
@@ -959,7 +961,6 @@ def main():
                                 last_rolling_mean_2 = g_spread_df2['rolling_mean'].iloc[-1]
                                 last_rolling_std_2 = g_spread_df2['rolling_std'].iloc[-1]
                         
-                        intraday_rows = []
                         for _, row in intraday_df.iterrows():
                             # Определяем rolling параметры по ISIN
                             if row['secid'] == bond1.isin:
@@ -991,11 +992,15 @@ def main():
                             for col in ['ytm', 'ytm_theor', 'g_spread', 'zscore']:
                                 if col in intraday_res.columns:
                                     intraday_res[col] = intraday_res[col].astype(float)
-                            df_res = pd.concat([df_res, intraday_res], ignore_index=True)
-                            logger.info(f"Добавлено {len(intraday_rows)} intraday точек на график")
+                            # НЕ добавляем в df_res - передаём отдельно для intraday отображения
+                            logger.info(f"Подготовлено {len(intraday_rows)} intraday точек для графиков")
                     
-                    # График G-spread дашборд
-                    fig_g_spread = create_g_spread_dashboard(df_res, z_threshold=st.session_state.g_spread_z_threshold)
+                    # График G-spread дашборд (передаём intraday отдельно)
+                    fig_g_spread = create_g_spread_dashboard(
+                        df_res, 
+                        z_threshold=st.session_state.g_spread_z_threshold,
+                        intraday_df=intraday_res if intraday_rows else None
+                    )
                     st.plotly_chart(fig_g_spread, width='stretch', key=f'g_spread_dashboard_{bond1.isin}_{bond2.isin}')
                     
                     # Разделяем intraday данные по облигациям для отдельных графиков

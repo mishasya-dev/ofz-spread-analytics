@@ -757,7 +757,8 @@ def apply_zoom_range(fig: go.Figure, x_range: Optional[Tuple]) -> go.Figure:
 def create_g_spread_dashboard(
     df_res: pd.DataFrame,
     title: str = "YTM ОФЗ vs Теоретическая КБД",
-    z_threshold: float = 2.0
+    z_threshold: float = 2.0,
+    intraday_df: pd.DataFrame = None
 ) -> go.Figure:
     """
     Создать дашборд G-spread с двумя графиками:
@@ -773,6 +774,7 @@ def create_g_spread_dashboard(
             - zscore: Z-Score G-spread
             - g_spread: G-spread (б.п.)
         z_threshold: Порог Z-Score для сигналов (по умолчанию 2.0σ)
+        intraday_df: DataFrame с intraday данными (опционально)
             
     Returns:
         Plotly Figure
@@ -866,14 +868,9 @@ def create_g_spread_dashboard(
     # ==========================================
     # INTRADAY ТОЧКИ на Z-Score графике
     # ==========================================
-    # Определяем intraday точки (сегодняшняя дата с временем)
-    today = pd.Timestamp.now().normalize()
-    intraday_mask = df_res['date'].apply(lambda x: pd.Timestamp(x).normalize() == today if pd.notna(x) else False)
-    intraday_data = df_res[intraday_mask]
-    
-    if not intraday_data.empty:
-        for i, ticker in enumerate(intraday_data['ticker'].unique()):
-            ticker_intraday = intraday_data[intraday_data['ticker'] == ticker]
+    if intraday_df is not None and not intraday_df.empty:
+        for i, ticker in enumerate(intraday_df['ticker'].unique()):
+            ticker_intraday = intraday_df[intraday_df['ticker'] == ticker]
             color = colors[i % len(colors)]
             
             # Фильтруем только точки с валидным Z-score
