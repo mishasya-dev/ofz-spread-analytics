@@ -20,7 +20,7 @@ from config import AppConfig, BondConfig, CANDLE_INTERVAL_CONFIG
 from api.moex_candles import CandleInterval
 from api.moex_history import fetch_ytm_history, get_trading_data
 from api.moex_candles import fetch_candles
-from api.moex_zcyc import fetch_ns_params_history
+# DEPRECATED: from api.moex_zcyc import fetch_ns_params_history
 from api.moex_client import MOEXClient
 from core.db import get_db_facade, get_ytm_repo
 from components.charts import (
