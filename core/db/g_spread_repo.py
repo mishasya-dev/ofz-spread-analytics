@@ -649,3 +649,181 @@ class GSpreadRepository:
             row = cursor.fetchone()
         
         return row['cnt'] if row else 0
+    
+    # ==========================================
+    # INTRADAY QUOTES (внутридневные котировки)
+    # ==========================================
+    
+    def save_intraday_quotes(self, df: pd.DataFrame) -> int:
+        """
+        Сохранить текущие котировки в БД
+        
+        Args:
+            df: DataFrame с колонками от fetch_current_bond_quotes()
+                tradedate, tradetime, secid, shortname, bidprice, bidyield,
+                askprice, askyield, trdprice, trdyield, clcyield, crtyield,
+                crtduration, g_spread_bp
+                
+        Returns:
+            Количество сохранённых записей
+        """
+        if df.empty:
+            return 0
+        
+        saved_count = 0
+        
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                for _, row in df.iterrows():
+                    try:
+                        # Преобразуем дату и время
+                        tradedate = str(row['tradedate'])[:10] if pd.notna(row['tradedate']) else None
+                        tradetime = str(row['tradetime'])[:8] if pd.notna(row['tradetime']) else None
+                        
+                        if not tradedate or not tradetime:
+                            continue
+                        
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO intraday_quotes 
+                            (tradedate, tradetime, secid, shortname, 
+                             bidprice, bidyield, askprice, askyield,
+                             trdprice, trdyield, clcyield, crtyield,
+                             crtduration, g_spread_bp)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            tradedate,
+                            tradetime,
+                            row.get('secid'),
+                            row.get('shortname'),
+                            float(row['bidprice']) if pd.notna(row.get('bidprice')) else None,
+                            float(row['bidyield']) if pd.notna(row.get('bidyield')) else None,
+                            float(row['askprice']) if pd.notna(row.get('askprice')) else None,
+                            float(row['askyield']) if pd.notna(row.get('askyield')) else None,
+                            float(row['trdprice']) if pd.notna(row.get('trdprice')) else None,
+                            float(row['trdyield']) if pd.notna(row.get('trdyield')) else None,
+                            float(row['clcyield']) if pd.notna(row.get('clcyield')) else None,
+                            float(row['crtyield']) if pd.notna(row.get('crtyield')) else None,
+                            int(row['crtduration']) if pd.notna(row.get('crtduration')) else None,
+                            float(row['g_spread_bp']) if pd.notna(row.get('g_spread_bp')) else None
+                        ))
+                        saved_count += 1
+                        
+                    except Exception as e:
+                        logger.warning(f"Ошибка сохранения intraday {row.get('secid')}: {e}")
+            
+            logger.info(f"Сохранено {saved_count} intraday котировок")
+            return saved_count
+            
+        except Exception as e:
+            logger.error(f"Ошибка сохранения intraday quotes: {e}")
+            return saved_count
+    
+    def load_intraday_quotes(
+        self,
+        tradedate: date = None,
+        isin: str = None
+    ) -> pd.DataFrame:
+        """
+        Загрузить intraday котировки из БД
+        
+        Args:
+            tradedate: Дата торгов (по умолчанию сегодня)
+            isin: ISIN для фильтрации
+            
+        Returns:
+            DataFrame с котировками
+        """
+        if tradedate is None:
+            tradedate = date.today()
+        
+        query = '''
+            SELECT tradedate, tradetime, secid, shortname,
+                   bidprice, bidyield, askprice, askyield,
+                   trdprice, trdyield, clcyield, crtyield,
+                   crtduration, g_spread_bp, created_at
+            FROM intraday_quotes
+            WHERE tradedate = ?
+        '''
+        params = [tradedate.strftime('%Y-%m-%d')]
+        
+        if isin:
+            query += ' AND secid = ?'
+            params.append(isin)
+        
+        query += ' ORDER BY tradetime'
+        
+        with get_db_connection() as conn:
+            df = pd.read_sql_query(query, conn, params=params)
+        
+        if df.empty:
+            return pd.DataFrame()
+        
+        # Добавляем datetime колонку для графиков
+        df['datetime'] = pd.to_datetime(df['tradedate'] + ' ' + df['tradetime'])
+        
+        return df
+    
+    def delete_intraday_quotes(self, tradedate: date = None) -> int:
+        """
+        Удалить intraday котировки за дату
+        
+        Args:
+            tradedate: Дата для удаления (по умолчанию все, кроме сегодня)
+            
+        Returns:
+            Количество удалённых записей
+        """
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                if tradedate:
+                    cursor.execute(
+                        'DELETE FROM intraday_quotes WHERE tradedate = ?',
+                        (tradedate.strftime('%Y-%m-%d'),)
+                    )
+                else:
+                    # Удалить все, кроме сегодня
+                    today = date.today().strftime('%Y-%m-%d')
+                    cursor.execute(
+                        'DELETE FROM intraday_quotes WHERE tradedate < ?',
+                        (today,)
+                    )
+                
+                deleted = cursor.rowcount
+            
+            logger.info(f"Удалено {deleted} intraday котировок")
+            return deleted
+            
+        except Exception as e:
+            logger.error(f"Ошибка удаления intraday quotes: {e}")
+            return 0
+    
+    def get_intraday_dates(self) -> List[date]:
+        """
+        Получить список дат с intraday данными
+        
+        Returns:
+            Список дат
+        """
+        with get_db_cursor() as cursor:
+            cursor.execute('SELECT DISTINCT tradedate FROM intraday_quotes ORDER BY tradedate')
+            rows = cursor.fetchall()
+        
+        return [datetime.strptime(row['tradedate'], '%Y-%m-%d').date() for row in rows]
+    
+    def count_intraday_quotes(self, tradedate: date = None) -> int:
+        """Количество intraday записей"""
+        with get_db_cursor() as cursor:
+            if tradedate:
+                cursor.execute(
+                    'SELECT COUNT(*) as cnt FROM intraday_quotes WHERE tradedate = ?',
+                    (tradedate.strftime('%Y-%m-%d'),)
+                )
+            else:
+                cursor.execute('SELECT COUNT(*) as cnt FROM intraday_quotes')
+            row = cursor.fetchone()
+        
+        return row['cnt'] if row else 0

@@ -550,6 +550,48 @@ def init_database():
         )
     ''')
     
+    # ==========================================
+    # ТАБЛИЦА INTRADAY_QUOTES (внутридневные котировки)
+    # ==========================================
+    # Хранит текущие котировки в течение торгового дня
+    # На следующий день становятся историей (удаляются)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS intraday_quotes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tradedate TEXT NOT NULL,
+            tradetime TEXT NOT NULL,
+            secid TEXT NOT NULL,
+            shortname TEXT,
+            bidprice REAL,
+            bidyield REAL,
+            askprice REAL,
+            askyield REAL,
+            trdprice REAL,
+            trdyield REAL,
+            clcyield REAL,
+            crtyield REAL,
+            crtduration INTEGER,
+            g_spread_bp REAL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(tradedate, tradetime, secid)
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_intraday_quotes_date 
+        ON intraday_quotes(tradedate)
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_intraday_quotes_secid 
+        ON intraday_quotes(secid)
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_intraday_quotes_datetime 
+        ON intraday_quotes(tradedate, tradetime)
+    ''')
+    
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована")

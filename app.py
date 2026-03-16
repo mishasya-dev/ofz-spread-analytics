@@ -823,6 +823,28 @@ def main():
                     zcyc_period=st.session_state.g_spread_period
                 )
             
+            # ==========================================
+            # INTRADAY ДАННЫЕ (если включено автообновление)
+            # ==========================================
+            intraday_df = pd.DataFrame()
+            if st.session_state.auto_refresh:
+                from api.moex_zcyc import fetch_current_bond_quotes
+                
+                # Получаем текущие котировки
+                isins = [bond1.isin]
+                if not same_bonds:
+                    isins.append(bond2.isin)
+                
+                current_quotes = fetch_current_bond_quotes(isins=isins)
+                
+                if not current_quotes.empty:
+                    # Сохраняем в БД
+                    repo.save_intraday_quotes(current_quotes)
+                    logger.info(f"Сохранены intraday котировки для {isins}")
+                    
+                    # Загружаем все intraday данные за сегодня
+                    intraday_df = repo.load_intraday_quotes(tradedate=date.today())
+            
             # Метрики G-spread
             if not g_spread_df1.empty or not g_spread_df2.empty:
                 # При одинаковых облигациях показываем только одну метрику
@@ -916,6 +938,24 @@ def main():
                         df_res = pd.concat([df1_data, df2_data], ignore_index=True)
                     else:
                         df_res = df1_data
+                    
+                    # Добавляем intraday данные (если есть)
+                    if not intraday_df.empty:
+                        intraday_rows = []
+                        for _, row in intraday_df.iterrows():
+                            intraday_rows.append({
+                                'date': row['datetime'],
+                                'ticker': row['shortname'],
+                                'ytm': row['trdyield'],
+                                'ytm_theor': row['clcyield'],
+                                'g_spread': row['g_spread_bp'],
+                                'zscore': None  # Z-score только для истории
+                            })
+                        
+                        if intraday_rows:
+                            intraday_res = pd.DataFrame(intraday_rows)
+                            df_res = pd.concat([df_res, intraday_res], ignore_index=True)
+                            logger.info(f"Добавлено {len(intraday_rows)} intraday точек на график")
                     
                     # График G-spread дашборд
                     fig_g_spread = create_g_spread_dashboard(df_res, z_threshold=st.session_state.g_spread_z_threshold)
