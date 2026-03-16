@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Tuple, Callable, Optional
 
 from config import CANDLE_INTERVAL_CONFIG
 from utils.bond_utils import BondItem, get_years_to_maturity, format_bond_label, get_bonds_list as get_bonds_list_from_dict
+from utils.action_logger import log_widget_change
 
 
 def get_bonds_list() -> List[BondItem]:
@@ -250,6 +251,218 @@ def render_cache_clear():
         st.rerun()
 
 
+def render_spread_analytics_settings() -> Tuple[int, float]:
+    """
+    Рендерит настройки Spread Analytics (window, z_threshold)
+    
+    Returns:
+        Кортеж (spread_window, z_threshold)
+    """
+    st.subheader("📈 Spread Analytics")
+    
+    spread_window = st.slider(
+        "Окно rolling (дней)",
+        min_value=5,
+        max_value=90,
+        key="spread_window",
+        step=5,
+        on_change=lambda: log_widget_change("spread_window")
+    )
+    
+    z_threshold = st.slider(
+        "Z-Score порог (σ)",
+        min_value=1.0,
+        max_value=3.0,
+        key="z_threshold",
+        step=0.1,
+        format="%.1fσ",
+        on_change=lambda: log_widget_change("z_threshold")
+    )
+    
+    return spread_window, z_threshold
+
+
+def render_g_spread_settings() -> Tuple[int, int, float]:
+    """
+    Рендерит настройки G-Spread Analytics
+    
+    Returns:
+        Кортеж (g_spread_period, g_spread_window, g_spread_z_threshold)
+    """
+    st.subheader("📈 G-Spread Анализ")
+    
+    g_spread_period = st.slider(
+        "Период G-Spread (дней)",
+        min_value=30,
+        max_value=730,
+        key="g_spread_period",
+        step=30,
+        format="%d дней",
+        on_change=lambda: log_widget_change("g_spread_period")
+    )
+    
+    g_spread_window = st.slider(
+        "Окно rolling (дней)",
+        min_value=5,
+        max_value=90,
+        key="g_spread_window",
+        step=5,
+        on_change=lambda: log_widget_change("g_spread_window")
+    )
+    
+    g_spread_z_threshold = st.slider(
+        "Z-Score порог (σ)",
+        min_value=1.0,
+        max_value=3.0,
+        key="g_spread_z_threshold",
+        step=0.1,
+        format="%.1fσ",
+        on_change=lambda: log_widget_change("g_spread_z_threshold")
+    )
+    
+    return g_spread_period, g_spread_window, g_spread_z_threshold
+
+
+def render_ytm_validation(
+    bonds: List[BondItem],
+    bond1_idx: int,
+    bond2_idx: int,
+    candle_interval: str
+):
+    """
+    Рендерит UI валидации YTM
+    
+    Логика валидации находится в core/db/ytm_repo.py:validate_ytm_accuracy()
+    Эта функция только отображает UI.
+    
+    Args:
+        bonds: Список облигаций
+        bond1_idx: Индекс первой облигации
+        bond2_idx: Индекс второй облигации
+        candle_interval: Интервал свечей
+    """
+    from utils.action_logger import log_button_press
+    from core.db import get_ytm_repo
+    
+    st.subheader("🔍 Валидация YTM")
+    
+    # Количество дней для проверки
+    validation_days = st.slider(
+        "Дней для проверки",
+        min_value=1,
+        max_value=30,
+        value=5,
+        step=1,
+        on_change=lambda: log_widget_change("validation_days")
+    )
+    
+    # Получаем текущие облигации для валидации
+    bond1_for_val = bonds[bond1_idx] if bonds else None
+    bond2_for_val = bonds[bond2_idx] if len(bonds) > 1 else None
+    
+    # Сброс валидации при смене инструментов
+    current_isins = frozenset([b.isin for b in [bond1_for_val, bond2_for_val] if b])
+    if st.session_state.get('validation_isins') != current_isins:
+        st.session_state.ytm_validation = None
+        st.session_state.validation_isins = current_isins
+    
+    # Определяем состояние кнопки
+    validation_state = st.session_state.ytm_validation
+    
+    # Кнопка всегда с текстом проверки, но разный цвет
+    if validation_state is None:
+        button_label = "🔍 Проверить расчёт YTM"
+        button_color = "normal"
+    elif validation_state.get('valid', True):
+        button_label = "✅ Расчётный YTM OK!"
+        button_color = "green"
+    else:
+        button_label = "❌ Расчётный YTM fail!"
+        button_color = "red"
+    
+    # Рисуем кнопку с нужным цветом
+    if button_color == "green":
+        st.markdown("""
+        <style>
+            div.stButton > button[kind="primary"] {
+                background-color: #28a745 !important;
+                border-color: #28a745 !important;
+            }
+            div.stButton > button[kind="primary"]:hover {
+                background-color: #218838 !important;
+                border-color: #1e7e34 !important;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+        button_pressed = st.button(button_label, width="stretch", type="primary")
+    elif button_color == "red":
+        st.markdown("""
+        <style>
+            div.stButton > button[kind="secondary"] {
+                background-color: #dc3545 !important;
+                border-color: #dc3545 !important;
+                color: white !important;
+            }
+            div.stButton > button[kind="secondary"]:hover {
+                background-color: #c82333 !important;
+                border-color: #bd2130 !important;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+        button_pressed = st.button(button_label, width="stretch", type="secondary")
+    else:
+        button_pressed = st.button(button_label, width="stretch", type="secondary")
+    
+    if button_pressed:
+        log_button_press("Проверить расчёт YTM", f"bonds={bond1_for_val.isin if bond1_for_val else None}/{bond2_for_val.isin if bond2_for_val else None}")
+        ytm_repo = get_ytm_repo()
+        results = []
+        all_valid = True
+        
+        if bond1_for_val:
+            v1 = ytm_repo.validate_ytm_accuracy(bond1_for_val.isin, candle_interval, validation_days)
+            results.append((bond1_for_val.name, v1))
+            if not v1['valid']:
+                all_valid = False
+        
+        if bond2_for_val:
+            v2 = ytm_repo.validate_ytm_accuracy(bond2_for_val.isin, candle_interval, validation_days)
+            results.append((bond2_for_val.name, v2))
+            if not v2['valid']:
+                all_valid = False
+        
+        st.session_state.ytm_validation = {
+            'valid': all_valid,
+            'results': results
+        }
+        st.rerun()
+    
+    # Показываем детали валидации
+    if validation_state and validation_state.get('results'):
+        with st.expander("📋 Детали валидации", expanded=True):
+            for bond_name, v in validation_state['results']:
+                if v.get('reason'):
+                    st.info(f"**{bond_name}**: {v['reason']}")
+                elif v.get('days_checked', 0) > 0:
+                    status = "✅" if v['valid'] else "⚠️"
+                    st.write(f"**{bond_name}**: {status}")
+                    st.write(f"  • Проверено дней: {v['days_checked']}")
+                    st.write(f"  • Валидных дней: {v['valid_days']}/{v['days_checked']}")
+                    st.write(f"  • Среднее расхождение: {v['avg_diff_bp']:.2f} б.п.")
+                    st.write(f"  • Max расхождение: {v['max_diff_bp']:.2f} б.п. ({v['max_diff_date']})")
+                    
+                    # Таблица по дням
+                    if v.get('details'):
+                        st.write("  **По дням:**")
+                        for d in v['details']:
+                            day_status = "✅" if d['valid'] else "⚠️"
+                            candle_time = d.get('time', '—')
+                            weekday = d.get('weekday', '')
+                            # Направление расхождения
+                            diff_dir = "↑" if d['calculated'] > d['official'] else "↓"
+                            st.write(f"    {day_status} {d['date']} ({weekday}) {candle_time}: {d['diff_bp']:.2f} б.п. {diff_dir} (расч={d['calculated']:.4f}, офиц={d['official']:.4f})")
+
+
 def render_sidebar(
     bonds: List[BondItem],
     bond_trading_data: Dict[str, Dict],
@@ -332,6 +545,9 @@ __all__ = [
     'get_bonds_list',
     'render_bond_selection',
     'render_period_selector',
+    'render_spread_analytics_settings',
+    'render_g_spread_settings',
+    'render_ytm_validation',
     'render_candle_interval_selector',
     'render_candle_period_selector',
     'render_auto_refresh',

@@ -320,77 +320,10 @@ def fetch_candle_data_cached(isin: str, bond_config_dict: Dict, interval: str, d
 
 
 # ==========================================
-# G-SPREAD: NELSON-SIEGEL PARAMS
+# G-SPREAD: ZCYC DATA
 # ==========================================
 
-# get_zcyc_fetcher удалён - используем функции напрямую из api.moex_zcyc
-
-
-@st.cache_data(ttl=3600)  # Кэш на 1 час
-def fetch_ns_params_cached(days: int = 365, force_load: bool = False) -> pd.DataFrame:
-    """
-    Загрузить параметры Nelson-Siegel из БД (БЕЗ MOEX загрузки!)
-    
-    Для загрузки с MOEX используйте fetch_ns_params_from_moex()
-    
-    Args:
-        days: Количество дней для фильтрации при загрузке из БД
-        force_load: Игнорируется (для совместимости)
-        
-    Returns:
-        DataFrame с колонками: b1, b2, b3, t1 (индекс = date)
-    """
-    g_spread_repo = get_g_spread_repo()
-    
-    # Загружаем из БД
-    start_date = date.today() - timedelta(days=days)
-    ns_df = g_spread_repo.load_ns_params(start_date=start_date)
-    
-    if not ns_df.empty:
-        logger.info(f"NS params из БД: {len(ns_df)} записей")
-    
-    return ns_df
-
-
-def fetch_ns_params_from_moex(progress_callback=None, days: int = 730) -> int:
-    """
-    Загрузить параметры Nelson-Siegel с MOEX в БД
-    
-    Загружает данные ПО ДНЯМ за указанный период (по умолчанию 2 года).
-    Занимает ~1 минуту для 2 лет (~500 торговых дней).
-    
-    Args:
-        progress_callback: Функция для отображения прогресса (current, total, date)
-        days: Количество дней для загрузки (по умолчанию 730 = 2 года)
-        
-    Returns:
-        Количество загруженных записей
-    """
-    g_spread_repo = get_g_spread_repo()
-    
-    # Проверяем последнюю дату в БД
-    last_date = g_spread_repo.get_last_ns_params_date()
-    
-    if last_date:
-        # Продолжаем с последней даты + 1
-        start_date = last_date + timedelta(days=1)
-        logger.info(f"Возобновление загрузки с {start_date} (последняя дата в БД: {last_date})")
-    else:
-        # Загружаем последние N дней
-        start_date = None  # Будет использоваться days параметр
-        logger.info(f"Начало загрузки за последние {days} дней")
-    
-    # Загружаем с MOEX по дням через новый API
-    with MOEXClient() as client:
-        ns_df = fetch_ns_params_history(
-            start_date=start_date,
-            save_callback=g_spread_repo.save_ns_params,
-            progress_callback=progress_callback,
-            days=days,
-            client=client
-        )
-    
-    return g_spread_repo.count_ns_params()
+# NS params функции удалены - не используются (moex_zcyc.py предоставляет всё нужное)
 
 
 @st.cache_data(show_spinner=False)  # Без TTL - исторические данные не меняются
@@ -448,45 +381,30 @@ def calculate_bond_g_spread(
     """
     Рассчитать G-spread для облигации с Z-Score и ADF тестом
     
-    ИСПОЛЬЗУЕТ ТОЧНЫЕ ДАННЫЕ MOEX:
-    - trdyield: рыночная YTM облигации
-    - clcyield: теоретическая КБД от MOEX
-    - G-spread = trdyield - clcyield (уже рассчитан MOEX!)
-    
-    КЭШИРОВАНИЕ:
-    - zcyc_history_raw: исходные данные MOEX для ВСЕХ облигаций
-    - Проверяем zcyc_history_raw, дозагружаем недостающие даты
-    - g_spreads таблица НЕ используется (устарела)
-    
-    ПЕРИОД ZCYC:
-    - Определяется параметром zcyc_period (по умолчанию 365 дней)
-    - НЕ зависит от daily_df! ZCYC загружается за полный период
-    - daily_df используется только для ограничения графика (опционально)
+    ОБЁРТКА над calculate_g_spread_from_zcyc с загрузкой данных.
     
     Args:
         isin: ISIN облигации
-        daily_df: DataFrame с YTM облигации (для ограничения графика, НЕ периода ZCYC)
+        daily_df: DataFrame с YTM облигации (НЕ ИСПОЛЬЗУЕТСЯ - для совместимости)
         ns_params_df: DataFrame с параметрами NS (НЕ ИСПОЛЬЗУЕТСЯ)
         window: Окно для rolling Z-Score
         maturity_date: Дата погашения (НЕ ИСПОЛЬЗУЕТСЯ)
-        use_duration: НЕ ИСПОЛЬЗУЕТСЯ (MOEX использует дюрацию)
+        use_duration: НЕ ИСПОЛЬЗУЕТСЯ
         zcyc_period: Период ZCYC в днях (по умолчанию 365)
         
     Returns:
         (DataFrame с G-spread, p_value ADF теста)
     """
-    from statsmodels.tsa.stattools import adfuller
+    from services.g_spread_calculator import calculate_g_spread_from_zcyc
     
     # Период ZCYC — НЕ зависит от daily_df!
-    # ZCYC всегда загружаем за указанный период
     zcyc_days = zcyc_period or st.session_state.get('g_spread_period', 365)
     end_date = date.today()
     start_date = end_date - timedelta(days=zcyc_days)
     
     logger.info(f"ZCYC период для {isin}: {start_date} - {end_date} ({zcyc_days} дней)")
     
-    # Кэшированная загрузка ZCYC из БД (zcyc_history_raw) или MOEX
-    # _fetch_zcyc_cached сам проверит данные и дозагрузит недостающие даты
+    # Кэшированная загрузка ZCYC из БД или MOEX
     zcyc_df = _fetch_zcyc_cached(
         isin,
         start_date.strftime('%Y-%m-%d'),
@@ -499,46 +417,8 @@ def calculate_bond_g_spread(
     
     logger.info(f"Загружено {len(zcyc_df)} записей ZCYC для {isin}")
     
-    # G-spread уже рассчитан MOEX!
-    # Нужно только добавить Z-score
-    
-    df = zcyc_df.copy()
-    df = df.sort_values('date').reset_index(drop=True)
-    
-    # Rolling Z-Score (сохраняем также mean и std для графиков)
-    roll = df['g_spread_bp'].rolling(window=window)
-    df['rolling_mean'] = roll.mean()
-    df['rolling_std'] = roll.std()
-    df['z_score'] = (df['g_spread_bp'] - df['rolling_mean']) / df['rolling_std']
-    
-    # ADF тест
-    p_value = 1.0
-    try:
-        g_spread_clean = df['g_spread_bp'].dropna()
-        if len(g_spread_clean) >= 20:
-            adf_result = adfuller(g_spread_clean)
-            p_value = adf_result[1]
-    except Exception as e:
-        logger.warning(f"ADF тест не удался: {e}")
-    
-    # Формируем результат
-    result_df = df.copy()
-    result_df = result_df.set_index('date')
-    
-    # Добавляем колонки для совместимости с UI
-    result_df = result_df.rename(columns={
-        'trdyield': 'ytm_bond',
-        'clcyield': 'ytm_kbd',
-        'duration_days': 'duration_days'
-    })
-    
-    # Добавляем duration_years
-    result_df['duration_years'] = result_df['duration_days'] / 365.25
-    
-    # НЕ сохраняем в g_spreads - это дублирование zcyc_history_raw
-    # zcyc_history_raw уже содержит все данные от MOEX
-    
-    return result_df, p_value
+    # Делегируем расчёт сервису
+    return calculate_g_spread_from_zcyc(zcyc_df, window=window)
 
 
 def main():
@@ -632,59 +512,13 @@ def main():
         st.divider()
         
         # Настройки Spread Analytics
-        st.subheader("📈 Spread Analytics")
-        spread_window = st.slider(
-            "Окно rolling (дней)",
-            min_value=5,
-            max_value=90,
-            key="spread_window",
-            step=5,
-            on_change=lambda: log_widget_change("spread_window")
-        )
-        
-        z_threshold = st.slider(
-            "Z-Score порог (σ)",
-            min_value=1.0,
-            max_value=3.0,
-            key="z_threshold",
-            step=0.1,
-            format="%.1fσ",
-            on_change=lambda: log_widget_change("z_threshold")
-        )
+        from components.sidebar import render_spread_analytics_settings, render_g_spread_settings
+        spread_window, z_threshold = render_spread_analytics_settings()
         
         st.divider()
         
         # Настройки G-Spread Analytics
-        st.subheader("📈 G-Spread Анализ")
-        
-        g_spread_period = st.slider(
-            "Период G-Spread (дней)",
-            min_value=30,
-            max_value=730,
-            key="g_spread_period",
-            step=30,
-            format="%d дней",
-            on_change=lambda: log_widget_change("g_spread_period")
-        )
-        
-        g_spread_window = st.slider(
-            "Окно rolling (дней)",
-            min_value=5,
-            max_value=90,
-            key="g_spread_window",
-            step=5,
-            on_change=lambda: log_widget_change("g_spread_window")
-        )
-        
-        g_spread_z_threshold = st.slider(
-            "Z-Score порог (σ)",
-            min_value=1.0,
-            max_value=3.0,
-            key="g_spread_z_threshold",
-            step=0.1,
-            format="%.1fσ",
-            on_change=lambda: log_widget_change("g_spread_z_threshold")
-        )
+        g_spread_period, g_spread_window, g_spread_z_threshold = render_g_spread_settings()
         
         st.divider()
         
@@ -820,123 +654,8 @@ def main():
         st.divider()
         
         # Валидация YTM
-        st.subheader("🔍 Валидация YTM")
-        
-        # Количество дней для проверки
-        validation_days = st.slider(
-            "Дней для проверки",
-            min_value=1,
-            max_value=30,
-            value=5,
-            step=1,
-            on_change=lambda: log_widget_change("validation_days")
-        )
-        
-        # Получаем текущие облигации для валидации
-        bond1_for_val = bonds[bond1_idx] if bonds else None
-        bond2_for_val = bonds[bond2_idx] if len(bonds) > 1 else None
-        
-        # Сброс валидации при смене инструментов
-        current_isins = frozenset([b.isin for b in [bond1_for_val, bond2_for_val] if b])
-        if st.session_state.get('validation_isins') != current_isins:
-            st.session_state.ytm_validation = None
-            st.session_state.validation_isins = current_isins
-        
-        # Определяем состояние кнопки
-        validation_state = st.session_state.ytm_validation
-        
-        # Кнопка всегда с текстом проверки, но разный цвет
-        if validation_state is None:
-            button_label = "🔍 Проверить расчёт YTM"
-            button_color = "normal"
-        elif validation_state.get('valid', True):
-            button_label = "✅ Расчётный YTM OK!"
-            button_color = "green"
-        else:
-            button_label = "❌ Расчётный YTM fail!"
-            button_color = "red"
-        
-        # Рисуем кнопку с нужным цветом
-        if button_color == "green":
-            st.markdown("""
-            <style>
-                div.stButton > button[kind="primary"] {
-                    background-color: #28a745 !important;
-                    border-color: #28a745 !important;
-                }
-                div.stButton > button[kind="primary"]:hover {
-                    background-color: #218838 !important;
-                    border-color: #1e7e34 !important;
-                }
-            </style>
-            """, unsafe_allow_html=True)
-            button_pressed = st.button(button_label, width="stretch", type="primary")
-        elif button_color == "red":
-            st.markdown("""
-            <style>
-                div.stButton > button[kind="secondary"] {
-                    background-color: #dc3545 !important;
-                    border-color: #dc3545 !important;
-                    color: white !important;
-                }
-                div.stButton > button[kind="secondary"]:hover {
-                    background-color: #c82333 !important;
-                    border-color: #bd2130 !important;
-                }
-            </style>
-            """, unsafe_allow_html=True)
-            button_pressed = st.button(button_label, width="stretch", type="secondary")
-        else:
-            button_pressed = st.button(button_label, width="stretch", type="secondary")
-        
-        if button_pressed:
-            log_button_press("Проверить расчёт YTM", f"bonds={bond1_for_val.isin if bond1_for_val else None}/{bond2_for_val.isin if bond2_for_val else None}")
-            ytm_repo = get_ytm_repo()
-            results = []
-            all_valid = True
-            
-            if bond1_for_val:
-                v1 = ytm_repo.validate_ytm_accuracy(bond1_for_val.isin, candle_interval, validation_days)
-                results.append((bond1_for_val.name, v1))
-                if not v1['valid']:
-                    all_valid = False
-            
-            if bond2_for_val:
-                v2 = ytm_repo.validate_ytm_accuracy(bond2_for_val.isin, candle_interval, validation_days)
-                results.append((bond2_for_val.name, v2))
-                if not v2['valid']:
-                    all_valid = False
-            
-            st.session_state.ytm_validation = {
-                'valid': all_valid,
-                'results': results
-            }
-            st.rerun()
-        
-        # Показываем детали валидации
-        if validation_state and validation_state.get('results'):
-            with st.expander("📋 Детали валидации", expanded=True):
-                for bond_name, v in validation_state['results']:
-                    if v.get('reason'):
-                        st.info(f"**{bond_name}**: {v['reason']}")
-                    elif v.get('days_checked', 0) > 0:
-                        status = "✅" if v['valid'] else "⚠️"
-                        st.write(f"**{bond_name}**: {status}")
-                        st.write(f"  • Проверено дней: {v['days_checked']}")
-                        st.write(f"  • Валидных дней: {v['valid_days']}/{v['days_checked']}")
-                        st.write(f"  • Среднее расхождение: {v['avg_diff_bp']:.2f} б.п.")
-                        st.write(f"  • Max расхождение: {v['max_diff_bp']:.2f} б.п. ({v['max_diff_date']})")
-                        
-                        # Таблица по дням
-                        if v.get('details'):
-                            st.write("  **По дням:**")
-                            for d in v['details']:
-                                day_status = "✅" if d['valid'] else "⚠️"
-                                candle_time = d.get('time', '—')
-                                weekday = d.get('weekday', '')
-                                # Направление расхождения
-                                diff_dir = "↑" if d['calculated'] > d['official'] else "↓"
-                                st.write(f"    {day_status} {d['date']} ({weekday}) {candle_time}: {d['diff_bp']:.2f} б.п. {diff_dir} (расч={d['calculated']:.4f}, офиц={d['official']:.4f})")
+        from components.sidebar import render_ytm_validation
+        render_ytm_validation(bonds, bond1_idx, bond2_idx, candle_interval)
     
     # ==========================================
     # ЗАГОЛОВОК

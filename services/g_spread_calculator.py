@@ -191,3 +191,77 @@ def generate_g_spread_signal(
 # ============================================================================
 # КОНЕЦ DEPRECATED КОДА
 # ============================================================================
+
+
+# ============================================================================
+# G-SPREAD ИЗ ZCYC (MOEX API)
+# ============================================================================
+
+
+def calculate_g_spread_from_zcyc(
+    zcyc_df: pd.DataFrame,
+    window: int = 30
+) -> Tuple[pd.DataFrame, float]:
+    """
+    Рассчитать G-spread с Z-Score и ADF тестом из ZCYC данных MOEX
+    
+    Принимает уже загруженные ZCYC данные и делает расчёты:
+    - Rolling Z-Score
+    - ADF тест на стационарность
+    
+    Args:
+        zcyc_df: DataFrame с ZCYC данными (columns: date, g_spread_bp, trdyield, clcyield, duration_days)
+        window: Окно для rolling Z-Score
+        
+    Returns:
+        (DataFrame с результатами, p_value ADF теста)
+    """
+    if zcyc_df.empty:
+        return pd.DataFrame(), 1.0
+    
+    from statsmodels.tsa.stattools import adfuller
+    
+    df = zcyc_df.copy()
+    
+    # Сортируем по дате
+    if 'date' in df.columns:
+        df = df.sort_values('date').reset_index(drop=True)
+    elif df.index.name == 'date':
+        df = df.reset_index().sort_values('date').reset_index(drop=True)
+    
+    # Rolling Z-Score (сохраняем также mean и std для графиков)
+    roll = df['g_spread_bp'].rolling(window=window)
+    df['rolling_mean'] = roll.mean()
+    df['rolling_std'] = roll.std()
+    df['z_score'] = (df['g_spread_bp'] - df['rolling_mean']) / df['rolling_std']
+    
+    # ADF тест
+    p_value = 1.0
+    try:
+        g_spread_clean = df['g_spread_bp'].dropna()
+        if len(g_spread_clean) >= 20:
+            adf_result = adfuller(g_spread_clean)
+            p_value = adf_result[1]
+    except Exception as e:
+        logger.warning(f"ADF тест не удался: {e}")
+    
+    # Формируем результат
+    result_df = df.copy()
+    
+    # Устанавливаем индекс
+    if 'date' in result_df.columns:
+        result_df = result_df.set_index('date')
+    
+    # Добавляем колонки для совместимости с UI
+    column_mapping = {
+        'trdyield': 'ytm_bond',
+        'clcyield': 'ytm_kbd',
+        'duration_days': 'duration_days'
+    }
+    result_df = result_df.rename(columns=column_mapping)
+    
+    # Добавляем duration_years если есть duration_days
+    if 'duration_days' in result_df.columns:
+        result_df['duration_years'] = result_df['duration_days'] / 365.25
+    
+    return result_df, p_value
