@@ -441,7 +441,7 @@ def main():
         st.divider()
         
         # Настройки Spread Analytics
-        from components.sidebar import render_spread_analytics_settings, render_g_spread_settings
+        from components.sidebar import render_spread_analytics_settings, render_g_spread_settings, render_auto_refresh
         spread_window, z_threshold = render_spread_analytics_settings()
         
         st.divider()
