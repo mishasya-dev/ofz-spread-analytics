@@ -1,22 +1,33 @@
 """
-CSS стили для приложения
+CSS стили для приложения OFZ Spread Analytics
 
-Централизованные стили для OFZ Spread Analytics.
+Централизованное управление всеми стилями.
 """
+import streamlit as st
 
-CSS_STYLES = """
+
+# ============================================================================
+# ОСНОВНЫЕ CSS СТИЛИ
+# ============================================================================
+
+MAIN_STYLES = """
 <style>
+    /* Main header */
     .main-header {
         font-size: 2.5rem;
         font-weight: bold;
         margin-bottom: 1rem;
     }
+    
+    /* Metric cards */
     .metric-card {
         background: #f8f9fa;
         padding: 15px;
         border-radius: 10px;
         border-left: 4px solid #1f77b4;
     }
+    
+    /* Signal styles */
     .signal-buy {
         background: linear-gradient(135deg, #d4edda, #c3e6cb);
         border-left: 4px solid #28a745;
@@ -29,6 +40,8 @@ CSS_STYLES = """
         background: linear-gradient(135deg, #fff3cd, #ffeeba);
         border-left: 4px solid #ffc107;
     }
+    
+    /* Streamlit metrics */
     .stMetric > div {
         background: #f8f9fa;
         padding: 10px;
@@ -41,27 +54,101 @@ CSS_STYLES = """
     .stMetric [data-testid="stMetricValue"] {
         color: #333 !important;
     }
-    .mode-badge {
-        display: inline-block;
-        padding: 4px 12px;
-        border-radius: 15px;
-        font-size: 0.85em;
-        font-weight: bold;
-        margin-left: 10px;
-    }
-    .mode-daily {
-        background: #3498db;
+    
+    /* Version badge in sidebar */
+    .version-badge-full {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
+        padding: 12px 16px;
+        border-radius: 12px;
+        margin-bottom: 12px;
+        box-shadow: 0 3px 12px rgba(102, 126, 234, 0.35);
+        text-align: center;
     }
-    .mode-intraday {
-        background: #e74c3c;
-        color: white;
+    .version-badge-full .version-main {
+        font-size: 1.3rem;
+        font-weight: 700;
+        margin-bottom: 8px;
+        letter-spacing: 0.5px;
+    }
+    .version-badge-full .version-details {
+        display: flex;
+        justify-content: space-around;
+        font-size: 0.75rem;
+        opacity: 0.95;
+        margin-bottom: 6px;
+        gap: 8px;
+    }
+    .version-badge-full .version-details span {
+        background: rgba(255,255,255,0.15);
+        padding: 2px 8px;
+        border-radius: 10px;
+    }
+    .version-badge-full .version-commit {
+        font-size: 0.7rem;
+        opacity: 0.7;
+        font-family: monospace;
+    }
+</style>
+"""
+
+# Стили для кнопки валидации YTM (зелёная)
+VALIDATION_BUTTON_GREEN = """
+<style>
+    div.stButton > button[kind="primary"] {
+        background-color: #28a745 !important;
+        border-color: #28a745 !important;
+    }
+    div.stButton > button[kind="primary"]:hover {
+        background-color: #218838 !important;
+        border-color: #1e7e34 !important;
+    }
+</style>
+"""
+
+# Стили для кнопки валидации YTM (красная)
+VALIDATION_BUTTON_RED = """
+<style>
+    div.stButton > button[kind="secondary"] {
+        background-color: #dc3545 !important;
+        border-color: #dc3545 !important;
+        color: white !important;
+    }
+    div.stButton > button[kind="secondary"]:hover {
+        background-color: #c82333 !important;
+        border-color: #bd2130 !important;
     }
 </style>
 """
 
 
-def apply_styles():
-    """Применяет CSS стили к приложению"""
-    import streamlit as st
-    st.markdown(CSS_STYLES, unsafe_allow_html=True)
+# ============================================================================
+# ФУНКЦИИ ПРИМЕНЕНИЯ СТИЛЕЙ
+# ============================================================================
+
+def apply_main_styles():
+    """Применить основные стили приложения"""
+    st.markdown(MAIN_STYLES, unsafe_allow_html=True)
+
+
+def apply_validation_button_style(color: str):
+    """
+    Применить стиль кнопки валидации YTM
+    
+    Args:
+        color: 'green', 'red', или 'normal'
+    """
+    if color == "green":
+        st.markdown(VALIDATION_BUTTON_GREEN, unsafe_allow_html=True)
+    elif color == "red":
+        st.markdown(VALIDATION_BUTTON_RED, unsafe_allow_html=True)
+    # normal — не применяем дополнительные стили
+
+
+__all__ = [
+    'apply_main_styles',
+    'apply_validation_button_style',
+    'MAIN_STYLES',
+    'VALIDATION_BUTTON_GREEN',
+    'VALIDATION_BUTTON_RED',
+]

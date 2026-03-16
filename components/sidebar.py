@@ -8,7 +8,8 @@ from typing import List, Dict, Any, Tuple, Callable, Optional
 
 from config import CANDLE_INTERVAL_CONFIG
 from utils.bond_utils import BondItem, get_years_to_maturity, format_bond_label, get_bonds_list as get_bonds_list_from_dict
-from utils.action_logger import log_widget_change
+from utils.action_logger import log_widget_change, log_button_press
+from components.styles import apply_validation_button_style
 
 
 def get_bonds_list() -> List[BondItem]:
@@ -341,7 +342,6 @@ def render_ytm_validation(
         bond2_idx: Индекс второй облигации
         candle_interval: Интервал свечей
     """
-    from utils.action_logger import log_button_press
     from core.db import get_ytm_repo
     
     st.subheader("🔍 Валидация YTM")
@@ -381,35 +381,10 @@ def render_ytm_validation(
         button_color = "red"
     
     # Рисуем кнопку с нужным цветом
+    apply_validation_button_style(button_color)
+    
     if button_color == "green":
-        st.markdown("""
-        <style>
-            div.stButton > button[kind="primary"] {
-                background-color: #28a745 !important;
-                border-color: #28a745 !important;
-            }
-            div.stButton > button[kind="primary"]:hover {
-                background-color: #218838 !important;
-                border-color: #1e7e34 !important;
-            }
-        </style>
-        """, unsafe_allow_html=True)
         button_pressed = st.button(button_label, width="stretch", type="primary")
-    elif button_color == "red":
-        st.markdown("""
-        <style>
-            div.stButton > button[kind="secondary"] {
-                background-color: #dc3545 !important;
-                border-color: #dc3545 !important;
-                color: white !important;
-            }
-            div.stButton > button[kind="secondary"]:hover {
-                background-color: #c82333 !important;
-                border-color: #bd2130 !important;
-            }
-        </style>
-        """, unsafe_allow_html=True)
-        button_pressed = st.button(button_label, width="stretch", type="secondary")
     else:
         button_pressed = st.button(button_label, width="stretch", type="secondary")
     
