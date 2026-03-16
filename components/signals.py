@@ -1,47 +1,28 @@
 """
 Компонент для отображения торговых сигналов
 
-Содержит логику генерации и рендеринга сигналов.
-
-NOTE: calculate_spread_stats() moved to components/metrics.py
+Содержит функции для рендеринга сигналов.
+Логика генерации сигналов импортируется из services/spread_calculator.py
 """
 import streamlit as st
 from typing import Dict
 
-
-def generate_signal(current_spread: float, p10: float, p25: float, p75: float, p90: float) -> Dict:
-    """Генерирует торговый сигнал"""
-    if current_spread < p25:
-        return {
-            'signal': 'SELL_BUY',
-            'action': 'ПРОДАТЬ Облигацию 1, КУПИТЬ Облигацию 2',
-            'reason': f'Спред {current_spread:.2f} б.п. ниже P25 ({p25:.2f} б.п.) — Облигация 1 переоценена относительно Облигации 2',
-            'color': '#FF6B6B',
-            'strength': 'Сильный' if current_spread < p10 else 'Средний'
-        }
-    elif current_spread > p75:
-        return {
-            'signal': 'BUY_SELL',
-            'action': 'КУПИТЬ Облигацию 1, ПРОДАТЬ Облигацию 2',
-            'reason': f'Спред {current_spread:.2f} б.п. выше P75 ({p75:.2f} б.п.) — Облигация 1 недооценена относительно Облигации 2',
-            'color': '#4ECDC4',
-            'strength': 'Сильный' if current_spread > p90 else 'Средний'
-        }
-    else:
-        return {
-            'signal': 'NEUTRAL',
-            'action': 'Удерживать позиции',
-            'reason': f'Спред {current_spread:.2f} б.п. в нормальном диапазоне [P25={p25:.2f}, P75={p75:.2f}]',
-            'color': '#95A5A6',
-            'strength': 'Нет сигнала'
-        }
+# Импортируем логику из правильного места
+from services.spread_calculator import generate_signal
 
 
 def render_signal_card(signal: Dict, bond1_name: str, bond2_name: str):
-    """Рендерит карточку сигнала"""
+    """
+    Рендерит карточку сигнала
+
+    Args:
+        signal: Словарь с сигналом (signal, action, reason, color, strength)
+        bond1_name: Имя облигации 1
+        bond2_name: Имя облигации 2
+    """
     signal_type = signal['signal']
-    
-    # Определяем CSS класс
+
+    # Определяем CSS класс и иконку
     if signal_type == 'SELL_BUY':
         css_class = 'signal-sell'
         icon = '🔴'
@@ -51,7 +32,7 @@ def render_signal_card(signal: Dict, bond1_name: str, bond2_name: str):
     else:
         css_class = 'signal-neutral'
         icon = '🟡'
-    
+
     st.markdown(f"""
     <div class="metric-card {css_class}">
         <h3>{icon} Сигнал: {signal['signal']}</h3>
@@ -60,3 +41,6 @@ def render_signal_card(signal: Dict, bond1_name: str, bond2_name: str):
         <p><em>Сила: {signal['strength']}</em></p>
     </div>
     """, unsafe_allow_html=True)
+
+
+__all__ = ['generate_signal', 'render_signal_card']
