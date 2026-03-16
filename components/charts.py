@@ -836,6 +836,50 @@ def create_g_spread_dashboard(
                 row=2, col=1
             )
 
+    # ==========================================
+    # INTRADAY ТОЧКИ на верхнем графике YTM
+    # ==========================================
+    if intraday_df is not None and not intraday_df.empty:
+        for i, ticker in enumerate(intraday_df['ticker'].unique()):
+            ticker_intraday = intraday_df[intraday_df['ticker'] == ticker]
+            color = colors[i % len(colors)]
+            
+            # YTM (рынок) - markers
+            if 'ytm' in ticker_intraday.columns:
+                valid_ytm = ticker_intraday[ticker_intraday['ytm'].notna()]
+                if not valid_ytm.empty:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=valid_ytm['date'],
+                            y=valid_ytm['ytm'],
+                            mode='markers',
+                            marker=dict(size=6, color=color, symbol='circle'),
+                            name=f"Intraday {ticker}",
+                            showlegend=False,
+                            legendgroup=f"intraday_{ticker}",
+                            hovertemplate='%{x}<br>YTM: %{y:.2f}%<extra></extra>'
+                        ),
+                        row=1, col=1
+                    )
+            
+            # YTM_theor (КБД) - markers
+            if 'ytm_theor' in ticker_intraday.columns:
+                valid_theor = ticker_intraday[ticker_intraday['ytm_theor'].notna()]
+                if not valid_theor.empty:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=valid_theor['date'],
+                            y=valid_theor['ytm_theor'],
+                            mode='markers',
+                            marker=dict(size=5, color=color, symbol='diamond'),
+                            name=f"КБД intraday {ticker}",
+                            showlegend=False,
+                            legendgroup=f"intraday_{ticker}",
+                            hovertemplate='%{x}<br>КБД: %{y:.2f}%<extra></extra>'
+                        ),
+                        row=1, col=1
+                    )
+
     # Линии сигналов на нижнем графике
     fig.add_hline(
         y=z_threshold, 
