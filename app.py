@@ -838,11 +838,9 @@ def main():
                     intraday_repo.save_intraday_quotes(current_quotes)
                     logger.info(f"Сохранены intraday котировки для {isins}")
                 
-                # Загружаем intraday данные за сегодня только для выбранных облигаций
-                intraday_df = intraday_repo.load_intraday_quotes(
-                    tradedate=date.today(), 
-                    isins=isins
-                )
+                # Загружаем последние intraday данные только для выбранных облигаций
+                # (most_recent=True по умолчанию - берёт max tradedate)
+                intraday_df = intraday_repo.load_intraday_quotes(isins=isins)
                 logger.info(f"Загружено {len(intraday_df)} intraday записей из БД для {isins}")
                 if not intraday_df.empty:
                     logger.debug(f"intraday_df columns: {list(intraday_df.columns)}")

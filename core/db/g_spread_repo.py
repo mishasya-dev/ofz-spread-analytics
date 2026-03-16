@@ -725,30 +725,44 @@ class GSpreadRepository:
     def load_intraday_quotes(
         self,
         tradedate: date = None,
-        isins: List[str] = None
+        isins: List[str] = None,
+        most_recent: bool = True
     ) -> pd.DataFrame:
         """
         Загрузить intraday котировки из БД
         
         Args:
-            tradedate: Дата торгов (по умолчанию сегодня)
+            tradedate: Дата торгов (игнорируется если most_recent=True)
             isins: Список ISIN для фильтрации (None = все)
+            most_recent: Если True, загружает последние данные (max tradedate)
             
         Returns:
             DataFrame с котировками
         """
-        if tradedate is None:
-            tradedate = date.today()
-        
-        query = '''
-            SELECT tradedate, tradetime, updatetime, secid, shortname,
-                   bidprice, bidyield, askprice, askyield,
-                   trdprice, trdyield, clcyield, crtyield,
-                   crtduration, g_spread_bp, created_at
-            FROM intraday_quotes
-            WHERE tradedate = ?
-        '''
-        params = [tradedate.strftime('%Y-%m-%d')]
+        if most_recent:
+            # Загружаем данные за последнюю торговую дату
+            query = '''
+                SELECT tradedate, tradetime, updatetime, secid, shortname,
+                       bidprice, bidyield, askprice, askyield,
+                       trdprice, trdyield, clcyield, crtyield,
+                       crtduration, g_spread_bp, created_at
+                FROM intraday_quotes
+                WHERE tradedate = (SELECT MAX(tradedate) FROM intraday_quotes)
+            '''
+            params = []
+        else:
+            if tradedate is None:
+                tradedate = date.today()
+            
+            query = '''
+                SELECT tradedate, tradetime, updatetime, secid, shortname,
+                       bidprice, bidyield, askprice, askyield,
+                       trdprice, trdyield, clcyield, crtyield,
+                       crtduration, g_spread_bp, created_at
+                FROM intraday_quotes
+                WHERE tradedate = ?
+            '''
+            params = [tradedate.strftime('%Y-%m-%d')]
         
         if isins:
             placeholders = ','.join(['?' for _ in isins])
@@ -765,6 +779,10 @@ class GSpreadRepository:
         
         # Добавляем datetime колонку для графиков (используем created_at)
         df['datetime'] = pd.to_datetime(df['created_at'])
+        
+        # Логируем загруженную дату
+        loaded_date = df['tradedate'].iloc[0]
+        logger.debug(f"Загружено {len(df)} intraday записей за {loaded_date}")
         
         return df
     
