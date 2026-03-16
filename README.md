@@ -8,6 +8,14 @@ OFZ Spread Analytics — приложение для анализа yield spread
 
 ## Features
 
+### Intraday Quotes (v0.8.1)
+
+**Автоматическое сохранение текущих котировок:**
+- При включённом автообновлении текущие котировки сохраняются в БД
+- Точки отображаются на графиках G-Spread в реальном времени
+- Z-Score рассчитывается на основе исторических rolling статистик
+- Цветовая индикация: RED (SELL), GREEN (BUY), YELLOW (Neutral)
+
 ### G-Spread Analysis (v0.8.0)
 
 **G-spread теперь берётся напрямую из MOEX ZCYC API:**
@@ -217,6 +225,7 @@ signal = generate_g_spread_signal(
 | `zcyc_cache` | Кэш ZCYC данных (G-spread) |
 | `zcyc_empty_dates` | Праздники (нет торгов) |
 | `g_spreads` | Рассчитанные G-spread |
+| `intraday_quotes` | Текущие котировки (auto-saved) |
 | `daily_ytm` | Дневные YTM |
 | `intraday_ytm` | Внутридневные YTM |
 | `cointegration_cache` | Кэш коинтеграции |

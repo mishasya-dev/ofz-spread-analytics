@@ -2,7 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
-## [v0.7.0] - 2026-03-06
+## [v0.8.1] - 2026-03-17
+
+### Added
+- **Intraday Quotes Storage**: Automatic saving of current bond quotes during auto-refresh
+  - New table `intraday_quotes` in SQLite database
+  - Stores: trdyield, clcyield, g_spread_bp, bid/ask prices, duration
+  - Uses `created_at` timestamp for uniqueness (MOEX updatetime doesn't change frequently)
+- **Intraday Points on G-Spread Charts**: Real-time points displayed on G-Spread dashboard
+  - Colored by Z-Score: RED (sell), GREEN (buy), YELLOW (neutral)
+  - Z-Score calculated using historical rolling_mean/std
+  - Works for both `create_g_spread_dashboard()` and `create_g_spread_chart_single()`
+
+### Changed
+- **Auto-refresh Flow**: Now saves intraday quotes to database before reloading
+- **load_intraday_quotes()**: Uses `most_recent=True` by default (loads max tradedate)
+  - Fixes issue where data saved at night couldn't be loaded next morning
+
+### Fixed
+- **Missing `updatetime` Column**: Added migration for intraday_quotes table
+- **Date Mismatch Bug**: intraday data now loaded by MAX(tradedate) instead of date.today()
+
+### Database
+- **New Table**: `intraday_quotes` for storing current bond quotes
+- **New Columns**: `updatetime`, `created_at` for proper timestamping
+
+## [v0.8.0] - 2026-03-10
 
 ### Architecture
 - **YTM Calculation Separation**: Split YTM calculation from MOEX API layer
