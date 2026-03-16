@@ -41,11 +41,11 @@ from .moex_zcyc import (
     # DEPRECATED: fetch_ns_params_history,
     # DEPRECATED: fetch_ns_params_incremental,
     fetch_current_zcyc,
-    fetch_current_clcyield,
+    fetch_current_clcyield,  # DEPRECATED: избыточно, используйте fetch_all_clcyields
     fetch_all_clcyields,
     # DEPRECATED: get_ns_params_history,
-    get_zcyc_data_for_date,
-    get_zcyc_history,
+    # DEPRECATED: get_zcyc_data_for_date,
+    # DEPRECATED: get_zcyc_history,
     get_zcyc_history_parallel,
 )
 
@@ -101,11 +101,11 @@ __all__ = [
     # DEPRECATED: "fetch_ns_params_history",
     # DEPRECATED: "fetch_ns_params_incremental",
     "fetch_current_zcyc",
-    "fetch_current_clcyield",
+    "fetch_current_clcyield",  # DEPRECATED: избыточно
     "fetch_all_clcyields",
     # DEPRECATED: "get_ns_params_history",
-    "get_zcyc_data_for_date",
-    "get_zcyc_history",
+    # DEPRECATED: "get_zcyc_data_for_date",
+    # DEPRECATED: "get_zcyc_history",
     "get_zcyc_history_parallel",
     # Candles
     "CandleInterval",

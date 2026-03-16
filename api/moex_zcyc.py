@@ -93,11 +93,21 @@ def fetch_current_zcyc(client: MOEXClient = None) -> Dict[str, Any]:
     """
     Получить текущие параметры КБД (11 точек по срокам)
 
+    Endpoint: /engines/stock/zcyc.json (без даты)
+
+    Возвращает:
+        - points: 11 точек КБД (0.25, 0.5, 0.75, ..., 30 лет)
+        - params: параметры Nelson-Siegel (b1, b2, b3, t1)
+
+    Использование:
+        НЕ ИСПОЛЬЗУЕТСЯ в текущем коде.
+        МОЖЕТ ПОНАДОБИТЬСЯ для графика текущей КБД в UI.
+
     Args:
         client: MOEXClient
 
     Returns:
-        Словарь с текущими параметрами КБД
+        Словарь {has_data, points, params}
     """
     use_context = client is None
     if use_context:
@@ -140,6 +150,12 @@ def fetch_current_zcyc(client: MOEXClient = None) -> Dict[str, Any]:
 def fetch_current_clcyield(isin: str, client: MOEXClient = None) -> Optional[float]:
     """
     Получить текущий YTM по КБД для конкретной облигации
+
+    Endpoint: /engines/stock/zcyc/securities.json?securities=ISIN
+
+    DEPRECATED: ИЗБЫТОЧНО.
+        Используйте fetch_all_clcyields() для запроса по списку ISIN.
+        Удалить в следующей версии.
 
     Args:
         isin: ISIN облигации
@@ -190,6 +206,12 @@ def fetch_current_clcyield(isin: str, client: MOEXClient = None) -> Optional[flo
 def fetch_all_clcyields(isins: List[str], client: MOEXClient = None) -> Dict[str, Optional[float]]:
     """
     Получить текущие YTM по КБД для списка облигаций
+
+    Endpoint: /engines/stock/zcyc/securities.json?securities=ISIN1,ISIN2,...
+
+    Использование:
+        НЕ ИСПОЛЬЗУЕТСЯ в текущем коде.
+        МОЖЕТ ПОНАДОБИТЬСЯ для live данных без загрузки истории.
 
     Args:
         isins: Список ISIN
@@ -260,187 +282,203 @@ def fetch_all_clcyields(isins: List[str], client: MOEXClient = None) -> Dict[str
 #     return fetch_ns_params_history(start_date=start_date)
 
 
-def get_zcyc_data_for_date(target_date: date, client: MOEXClient = None) -> pd.DataFrame:
-    """
-    Получить данные ZCYC (G-spread) за конкретную дату
+# DEPRECATED: get_zcyc_data_for_date() не используется.
+# Вызывался только из get_zcyc_history(), который заменён на get_zcyc_history_parallel().
+# Удалить в следующей версии.
 
-    Args:
-        target_date: Дата для получения данных
-        client: MOEXClient
+# def get_zcyc_data_for_date(target_date: date, client: MOEXClient = None) -> pd.DataFrame:
+#     """
+#     Получить данные ZCYC (G-spread) за конкретную дату
+#
+#     Endpoint: /engines/stock/zcyc.json?date=YYYY-MM-DD
+#
+#     DEPRECATED: Используйте get_zcyc_history_parallel() для загрузки истории.
+#     Удалить в следующей версии.
+#
+#     Args:
+#         target_date: Дата для получения данных
+#         client: MOEXClient
+#
+#     Returns:
+#         DataFrame с колонками: date, secid, shortname, trdyield, clcyield,
+#                                duration_days, g_spread_bp
+#     """
+#     use_context = client is None
+#     if use_context:
+#         client = MOEXClient()
+#         client.__enter__()
+#
+#     try:
+#         data = client.get_json(
+#             "/engines/stock/zcyc.json",
+#             {
+#                 "iss.meta": "off",
+#                 "date": target_date.strftime("%Y-%m-%d")
+#             }
+#         )
+#
+#         securities = data.get("securities", {})
+#         if not securities.get("data"):
+#             return pd.DataFrame()
+#
+#         df = pd.DataFrame(
+#             securities["data"],
+#             columns=securities.get("columns", [])
+#         )
+#
+#         # Фильтруем только записи с данными
+#         df = df[df['clcyield'].notna() & df['trdyield'].notna()]
+#
+#         if df.empty:
+#             return pd.DataFrame()
+#
+#         # Выбираем нужные колонки
+#         result = pd.DataFrame({
+#             'date': pd.to_datetime(target_date),
+#             'secid': df['secid'],
+#             'shortname': df['shortname'],
+#             'trdyield': df['trdyield'].astype(float),
+#             'clcyield': df['clcyield'].astype(float),
+#             'duration_days': df['crtduration'].astype(float),
+#         })
+#
+#         # G-spread в базисных пунктах
+#         result['g_spread_bp'] = (result['trdyield'] - result['clcyield']) * 100
+#
+#         return result
+#
+#     except Exception as e:
+#         logger.error(f"Ошибка при получении ZCYC за {target_date}: {e}")
+#         return pd.DataFrame()
+#
+#     finally:
+#         if use_context:
+#             client.__exit__(None, None, None)
 
-    Returns:
-        DataFrame с колонками: date, secid, shortname, trdyield, clcyield,
-                               duration_days, g_spread_bp
-    """
-    use_context = client is None
-    if use_context:
-        client = MOEXClient()
-        client.__enter__()
 
-    try:
-        data = client.get_json(
-            "/engines/stock/zcyc.json",
-            {
-                "iss.meta": "off",
-                "date": target_date.strftime("%Y-%m-%d")
-            }
-        )
+# DEPRECATED: get_zcyc_history() не используется.
+# Заменён на get_zcyc_history_parallel() — параллельная загрузка в 3-5 раз быстрее.
+# Удалить в следующей версии.
 
-        securities = data.get("securities", {})
-        if not securities.get("data"):
-            return pd.DataFrame()
-
-        df = pd.DataFrame(
-            securities["data"],
-            columns=securities.get("columns", [])
-        )
-
-        # Фильтруем только записи с данными
-        df = df[df['clcyield'].notna() & df['trdyield'].notna()]
-
-        if df.empty:
-            return pd.DataFrame()
-
-        # Выбираем нужные колонки
-        result = pd.DataFrame({
-            'date': pd.to_datetime(target_date),
-            'secid': df['secid'],
-            'shortname': df['shortname'],
-            'trdyield': df['trdyield'].astype(float),
-            'clcyield': df['clcyield'].astype(float),
-            'duration_days': df['crtduration'].astype(float),
-        })
-
-        # G-spread в базисных пунктах
-        result['g_spread_bp'] = (result['trdyield'] - result['clcyield']) * 100
-
-        return result
-
-    except Exception as e:
-        logger.error(f"Ошибка при получении ZCYC за {target_date}: {e}")
-        return pd.DataFrame()
-
-    finally:
-        if use_context:
-            client.__exit__(None, None, None)
-
-
-def get_zcyc_history(
-    start_date: date,
-    end_date: date = None,
-    isin: str = None,
-    progress_callback=None,
-    use_cache: bool = True,
-    save_callback=None,
-    client: MOEXClient = None
-) -> pd.DataFrame:
-    """
-    Получить историю ZCYC (G-spread) за период с кэшированием
-
-    При use_cache=True:
-    1. Проверяет кэш БД
-    2. Загружает только недостающие даты с MOEX
-    3. Сохраняет новые данные в кэш
-
-    Args:
-        start_date: Начальная дата
-        end_date: Конечная дата (по умолчанию сегодня)
-        isin: ISIN облигации для фильтрации
-        progress_callback: Функция прогресса (current, total, date)
-        use_cache: Использовать кэш БД
-        save_callback: Функция для сохранения в БД (df -> int)
-        client: MOEXClient
-
-    Returns:
-        DataFrame с ZCYC данными
-    """
-    if end_date is None:
-        end_date = date.today()
-
-    # Генерируем список торговых дней
-    trading_days = []
-    current = start_date
-    while current <= end_date:
-        if current.weekday() < 5:
-            trading_days.append(current)
-        current += timedelta(days=1)
-
-    all_data = []
-    dates_to_fetch = trading_days.copy()
-
-    # Проверяем кэш
-    if use_cache and save_callback:
-        try:
-            from core.db import get_g_spread_repo
-            repo = get_g_spread_repo()
-
-            cached_df = repo.load_zcyc(isin=isin, start_date=start_date, end_date=end_date)
-            all_cached_dates = repo.get_zcyc_cached_dates(
-                isin=None,
-                start_date=start_date,
-                end_date=end_date
-            )
-
-            if not cached_df.empty:
-                all_data.append(cached_df)
-
-            dates_to_fetch = [d for d in trading_days if d not in all_cached_dates]
-
-            empty_dates = repo.load_empty_dates(start_date=start_date, end_date=end_date)
-            if empty_dates:
-                dates_to_fetch = [d for d in dates_to_fetch if d not in empty_dates]
-
-            logger.info(f"Из кэша: {len(cached_df)} записей, дат в кэше: {len(all_cached_dates)}, нужно загрузить: {len(dates_to_fetch)} дней")
-        except Exception as e:
-            logger.warning(f"Ошибка при чтении кэша: {e}")
-
-    use_context = client is None
-    if use_context:
-        client = MOEXClient()
-        client.__enter__()
-
-    try:
-        # Загружаем недостающие данные
-        if dates_to_fetch:
-            total = len(dates_to_fetch)
-            new_data = []
-
-            for i, day in enumerate(dates_to_fetch):
-                df = get_zcyc_data_for_date(day, client)
-
-                if not df.empty:
-                    if isin:
-                        df = df[df['secid'] == isin]
-                    if not df.empty:
-                        new_data.append(df)
-
-                if progress_callback and (i % 10 == 0 or i == total - 1):
-                    progress_callback(i + 1, total, day)
-
-            if new_data:
-                new_df = pd.concat(new_data, ignore_index=True)
-                all_data.append(new_df)
-
-                if use_cache and save_callback:
-                    try:
-                        saved = save_callback(new_df)
-                        logger.info(f"Сохранено в кэш: {saved} записей")
-                    except Exception as e:
-                        logger.warning(f"Ошибка при сохранении в кэш: {e}")
-
-        if not all_data:
-            return pd.DataFrame()
-
-        result = pd.concat(all_data, ignore_index=True)
-        result = result.sort_values('date').reset_index(drop=True)
-
-        logger.info(f"Всего загружено {len(result)} записей ZCYC за {len(trading_days)} дней")
-
-        return result
-
-    finally:
-        if use_context:
-            client.__exit__(None, None, None)
+# def get_zcyc_history(
+#     start_date: date,
+#     end_date: date = None,
+#     isin: str = None,
+#     progress_callback=None,
+#     use_cache: bool = True,
+#     save_callback=None,
+#     client: MOEXClient = None
+# ) -> pd.DataFrame:
+#     """
+#     Получить историю ZCYC (G-spread) за период с кэшированием (ПОСЛЕДОВАТЕЛЬНО)
+#
+#     DEPRECATED: Используйте get_zcyc_history_parallel() — в 3-5 раз быстрее.
+#     Удалить в следующей версии.
+#
+#     При use_cache=True:
+#     1. Проверяет кэш БД
+#     2. Загружает только недостающие даты с MOEX
+#     3. Сохраняет новые данные в кэш
+#
+#     Args:
+#         start_date: Начальная дата
+#         end_date: Конечная дата (по умолчанию сегодня)
+#         isin: ISIN облигации для фильтрации
+#         progress_callback: Функция прогресса (current, total, date)
+#         use_cache: Использовать кэш БД
+#         save_callback: Функция для сохранения в БД (df -> int)
+#         client: MOEXClient
+#
+#     Returns:
+#         DataFrame с ZCYC данными
+#     """
+#     if end_date is None:
+#         end_date = date.today()
+#
+#     # Генерируем список торговых дней
+#     trading_days = []
+#     current = start_date
+#     while current <= end_date:
+#         if current.weekday() < 5:
+#             trading_days.append(current)
+#         current += timedelta(days=1)
+#
+#     all_data = []
+#     dates_to_fetch = trading_days.copy()
+#
+#     # Проверяем кэш
+#     if use_cache and save_callback:
+#         try:
+#             from core.db import get_g_spread_repo
+#             repo = get_g_spread_repo()
+#
+#             cached_df = repo.load_zcyc(isin=isin, start_date=start_date, end_date=end_date)
+#             all_cached_dates = repo.get_zcyc_cached_dates(
+#                 isin=None,
+#                 start_date=start_date,
+#                 end_date=end_date
+#             )
+#
+#             if not cached_df.empty:
+#                 all_data.append(cached_df)
+#
+#             dates_to_fetch = [d for d in trading_days if d not in all_cached_dates]
+#
+#             empty_dates = repo.load_empty_dates(start_date=start_date, end_date=end_date)
+#             if empty_dates:
+#                 dates_to_fetch = [d for d in dates_to_fetch if d not in empty_dates]
+#
+#             logger.info(f"Из кэша: {len(cached_df)} записей, дат в кэше: {len(all_cached_dates)}, нужно загрузить: {len(dates_to_fetch)} дней")
+#         except Exception as e:
+#             logger.warning(f"Ошибка при чтении кэша: {e}")
+#
+#     use_context = client is None
+#     if use_context:
+#         client = MOEXClient()
+#         client.__enter__()
+#
+#     try:
+#         # Загружаем недостающие данные
+#         if dates_to_fetch:
+#             total = len(dates_to_fetch)
+#             new_data = []
+#
+#             for i, day in enumerate(dates_to_fetch):
+#                 df = get_zcyc_data_for_date(day, client)
+#
+#                 if not df.empty:
+#                     if isin:
+#                         df = df[df['secid'] == isin]
+#                     if not df.empty:
+#                         new_data.append(df)
+#
+#                 if progress_callback and (i % 10 == 0 or i == total - 1):
+#                     progress_callback(i + 1, total, day)
+#
+#             if new_data:
+#                 new_df = pd.concat(new_data, ignore_index=True)
+#                 all_data.append(new_df)
+#
+#                 if use_cache and save_callback:
+#                     try:
+#                         saved = save_callback(new_df)
+#                         logger.info(f"Сохранено в кэш: {saved} записей")
+#                     except Exception as e:
+#                         logger.warning(f"Ошибка при сохранении в кэш: {e}")
+#
+#         if not all_data:
+#             return pd.DataFrame()
+#
+#         result = pd.concat(all_data, ignore_index=True)
+#         result = result.sort_values('date').reset_index(drop=True)
+#
+#         logger.info(f"Всего загружено {len(result)} записей ZCYC за {len(trading_days)} дней")
+#
+#         return result
+#
+#     finally:
+#         if use_context:
+#             client.__exit__(None, None, None)
 
 
 # Максимальное количество дней в одном батче для MOEX API

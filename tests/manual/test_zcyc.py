@@ -3,12 +3,15 @@
 Тесты для ZCYC (G-spread) функционала
 
 Тестирует:
-- get_zcyc_data_for_date() - загрузка данных за дату
 - get_zcyc_history_parallel() - исторические данные с кэшированием
 - save_zcyc/load_zcyc - репозиторий БД
 - save_empty_dates/load_empty_dates - кэш праздников
 - calculate_g_spread_stats() - статистика
 - generate_g_spread_signal() - торговые сигналы
+
+DEPRECATED (удалено):
+- get_zcyc_data_for_date() - заменён на get_zcyc_history_parallel()
+- get_zcyc_history() - заменён на get_zcyc_history_parallel()
 """
 import sys
 import os
@@ -23,34 +26,8 @@ from core.db.connection import init_database
 init_database()
 
 from core.db import get_g_spread_repo
-from api.moex_zcyc import get_zcyc_data_for_date, get_zcyc_history_parallel
+from api.moex_zcyc import get_zcyc_history_parallel
 from services.g_spread_calculator import calculate_g_spread_stats, generate_g_spread_signal
-
-
-def test_zcyc_data_for_date():
-    """Тест: загрузка ZCYC данных за конкретную дату"""
-    print("\n=== Test: get_zcyc_data_for_date ===")
-    
-    # Берём вчерашний день (рабочий)
-    test_date = date.today() - timedelta(days=1)
-    
-    df = get_zcyc_data_for_date(test_date)
-    
-    if df.empty:
-        print(f"  ⚠️ Нет данных за {test_date} (возможно праздник)")
-        return
-    
-    # Проверяем структуру
-    expected_cols = {'date', 'secid', 'shortname', 'trdyield', 'clcyield', 'duration_days', 'g_spread_bp'}
-    assert expected_cols <= set(df.columns), f"Missing columns: {expected_cols - set(df.columns)}"
-    
-    # Проверяем расчёт G-spread
-    for _, row in df.head(5).iterrows():
-        expected_g_spread = (row['trdyield'] - row['clcyield']) * 100
-        assert abs(row['g_spread_bp'] - expected_g_spread) < 0.1, "G-spread calculation error"
-    
-    print(f"  ✅ Загружено {len(df)} облигаций за {test_date}")
-    print(f"  ✅ Колонки: {list(df.columns)}")
 
 
 def test_zcyc_history_parallel():
@@ -221,7 +198,6 @@ def main():
     print("="*60)
     
     tests = [
-        test_zcyc_data_for_date,
         test_zcyc_history_parallel,
         test_zcyc_repository,
         test_empty_dates_cache,
