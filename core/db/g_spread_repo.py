@@ -691,8 +691,8 @@ class GSpreadRepository:
                             (tradedate, tradetime, updatetime, secid, shortname, 
                              bidprice, bidyield, askprice, askyield,
                              trdprice, trdyield, clcyield, crtyield,
-                             crtduration, g_spread_bp)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             crtduration, g_spread_bp, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                         ''', (
                             tradedate,
                             tradetime,
@@ -755,7 +755,7 @@ class GSpreadRepository:
             query += f' AND secid IN ({placeholders})'
             params.extend(isins)
         
-        query += ' ORDER BY updatetime'
+        query += ' ORDER BY created_at'
         
         with get_db_connection() as conn:
             df = pd.read_sql_query(query, conn, params=params)
@@ -763,8 +763,8 @@ class GSpreadRepository:
         if df.empty:
             return pd.DataFrame()
         
-        # Добавляем datetime колонку для графиков (используем updatetime)
-        df['datetime'] = pd.to_datetime(df['tradedate'] + ' ' + df['updatetime'])
+        # Добавляем datetime колонку для графиков (используем created_at)
+        df['datetime'] = pd.to_datetime(df['created_at'])
         
         return df
     

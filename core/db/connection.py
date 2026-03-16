@@ -574,7 +574,7 @@ def init_database():
             crtduration INTEGER,
             g_spread_bp REAL,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(tradedate, updatetime, secid)
+            UNIQUE(tradedate, created_at, secid)
         )
     ''')
     
