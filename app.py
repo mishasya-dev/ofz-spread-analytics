@@ -944,15 +944,45 @@ def main():
                     
                     # Добавляем intraday данные (если есть)
                     if not intraday_df.empty:
+                        # Получаем последние rolling_mean/std для расчёта Z-score
+                        last_rolling_mean_1 = None
+                        last_rolling_std_1 = None
+                        last_rolling_mean_2 = None
+                        last_rolling_std_2 = None
+                        
+                        if 'rolling_mean' in g_spread_df1.columns and 'rolling_std' in g_spread_df1.columns:
+                            last_rolling_mean_1 = g_spread_df1['rolling_mean'].iloc[-1]
+                            last_rolling_std_1 = g_spread_df1['rolling_std'].iloc[-1]
+                        
+                        if not same_bonds and not g_spread_df2.empty:
+                            if 'rolling_mean' in g_spread_df2.columns and 'rolling_std' in g_spread_df2.columns:
+                                last_rolling_mean_2 = g_spread_df2['rolling_mean'].iloc[-1]
+                                last_rolling_std_2 = g_spread_df2['rolling_std'].iloc[-1]
+                        
                         intraday_rows = []
                         for _, row in intraday_df.iterrows():
+                            # Определяем rolling параметры по ISIN
+                            if row['secid'] == bond1.isin:
+                                rm = last_rolling_mean_1
+                                rs = last_rolling_std_1
+                            else:
+                                rm = last_rolling_mean_2
+                                rs = last_rolling_std_2
+                            
+                            # Рассчитываем Z-score
+                            g_spread = row['g_spread_bp']
+                            if rm is not None and rs is not None and rs > 0 and pd.notna(g_spread):
+                                zscore = (g_spread - rm) / rs
+                            else:
+                                zscore = np.nan
+                            
                             intraday_rows.append({
                                 'date': row['datetime'],
                                 'ticker': row['shortname'],
                                 'ytm': row['trdyield'],
                                 'ytm_theor': row['clcyield'],
-                                'g_spread': row['g_spread_bp'],
-                                'zscore': np.nan  # Z-score только для истории
+                                'g_spread': g_spread,
+                                'zscore': zscore
                             })
                         
                         if intraday_rows:

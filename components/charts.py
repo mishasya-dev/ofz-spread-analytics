@@ -863,6 +863,66 @@ def create_g_spread_dashboard(
         opacity=0.5
     )
     
+    # ==========================================
+    # INTRADAY ТОЧКИ на Z-Score графике
+    # ==========================================
+    # Определяем intraday точки (сегодняшняя дата с временем)
+    today = pd.Timestamp.now().normalize()
+    intraday_mask = df_res['date'].apply(lambda x: pd.Timestamp(x).normalize() == today if pd.notna(x) else False)
+    intraday_data = df_res[intraday_mask]
+    
+    if not intraday_data.empty:
+        for i, ticker in enumerate(intraday_data['ticker'].unique()):
+            ticker_intraday = intraday_data[intraday_data['ticker'] == ticker]
+            color = colors[i % len(colors)]
+            
+            # Фильтруем только точки с валидным Z-score
+            valid_zscore = ticker_intraday[ticker_intraday['zscore'].notna()]
+            
+            if not valid_zscore.empty:
+                # Цвета по Z-score
+                marker_colors = []
+                for z in valid_zscore['zscore']:
+                    if z > z_threshold:
+                        marker_colors.append('#FF4444')  # красный (продажа)
+                    elif z < -z_threshold:
+                        marker_colors.append('#44FF44')  # зелёный (покупка)
+                    else:
+                        marker_colors.append('#FFD700')  # жёлтый (нейтрально)
+                
+                # Intraday точки на Z-Score графике
+                fig.add_trace(
+                    go.Scatter(
+                        x=valid_zscore['date'],
+                        y=valid_zscore['zscore'],
+                        mode='markers',
+                        marker=dict(
+                            size=8,
+                            color=marker_colors,
+                            line=dict(width=1, color='black'),
+                            symbol='circle'
+                        ),
+                        name=f"Intraday {ticker}",
+                        showlegend=True,
+                        legendgroup=f"intraday_{ticker}",
+                        hovertemplate='%{x}<br>Z: %{y:.2f}<extra></extra>'
+                    ),
+                    row=2, col=1
+                )
+                
+                # Линия соединяющая intraday точки
+                fig.add_trace(
+                    go.Scatter(
+                        x=valid_zscore['date'],
+                        y=valid_zscore['zscore'],
+                        mode='lines',
+                        line=dict(color=color, width=1, dash='dot'),
+                        showlegend=False,
+                        hoverinfo='skip'
+                    ),
+                    row=2, col=1
+                )
+    
     fig.update_layout(
         height=700, 
         hovermode="x unified", 
