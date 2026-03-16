@@ -523,6 +523,33 @@ def init_database():
         )
     ''')
     
+    # ==========================================
+    # ТАБЛИЦА TRADING_CALENDAR (торговый календарь)
+    # ==========================================
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS trading_calendar (
+            date TEXT PRIMARY KEY,
+            is_trading INTEGER NOT NULL,
+            source TEXT DEFAULT 'moex',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_trading_calendar_is_trading 
+        ON trading_calendar(is_trading)
+    ''')
+    
+    # ==========================================
+    # ТАБЛИЦА CALENDAR_META (метаданные календаря)
+    # ==========================================
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS calendar_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    ''')
+    
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована")

@@ -14,6 +14,7 @@ from .bonds_repo import BondsRepository
 from .ytm_repo import YTMRepository
 from .spreads_repo import SpreadsRepository
 from .g_spread_repo import GSpreadRepository
+from .calendar_repo import CalendarRepository
 from .facade import DatabaseFacade, get_db_facade
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     'YTMRepository',
     'SpreadsRepository',
     'GSpreadRepository',
+    'CalendarRepository',
     # Фасад
     'DatabaseFacade',
     'get_db_facade',
@@ -37,6 +39,7 @@ __all__ = [
     'get_ytm_repo',
     'get_spreads_repo',
     'get_g_spread_repo',
+    'get_calendar_repo',
 ]
 
 
@@ -59,6 +62,11 @@ def get_spreads_repo() -> SpreadsRepository:
 def get_g_spread_repo() -> GSpreadRepository:
     """Получить репозиторий G-spread"""
     return GSpreadRepository()
+
+
+def get_calendar_repo() -> CalendarRepository:
+    """Получить репозиторий календаря"""
+    return CalendarRepository()
 
 
 def get_db() -> DatabaseFacade:
