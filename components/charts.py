@@ -840,6 +840,7 @@ def create_g_spread_dashboard(
     # INTRADAY ТОЧКИ на верхнем графике YTM
     # ==========================================
     if intraday_df is not None and not intraday_df.empty:
+        logger.info(f"Отображение intraday на YTM графике: {len(intraday_df)} точек, тикеры: {intraday_df['ticker'].unique().tolist()}")
         for i, ticker in enumerate(intraday_df['ticker'].unique()):
             ticker_intraday = intraday_df[intraday_df['ticker'] == ticker]
             color = colors[i % len(colors)]
@@ -847,6 +848,7 @@ def create_g_spread_dashboard(
             # YTM (рынок) - markers
             if 'ytm' in ticker_intraday.columns:
                 valid_ytm = ticker_intraday[ticker_intraday['ytm'].notna()]
+                logger.info(f"  Тикер {ticker}: YTM точек = {len(valid_ytm)}")
                 if not valid_ytm.empty:
                     fig.add_trace(
                         go.Scatter(
@@ -865,6 +867,7 @@ def create_g_spread_dashboard(
             # YTM_theor (КБД) - markers
             if 'ytm_theor' in ticker_intraday.columns:
                 valid_theor = ticker_intraday[ticker_intraday['ytm_theor'].notna()]
+                logger.info(f"  Тикер {ticker}: YTM_theor точек = {len(valid_theor)}")
                 if not valid_theor.empty:
                     fig.add_trace(
                         go.Scatter(
