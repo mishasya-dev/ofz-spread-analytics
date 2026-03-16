@@ -48,64 +48,6 @@ class CalendarRepository:
         logger.info(f"Сохранено {saved} торговых дней")
         return saved
     
-    def load_trading_days_in_range(self, start_date: date, end_date: date) -> Set[date]:
-        """
-        Загрузить торговые дни в диапазоне.
-        
-        Args:
-            start_date: Начальная дата
-            end_date: Конечная дата
-            
-        Returns:
-            Множество торговых дней
-        """
-        with get_db_cursor() as cursor:
-            cursor.execute('''
-                SELECT date FROM trading_calendar
-                WHERE date >= ? AND date <= ? AND is_trading = 1
-                ORDER BY date
-            ''', (start_date.isoformat(), end_date.isoformat()))
-            rows = cursor.fetchall()
-        
-        return {date.fromisoformat(row[0]) for row in rows}
-    
-    def is_trading_day(self, d: date) -> Optional[bool]:
-        """
-        Проверить, торговый ли день.
-        
-        Args:
-            d: Дата для проверки
-            
-        Returns:
-            True/False если есть в БД, None если нет записи
-        """
-        with get_db_cursor() as cursor:
-            cursor.execute('''
-                SELECT is_trading FROM trading_calendar WHERE date = ?
-            ''', (d.isoformat(),))
-            row = cursor.fetchone()
-        
-        if row is None:
-            return None
-        return bool(row[0])
-    
-    def count_trading_days(self) -> int:
-        """Количество торговых дней в БД"""
-        with get_db_cursor() as cursor:
-            cursor.execute('SELECT COUNT(*) FROM trading_calendar WHERE is_trading = 1')
-            row = cursor.fetchone()
-        return row[0] if row else 0
-    
-    def date_range(self) -> Optional[tuple]:
-        """Диапазон дат в календаре"""
-        with get_db_cursor() as cursor:
-            cursor.execute('SELECT MIN(date), MAX(date) FROM trading_calendar')
-            row = cursor.fetchone()
-        
-        if row and row[0]:
-            return (date.fromisoformat(row[0]), date.fromisoformat(row[1]))
-        return None
-    
     def save_non_trading_days(self, dates: List[date], source: str = 'moex') -> int:
         """
         Сохранить неторговые дни в БД.

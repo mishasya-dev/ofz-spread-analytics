@@ -2618,3 +2618,91 @@ Stage Summary:
 - **Коммит**: e284359
 
 ---
+
+---
+
+## v0.4.2 — Торговый календарь MOEX (16.03.2026)
+
+### Проблема
+
+При перезапуске приложения происходили лишние запросы к MOEX API:
+
+```
+[DATA] Данные в БД начинаются с 2025-01-20, нужно с 2025-01-19 - перезагружаем
+```
+
+- 2025-01-19 — **воскресенье** (выходной)
+- Система не знала, что это выходной
+- Триггерилась полная перезагрузка 420 дней вместо инкремента
+
+### Решение: Торговый календарь
+
+Реализован торговый календарь MOEX с загрузкой праздников и переносов:
+
+| Компонент | Файл | Назначение |
+|-----------|------|------------|
+| CalendarRepository | `core/db/calendar_repo.py` | Сохранение/загрузка торговых дней |
+| TradingCalendar | `services/trading_calendar.py` | Singleton с кэшем в памяти |
+| Таблицы БД | `trading_calendar`, `calendar_meta` | Персистентность |
+
+### Источник данных
+
+MOEX API: `GET /engines/stock.json` → `dailytable`
+
+- 72 записи праздников и переносов с 2018 года
+- Формат: `date`, `is_work_day`, `start_time`, `stop_time`
+
+### Ключевые методы
+
+```python
+cal = TradingCalendar()
+
+# Проверка торгового дня
+cal.is_trading_day(date(2025, 1, 19))  # False (воскресенье)
+cal.is_trading_day(date(2025, 1, 20))  # True (понедельник)
+
+# Поиск первого торгового дня
+cal.get_first_trading_day_from(date(2025, 1, 19))  # 2025-01-20 (пн)
+
+# Поиск последнего торгового дня
+cal.get_last_trading_day_before(date(2025, 1, 25))  # 2025-01-24 (пт)
+```
+
+### Как решает проблему
+
+**Старая логика:**
+```python
+old_check = today - timedelta(days=1)  # воскресенье!
+if last_db_date < old_check:  # True → ЛИШНИЙ ЗАПРОС
+```
+
+**Новая логика:**
+```python
+last_trading = cal.get_last_trading_day_before(today)
+if last_db_date < last_trading:  # False → OK
+```
+
+### Тесты
+
+```
+tests/test_trading_calendar.py: 17 тестов ✅
+- CalendarRepository: 9 тестов
+- TradingCalendar: 6 тестов
+- Интеграционные: 2 теста
+```
+
+### Изменённые файлы
+
+| Файл | Изменение |
+|------|-----------|
+| `core/db/calendar_repo.py` | **Новый** — репозиторий календаря |
+| `services/trading_calendar.py` | **Новый** — singleton календаря |
+| `core/db/connection.py` | Добавлены таблицы `trading_calendar`, `calendar_meta` |
+| `core/db/__init__.py` | Добавлен экспорт `CalendarRepository` |
+| `services/data_loader.py` | Интеграция с `TradingCalendar` |
+| `tests/test_trading_calendar.py` | **Новый** — 17 тестов |
+
+### Git
+
+- Ветка: `feature/trading-calendar`
+- Коммит: `feat: add MOEX trading calendar to prevent unnecessary API requests`
