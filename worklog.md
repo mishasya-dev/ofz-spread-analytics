@@ -2706,3 +2706,46 @@ tests/test_trading_calendar.py: 17 тестов ✅
 
 - Ветка: `feature/trading-calendar`
 - Коммит: `feat: add MOEX trading calendar to prevent unnecessary API requests`
+
+---
+
+## Ревизия проекта (16.03.2026)
+
+### Выполнено
+
+1. **Статистика проекта:**
+   - 55 Python файлов (без тестов)
+   - 32 тестовых файла
+   - 553 теста
+   - 1349 строк в app.py
+
+2. **Найденные дубли:**
+   - `calculate_spread_stats` — 2 реализации (components/metrics.py, services/spread_calculator.py)
+   - `generate_signal` — 2 реализации (components/signals.py, services/spread_calculator.py)
+   - `BondItem` — 4 определения (utils/bond_utils.py, components/sidebar.py, tests/)
+
+3. **Временные файлы в корне:**
+   - test_zcyc.py
+   - test_browser_state.py
+   - test_state_apptest.py
+   - test_app_full.py
+   - test_app_ui.py
+
+4. **Очищенные модули:**
+   - export/ — пустой __init__.py
+   - modes/ — пустой __init__.py
+
+### Рекомендации
+
+**Высокий приоритет:**
+- Удалить дублирующиеся функции из components/
+- Переместить test_*.py из корня в tests/
+
+**Средний приоритет:**
+- Рефакторинг app.py (вынести валидацию YTM)
+- Удалить пустые директории export/, modes/
+
+### Git
+
+- Коммит: `4b943ea`
+- Push: https://github.com/mishasya-dev/ofz-spread-analytics
