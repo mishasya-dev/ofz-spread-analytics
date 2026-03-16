@@ -952,17 +952,29 @@ def main():
                                 'ytm': row['trdyield'],
                                 'ytm_theor': row['clcyield'],
                                 'g_spread': row['g_spread_bp'],
-                                'zscore': None  # Z-score только для истории
+                                'zscore': np.nan  # Z-score только для истории
                             })
                         
                         if intraday_rows:
                             intraday_res = pd.DataFrame(intraday_rows)
+                            # Убираем FutureWarning: явно указываем типы колонок
+                            for col in ['ytm', 'ytm_theor', 'g_spread', 'zscore']:
+                                if col in intraday_res.columns:
+                                    intraday_res[col] = intraday_res[col].astype(float)
                             df_res = pd.concat([df_res, intraday_res], ignore_index=True)
                             logger.info(f"Добавлено {len(intraday_rows)} intraday точек на график")
                     
                     # График G-spread дашборд
                     fig_g_spread = create_g_spread_dashboard(df_res, z_threshold=st.session_state.g_spread_z_threshold)
                     st.plotly_chart(fig_g_spread, width='stretch', key=f'g_spread_dashboard_{bond1.isin}_{bond2.isin}')
+                    
+                    # Разделяем intraday данные по облигациям для отдельных графиков
+                    intraday_bond1 = pd.DataFrame()
+                    intraday_bond2 = pd.DataFrame()
+                    if not intraday_df.empty:
+                        intraday_bond1 = intraday_df[intraday_df['secid'] == bond1.isin].copy()
+                        if not same_bonds:
+                            intraday_bond2 = intraday_df[intraday_df['secid'] == bond2.isin].copy()
                     
                     # График отдельных G-spread
                     if same_bonds:
@@ -971,7 +983,8 @@ def main():
                             fig_gs1 = create_g_spread_chart_single(
                                 g_spread_df1, bond1.name, stats1, p_value1,
                                 window=st.session_state.g_spread_window,
-                                z_threshold=st.session_state.g_spread_z_threshold
+                                z_threshold=st.session_state.g_spread_z_threshold,
+                                intraday_df=intraday_bond1 if not intraday_bond1.empty else None
                             )
                             st.plotly_chart(fig_gs1, width='stretch', key=f'g_spread_chart1_{bond1.isin}')
                     else:
@@ -982,7 +995,8 @@ def main():
                                 fig_gs1 = create_g_spread_chart_single(
                                     g_spread_df1, bond1.name, stats1, p_value1,
                                     window=st.session_state.g_spread_window,
-                                    z_threshold=st.session_state.g_spread_z_threshold
+                                    z_threshold=st.session_state.g_spread_z_threshold,
+                                    intraday_df=intraday_bond1 if not intraday_bond1.empty else None
                                 )
                                 st.plotly_chart(fig_gs1, width='stretch', key=f'g_spread_chart1_{bond1.isin}')
                         with col_chart2:
@@ -990,7 +1004,8 @@ def main():
                                 fig_gs2 = create_g_spread_chart_single(
                                     g_spread_df2, bond2.name, stats2, p_value2,
                                     window=st.session_state.g_spread_window,
-                                    z_threshold=st.session_state.g_spread_z_threshold
+                                    z_threshold=st.session_state.g_spread_z_threshold,
+                                    intraday_df=intraday_bond2 if not intraday_bond2.empty else None
                                 )
                                 st.plotly_chart(fig_gs2, width='stretch', key=f'g_spread_chart2_{bond2.isin}')
             

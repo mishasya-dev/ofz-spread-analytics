@@ -890,7 +890,8 @@ def create_g_spread_chart_single(
     stats: Optional[Dict] = None,
     p_value: Optional[float] = None,
     window: int = 30,
-    z_threshold: float = 2.0
+    z_threshold: float = 2.0,
+    intraday_df: pd.DataFrame = None
 ) -> go.Figure:
     """
     Создать график G-spread для одной облигации с rolling Z-score границами
@@ -909,6 +910,7 @@ def create_g_spread_chart_single(
                   p < 0.05 означает коинтеграцию с КБД
         window: Окно rolling (для отображения в заголовке)
         z_threshold: Порог Z-Score для границ (по умолчанию 2.0σ)
+        intraday_df: DataFrame с intraday котировками (columns: datetime, g_spread_bp, trdyield, clcyield)
         
     Returns:
         Plotly Figure
@@ -1029,6 +1031,81 @@ def create_g_spread_chart_single(
             name='Текущий',
             showlegend=False
         ))
+    
+    # ==========================================
+    # INTRADAY ТОЧКИ (реальное время)
+    # ==========================================
+    if intraday_df is not None and not intraday_df.empty:
+        # Получаем последние rolling_mean и rolling_std для расчёта Z-score
+        last_rolling_mean = None
+        last_rolling_std = None
+        
+        if has_rolling and 'rolling_mean' in g_spread_df.columns and 'rolling_std' in g_spread_df.columns:
+            last_rolling_mean = g_spread_df['rolling_mean'].iloc[-1]
+            last_rolling_std = g_spread_df['rolling_std'].iloc[-1]
+        
+        # Рассчитываем Z-score для intraday точек
+        intraday_x = []
+        intraday_y = []
+        intraday_zscore = []
+        intraday_text = []
+        
+        for _, row in intraday_df.iterrows():
+            g_spread = row.get('g_spread_bp')
+            if pd.notna(g_spread):
+                intraday_x.append(row['datetime'])
+                intraday_y.append(g_spread)
+                
+                # Z-score
+                if last_rolling_mean is not None and last_rolling_std is not None and last_rolling_std > 0:
+                    z = (g_spread - last_rolling_mean) / last_rolling_std
+                else:
+                    z = None
+                intraday_zscore.append(z)
+                
+                # Текст для hover
+                time_str = row['datetime'].strftime('%H:%M:%S') if hasattr(row['datetime'], 'strftime') else str(row['datetime'])
+                z_str = f"Z={z:.1f}" if z is not None else ""
+                intraday_text.append(f"{time_str}<br>G-spread: {g_spread:.1f} б.п.<br>{z_str}")
+        
+        if intraday_x:
+            # Цвета по Z-score
+            marker_colors = []
+            for z in intraday_zscore:
+                if z is None:
+                    marker_colors.append('#FFD700')  # жёлтый (нет данных)
+                elif z > z_threshold:
+                    marker_colors.append('#FF4444')  # красный (продажа)
+                elif z < -z_threshold:
+                    marker_colors.append('#44FF44')  # зелёный (покупка)
+                else:
+                    marker_colors.append('#FFD700')  # жёлтый (нейтрально)
+            
+            fig.add_trace(go.Scatter(
+                x=intraday_x,
+                y=intraday_y,
+                mode='markers',
+                marker=dict(
+                    size=8,
+                    color=marker_colors,
+                    line=dict(width=1, color='black'),
+                    symbol='circle'
+                ),
+                name='Intraday',
+                showlegend=True,
+                hovertemplate='%{text}<extra></extra>',
+                text=intraday_text
+            ))
+            
+            # Линия соединяющая intraday точки (опционально)
+            fig.add_trace(go.Scatter(
+                x=intraday_x,
+                y=intraday_y,
+                mode='lines',
+                line=dict(color='rgba(255, 215, 0, 0.5)', width=1, dash='dot'),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
     
     # Формируем заголовок с коинтеграцией
     title = f"G-spread: {bond_name}"
