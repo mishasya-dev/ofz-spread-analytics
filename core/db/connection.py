@@ -557,41 +557,45 @@ def init_database():
     # Одна запись на час (hour) - внутри часа перезаписывается
     # На следующий день становятся историей (удаляются)
     
-    # Миграция: пересоздаём таблицу с новой структурой (hour вместо created_at в UNIQUE)
-    cursor.execute("PRAGMA table_info(intraday_quotes)")
-    intraday_columns = {row[1] for row in cursor.fetchall()}
+    # Проверяем, существует ли таблица
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='intraday_quotes'")
+    table_exists = cursor.fetchone() is not None
     
-    # Проверяем, нужна ли миграция (нет колонки hour или старый UNIQUE)
-    need_migration = 'hour' not in intraday_columns
-    
-    if need_migration:
-        # Создаём новую таблицу с правильной структурой
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS intraday_quotes_new (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                tradedate TEXT NOT NULL,
-                hour INTEGER NOT NULL,
-                tradetime TEXT,
-                updatetime TEXT,
-                secid TEXT NOT NULL,
-                shortname TEXT,
-                bidprice REAL,
-                bidyield REAL,
-                askprice REAL,
-                askyield REAL,
-                trdprice REAL,
-                trdyield REAL,
-                clcyield REAL,
-                crtyield REAL,
-                crtduration INTEGER,
-                g_spread_bp REAL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(tradedate, hour, secid)
-            )
-        ''')
+    if table_exists:
+        # Миграция: проверяем структуру существующей таблицы
+        cursor.execute("PRAGMA table_info(intraday_quotes)")
+        intraday_columns = {row[1] for row in cursor.fetchall()}
         
-        # Мигрируем данные (вычисляем hour из tradetime)
-        if intraday_columns:  # Если таблица не пуста
+        # Проверяем, нужна ли миграция (нет колонки hour)
+        need_migration = 'hour' not in intraday_columns
+        
+        if need_migration:
+            # Создаём новую таблицу с правильной структурой
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS intraday_quotes_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tradedate TEXT NOT NULL,
+                    hour INTEGER NOT NULL,
+                    tradetime TEXT,
+                    updatetime TEXT,
+                    secid TEXT NOT NULL,
+                    shortname TEXT,
+                    bidprice REAL,
+                    bidyield REAL,
+                    askprice REAL,
+                    askyield REAL,
+                    trdprice REAL,
+                    trdyield REAL,
+                    clcyield REAL,
+                    crtyield REAL,
+                    crtduration INTEGER,
+                    g_spread_bp REAL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(tradedate, hour, secid)
+                )
+            ''')
+            
+            # Мигрируем данные (вычисляем hour из tradetime)
             cursor.execute('''
                 INSERT OR IGNORE INTO intraday_quotes_new 
                 (tradedate, hour, tradetime, updatetime, secid, shortname,
@@ -611,11 +615,11 @@ def init_database():
             ''')
             migrated = cursor.rowcount
             logger.info(f"Миграция intraday_quotes: перенесено {migrated} записей")
-        
-        # Удаляем старую таблицу и переименовываем
-        cursor.execute('DROP TABLE intraday_quotes')
-        cursor.execute('ALTER TABLE intraday_quotes_new RENAME TO intraday_quotes')
-        logger.info("Миграция intraday_quotes завершена: добавлена колонка hour, изменён UNIQUE")
+            
+            # Удаляем старую таблицу и переименовываем
+            cursor.execute('DROP TABLE intraday_quotes')
+            cursor.execute('ALTER TABLE intraday_quotes_new RENAME TO intraday_quotes')
+            logger.info("Миграция intraday_quotes завершена: добавлена колонка hour, изменён UNIQUE")
     
     # Создаём таблицу если её нет
     cursor.execute('''
