@@ -841,20 +841,20 @@ def main():
                 # Получаем репозиторий для работы с БД
                 intraday_repo = get_g_spread_repo()
                 
-                # Получаем текущие котировки
+                # Получаем ВСЕ текущие котировки (MOEX возвращает все 32 ОФЗ)
+                # Сохраняем все, чтобы при смене облигаций данные уже были в БД
+                current_quotes = fetch_current_bond_quotes(isins=None)
+                
+                if not current_quotes.empty:
+                    # Сохраняем ВСЕ котировки в БД
+                    saved_count = intraday_repo.save_intraday_quotes(current_quotes)
+                    logger.info(f"Сохранено {saved_count} intraday котировок для всех ОФЗ")
+                
+                # Загружаем intraday данные только для выбранных облигаций
                 isins = [bond1.isin]
                 if not same_bonds:
                     isins.append(bond2.isin)
                 
-                current_quotes = fetch_current_bond_quotes(isins=isins)
-                
-                if not current_quotes.empty:
-                    # Сохраняем в БД
-                    intraday_repo.save_intraday_quotes(current_quotes)
-                    logger.info(f"Сохранены intraday котировки для {isins}")
-                
-                # Загружаем последние intraday данные только для выбранных облигаций
-                # (most_recent=True по умолчанию - берёт max tradedate)
                 intraday_df = intraday_repo.load_intraday_quotes(isins=isins)
                 logger.info(f"Загружено {len(intraday_df)} intraday записей из БД для {isins}")
                 if not intraday_df.empty:
