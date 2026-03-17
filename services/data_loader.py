@@ -239,14 +239,22 @@ def fetch_candle_data(
             if db_ytm_df.empty:
                 need_history = True
             else:
-                # Проверяем покрытие периода
+                # Проверяем покрытие периода с учётом торгового календаря
                 db_min_date = db_ytm_df.index.min().date() if hasattr(db_ytm_df.index.min(), 'date') else db_ytm_df.index.min()
-                if db_min_date > start_date:
+                
+                # Находим первый торговый день от start_date
+                calendar = TradingCalendar()
+                first_trading_day = calendar.get_first_trading_day_from(start_date)
+                
+                if db_min_date > first_trading_day:
+                    # Данные в БД начинаются позже первого торгового дня - дозагружаем
                     need_history = True
-                    # ОПТИМИЗАЦИЯ: загружаем только недостающий период
                     history_start = start_date
                     history_end = db_min_date - timedelta(days=1)
-                    logger.info(f"Данные в БД с {db_min_date}, нужно с {start_date} - дозагружаем")
+                    logger.info(f"Данные в БД с {db_min_date}, первый торговый день {first_trading_day} - дозагружаем")
+                elif db_min_date <= first_trading_day:
+                    # Данные покрывают первый торговый день - всё ок
+                    logger.debug(f"Данные в БД с {db_min_date}, первый торговый день {first_trading_day} - ок, дозагрузка не нужна")
 
         if need_history:
             if not db_ytm_df.empty and history_end:
