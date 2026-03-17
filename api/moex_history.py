@@ -553,3 +553,94 @@ def _parse_float(value: Any) -> Optional[float]:
         return float(value)
     except (ValueError, TypeError):
         return None
+
+
+def get_trading_data_batch(
+    isins: List[str],
+    board: str = "TQOB",
+    client: MOEXClient = None
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Получить текущие торговые данные для нескольких облигаций (batch)
+
+    Использует один MOEXClient и параллельные запросы.
+    Намного эффективнее чем вызывать get_trading_data для каждой облигации.
+
+    Args:
+        isins: Список ISIN кодов
+        board: Торговая площадка
+        client: MOEXClient (если None, создаётся новый)
+
+    Returns:
+        Словарь {ISIN: Dict с торговыми данными}
+    """
+    if not isins:
+        return {}
+
+    use_context = client is None
+    if use_context:
+        client = MOEXClient()
+        client.__enter__()
+
+    try:
+        results = {isin: {"isin": isin, "has_data": False} for isin in isins}
+
+        # Подготавливаем batch запросы
+        requests_list = [
+            (
+                f"/engines/stock/markets/bonds/securities/{isin}.json",
+                {"iss.meta": "off"}
+            )
+            for isin in isins
+        ]
+
+        # Выполняем параллельные запросы
+        futures = client.request_batch(requests_list)
+
+        # Обрабатываем результаты
+        for isin, future in zip(isins, futures):
+            try:
+                response = future.result(timeout=30)
+                data = response.json()
+
+                # Парсим marketdata
+                marketdata = data.get("marketdata", {})
+                md_columns = marketdata.get("columns", [])
+                md_rows = marketdata.get("data", [])
+
+                # Ищем данные на основной площадке TQOB
+                for row in md_rows:
+                    try:
+                        board_id_idx = md_columns.index('BOARDID')
+                        if row[board_id_idx] == 'TQOB':
+                            yield_idx = md_columns.index('YIELD')
+                            duration_idx = md_columns.index('DURATION')
+                            price_idx = md_columns.index('MARKETPRICE')
+
+                            ytm = row[yield_idx]
+                            duration = row[duration_idx]
+                            price = row[price_idx]
+
+                            if ytm is not None:
+                                results[isin] = {
+                                    "isin": isin,
+                                    "has_data": True,
+                                    "yield": ytm,
+                                    "duration": duration,
+                                    "duration_years": duration / 365.25 if duration else None,
+                                    "price": price,
+                                    "last": price,
+                                    "updated_at": datetime.now().isoformat()
+                                }
+                            break
+                    except (ValueError, IndexError):
+                        continue
+
+            except Exception as e:
+                logger.warning(f"Ошибка при получении торговых данных для {isin}: {e}")
+
+        return results
+
+    finally:
+        if use_context:
+            client.__exit__(None, None, None)

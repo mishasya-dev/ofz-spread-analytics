@@ -226,6 +226,18 @@ def fetch_trading_data_cached(secid: str) -> Dict:
 
 
 @st.cache_data(ttl=300)
+def fetch_trading_data_batch_cached(isins: tuple) -> Dict[str, Dict]:
+    """
+    Получить торговые данные для списка облигаций (batch) с кэшированием.
+
+    Использует параллельные запросы - намного быстрее чем по одному.
+    isins передаётся как tuple т.к. список не хэшируется для кэша.
+    """
+    from services.data_loader import fetch_trading_data_batch
+    return fetch_trading_data_batch(list(isins))
+
+
+@st.cache_data(ttl=300)
 def fetch_historical_data_cached(secid: str, days: int) -> pd.DataFrame:
     """
     Получить исторические данные за указанный период.
@@ -386,13 +398,16 @@ def main():
             st.warning("Нет избранных облигаций. Нажмите 'Управление облигациями' для выбора.")
             st.stop()
         
-        # Получаем данные для dropdown
+        # Получаем данные для dropdown (batch запрос - быстрее чем по одному)
         bond_labels = []
         bond_trading_data = {}
         
+        # Batch загрузка торговых данных для всех облигаций
+        all_isins = tuple(b.isin for b in bonds)
+        bond_trading_data = fetch_trading_data_batch_cached(all_isins)
+        
         for b in bonds:
-            data = fetch_trading_data_cached(b.isin)
-            bond_trading_data[b.isin] = data
+            data = bond_trading_data.get(b.isin, {"isin": b.isin, "has_data": False})
             if data.get('has_data') and data.get('yield'):
                 bond_labels.append(format_bond_label(b, data['yield'], data.get('duration_years')))
             else:
@@ -971,7 +986,6 @@ def main():
                             
                             # Рассчитываем Z-score
                             g_spread = row['g_spread_bp']
-                            logger.debug(f"Обработка intraday: secid={row['secid']}, g_spread={g_spread}, rm={rm}, rs={rs}")
                             if rm is not None and rs is not None and rs > 0 and pd.notna(g_spread):
                                 zscore = (g_spread - rm) / rs
                             else:

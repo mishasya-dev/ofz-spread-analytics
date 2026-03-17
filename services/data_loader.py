@@ -48,6 +48,23 @@ def fetch_trading_data(secid: str) -> Dict:
         return get_trading_data(secid, client=client)
 
 
+def fetch_trading_data_batch(isins: list) -> Dict[str, Dict]:
+    """
+    Получить торговые данные для нескольких облигаций (batch).
+
+    Использует параллельные запросы через один MOEXClient.
+    Гораздо эффективнее чем вызывать fetch_trading_data для каждой облигации.
+
+    Args:
+        isins: Список ISIN облигаций
+
+    Returns:
+        Dict {ISIN: Dict с торговыми данными}
+    """
+    from api.moex_history import get_trading_data_batch as _get_batch
+    return _get_batch(isins)
+
+
 def fetch_historical_data(
     secid: str,
     days: int,

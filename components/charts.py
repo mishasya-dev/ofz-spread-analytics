@@ -839,10 +839,7 @@ def create_g_spread_dashboard(
     # ==========================================
     # INTRADAY ТОЧКИ на верхнем графике YTM
     # ==========================================
-    logger.debug(f"create_g_spread_dashboard: intraday_df is None={intraday_df is None}, empty={intraday_df.empty if intraday_df is not None else 'N/A'}")
     if intraday_df is not None and not intraday_df.empty:
-        logger.info(f"Обработка {len(intraday_df)} intraday точек в create_g_spread_dashboard")
-        logger.debug(f"intraday_df columns: {list(intraday_df.columns)}, tickers: {intraday_df['ticker'].unique() if 'ticker' in intraday_df.columns else 'N/A'}")
         for i, ticker in enumerate(intraday_df['ticker'].unique()):
             ticker_intraday = intraday_df[intraday_df['ticker'] == ticker]
             color = colors[i % len(colors)]
@@ -1139,10 +1136,7 @@ def create_g_spread_chart_single(
     # ==========================================
     # INTRADAY ТОЧКИ (реальное время)
     # ==========================================
-    logger.debug(f"create_g_spread_chart_single: intraday_df is None={intraday_df is None}, empty={intraday_df.empty if intraday_df is not None else 'N/A'}")
     if intraday_df is not None and not intraday_df.empty:
-        logger.info(f"Обработка {len(intraday_df)} intraday точек в create_g_spread_chart_single")
-        logger.debug(f"intraday_df columns: {list(intraday_df.columns)}")
         # Получаем последние rolling_mean и rolling_std для расчёта Z-score
         last_rolling_mean = None
         last_rolling_std = None
