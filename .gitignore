@@ -44,6 +44,7 @@ Thumbs.db
 *.log
 
 # Database
+*.db
 data/*.db
 data/intraday/
 
