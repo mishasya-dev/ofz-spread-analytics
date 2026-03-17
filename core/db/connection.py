@@ -554,13 +554,77 @@ def init_database():
     # ТАБЛИЦА INTRADAY_QUOTES (внутридневные котировки)
     # ==========================================
     # Хранит текущие котировки в течение торгового дня
+    # Одна запись на час (hour) - внутри часа перезаписывается
     # На следующий день становятся историей (удаляются)
+    
+    # Миграция: пересоздаём таблицу с новой структурой (hour вместо created_at в UNIQUE)
+    cursor.execute("PRAGMA table_info(intraday_quotes)")
+    intraday_columns = {row[1] for row in cursor.fetchall()}
+    
+    # Проверяем, нужна ли миграция (нет колонки hour или старый UNIQUE)
+    need_migration = 'hour' not in intraday_columns
+    
+    if need_migration:
+        # Создаём новую таблицу с правильной структурой
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS intraday_quotes_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tradedate TEXT NOT NULL,
+                hour INTEGER NOT NULL,
+                tradetime TEXT,
+                updatetime TEXT,
+                secid TEXT NOT NULL,
+                shortname TEXT,
+                bidprice REAL,
+                bidyield REAL,
+                askprice REAL,
+                askyield REAL,
+                trdprice REAL,
+                trdyield REAL,
+                clcyield REAL,
+                crtyield REAL,
+                crtduration INTEGER,
+                g_spread_bp REAL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(tradedate, hour, secid)
+            )
+        ''')
+        
+        # Мигрируем данные (вычисляем hour из tradetime)
+        if intraday_columns:  # Если таблица не пуста
+            cursor.execute('''
+                INSERT OR IGNORE INTO intraday_quotes_new 
+                (tradedate, hour, tradetime, updatetime, secid, shortname,
+                 bidprice, bidyield, askprice, askyield,
+                 trdprice, trdyield, clcyield, crtyield,
+                 crtduration, g_spread_bp, created_at)
+                SELECT 
+                    tradedate,
+                    CAST(substr(tradetime, 1, 2) AS INTEGER) as hour,
+                    tradetime,
+                    updatetime,
+                    secid, shortname,
+                    bidprice, bidyield, askprice, askyield,
+                    trdprice, trdyield, clcyield, crtyield,
+                    crtduration, g_spread_bp, created_at
+                FROM intraday_quotes
+            ''')
+            migrated = cursor.rowcount
+            logger.info(f"Миграция intraday_quotes: перенесено {migrated} записей")
+        
+        # Удаляем старую таблицу и переименовываем
+        cursor.execute('DROP TABLE intraday_quotes')
+        cursor.execute('ALTER TABLE intraday_quotes_new RENAME TO intraday_quotes')
+        logger.info("Миграция intraday_quotes завершена: добавлена колонка hour, изменён UNIQUE")
+    
+    # Создаём таблицу если её нет
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS intraday_quotes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             tradedate TEXT NOT NULL,
-            tradetime TEXT NOT NULL,
-            updatetime TEXT NOT NULL,
+            hour INTEGER NOT NULL,
+            tradetime TEXT,
+            updatetime TEXT,
             secid TEXT NOT NULL,
             shortname TEXT,
             bidprice REAL,
@@ -574,16 +638,9 @@ def init_database():
             crtduration INTEGER,
             g_spread_bp REAL,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(tradedate, created_at, secid)
+            UNIQUE(tradedate, hour, secid)
         )
     ''')
-    
-    # Миграция: добавляем колонку updatetime если её нет
-    cursor.execute("PRAGMA table_info(intraday_quotes)")
-    intraday_columns = {row[1] for row in cursor.fetchall()}
-    if 'updatetime' not in intraday_columns:
-        cursor.execute('ALTER TABLE intraday_quotes ADD COLUMN updatetime TEXT')
-        logger.info("Добавлена колонка updatetime в таблицу intraday_quotes")
     
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_intraday_quotes_date 
@@ -596,8 +653,8 @@ def init_database():
     ''')
     
     cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_intraday_quotes_datetime 
-        ON intraday_quotes(tradedate, tradetime)
+        CREATE INDEX IF NOT EXISTS idx_intraday_quotes_hour 
+        ON intraday_quotes(tradedate, hour)
     ''')
     
     conn.commit()

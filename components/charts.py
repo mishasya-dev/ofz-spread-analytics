@@ -841,10 +841,13 @@ def create_g_spread_dashboard(
     # ==========================================
     if intraday_df is not None and not intraday_df.empty:
         for i, ticker in enumerate(intraday_df['ticker'].unique()):
-            ticker_intraday = intraday_df[intraday_df['ticker'] == ticker]
+            ticker_intraday = intraday_df[intraday_df['ticker'] == ticker].copy()
             color = colors[i % len(colors)]
             
-            # YTM (рынок) - markers
+            # Сортируем по дате для правильной отрисовки линий
+            ticker_intraday = ticker_intraday.sort_values('date')
+            
+            # YTM (рынок) - markers (отдельные точки)
             if 'ytm' in ticker_intraday.columns:
                 valid_ytm = ticker_intraday[ticker_intraday['ytm'].notna()]
                 if not valid_ytm.empty:
@@ -862,15 +865,18 @@ def create_g_spread_dashboard(
                         row=1, col=1
                     )
             
-            # YTM_theor (КБД) - markers
+            # YTM_theor (КБД/clcyield) - пунктирная линия с маркерами
+            # Показываем часовую динамику теоретической доходности
             if 'ytm_theor' in ticker_intraday.columns:
                 valid_theor = ticker_intraday[ticker_intraday['ytm_theor'].notna()]
                 if not valid_theor.empty:
+                    # Пунктирная линия, соединяющая часовые точки
                     fig.add_trace(
                         go.Scatter(
                             x=valid_theor['date'],
                             y=valid_theor['ytm_theor'],
-                            mode='markers',
+                            mode='lines+markers',
+                            line=dict(color=color, dash='dot', width=1.5),
                             marker=dict(size=5, color=color, symbol='diamond'),
                             name=f"КБД intraday {ticker}",
                             showlegend=False,

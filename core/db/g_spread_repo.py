@@ -656,7 +656,12 @@ class GSpreadRepository:
     
     def save_intraday_quotes(self, df: pd.DataFrame) -> int:
         """
-        Сохранить текущие котировки в БД
+        Сохранить текущие котировки в БД (одна запись на час)
+        
+        Логика:
+        - hour вычисляется из updatetime
+        - UNIQUE(tradedate, hour, secid) - внутри часа перезаписывается
+        - За торговый день накапливается 10-14 записей (по количеству часов)
         
         Args:
             df: DataFrame с колонками от fetch_current_bond_quotes()
@@ -686,15 +691,19 @@ class GSpreadRepository:
                         if not tradedate or not updatetime:
                             continue
                         
+                        # Вычисляем час из updatetime (HH:MM:SS -> HH)
+                        hour = int(updatetime.split(':')[0])
+                        
                         cursor.execute('''
                             INSERT OR REPLACE INTO intraday_quotes 
-                            (tradedate, tradetime, updatetime, secid, shortname, 
+                            (tradedate, hour, tradetime, updatetime, secid, shortname, 
                              bidprice, bidyield, askprice, askyield,
                              trdprice, trdyield, clcyield, crtyield,
                              crtduration, g_spread_bp, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                         ''', (
                             tradedate,
+                            hour,
                             tradetime,
                             updatetime,
                             row.get('secid'),
@@ -715,7 +724,7 @@ class GSpreadRepository:
                     except Exception as e:
                         logger.warning(f"Ошибка сохранения intraday {row.get('secid')}: {e}")
             
-            logger.info(f"Сохранено {saved_count} intraday котировок")
+            logger.info(f"Сохранено {saved_count} intraday котировок (по часам)")
             return saved_count
             
         except Exception as e:
@@ -737,12 +746,12 @@ class GSpreadRepository:
             most_recent: Если True, загружает последние данные (max tradedate)
             
         Returns:
-            DataFrame с котировками
+            DataFrame с котировками (одна запись на час)
         """
         if most_recent:
             # Загружаем данные за последнюю торговую дату
             query = '''
-                SELECT tradedate, tradetime, updatetime, secid, shortname,
+                SELECT tradedate, hour, tradetime, updatetime, secid, shortname,
                        bidprice, bidyield, askprice, askyield,
                        trdprice, trdyield, clcyield, crtyield,
                        crtduration, g_spread_bp, created_at
@@ -755,7 +764,7 @@ class GSpreadRepository:
                 tradedate = date.today()
             
             query = '''
-                SELECT tradedate, tradetime, updatetime, secid, shortname,
+                SELECT tradedate, hour, tradetime, updatetime, secid, shortname,
                        bidprice, bidyield, askprice, askyield,
                        trdprice, trdyield, clcyield, crtyield,
                        crtduration, g_spread_bp, created_at
@@ -769,7 +778,7 @@ class GSpreadRepository:
             query += f' AND secid IN ({placeholders})'
             params.extend(isins)
         
-        query += ' ORDER BY created_at'
+        query += ' ORDER BY hour'
         
         with get_db_connection() as conn:
             df = pd.read_sql_query(query, conn, params=params)
@@ -777,8 +786,11 @@ class GSpreadRepository:
         if df.empty:
             return pd.DataFrame()
         
-        # Добавляем datetime колонку для графиков (используем created_at)
-        df['datetime'] = pd.to_datetime(df['created_at'])
+        # Добавляем datetime колонку для графиков на основе hour
+        # Format: tradedate HH:00:00
+        df['datetime'] = pd.to_datetime(
+            df['tradedate'] + ' ' + df['hour'].astype(str).str.zfill(2) + ':00:00'
+        )
         
         # Логируем загруженную дату
         loaded_date = df['tradedate'].iloc[0]
